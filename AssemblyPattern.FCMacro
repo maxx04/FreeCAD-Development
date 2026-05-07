@@ -1,21 +1,58 @@
 import FreeCAD as App
 import FreeCADGui as Gui
 
-# Nachricht in die FreeCAD-Report-Ansicht schreiben
-App.Console.PrintMessage("\n" + "="*30 + "\n")
-App.Console.PrintMessage("VSC Verbindung steht!\n")
-App.Console.PrintMessage("="*30 + "\n")
+def run_pattern_fix():
+    # Debug-Startmeldung
+    App.Console.PrintMessage("\n" + ">"*10 + " Starte Assembly-Fix via VSC " + "<"*10 + "\n")
+    
+    selection = Gui.Selection.getSelection()
+    if len(selection) < 2:
+        App.Console.PrintError("FEHLER: Bitte erst ARRAY, dann ZIEL-CONTAINER wählen!\n")
+        return
 
-# Ein Test-Objekt im aktuellen Dokument erstellen
-doc = App.activeDocument()
-if not doc:
-    doc = App.newDocument("VSC_Test")
+    # Auswahl sortieren
+    array_obj = selection[0] if hasattr(selection[0], "Base") else selection[1]
+    target_container = selection[1] if array_obj == selection[0] else selection[0]
+    base_obj = array_obj.Base
 
-# Erstelle einen einfachen Würfel (Box)
-test_box = doc.addObject("Part::Box", "VSC_Test_Box")
-test_box.Label = "Erstellt via VS Code"
+    # MATHEMATIK: Wir nutzen die globale Matrix, um Versätze zu neutralisieren
+    m_array_world = array_obj.getGlobalPlacement().toMatrix()
+    m_target_world_inv = target_container.getGlobalPlacement().inverse().toMatrix()
 
-App.ActiveDocument.recompute()
-Gui.SendMsgToActiveView("ViewFit")
+    App.ActiveDocument.openTransaction("VSC_Pattern_Fix")
 
-print("Skript erfolgreich an FreeCAD übertragen!")
+    try:
+        # Wir lesen die Gitter-Daten (Ortho-Array)
+        nx = getattr(array_obj, "NumberX", 1)
+        step_x = array_obj.IntervalX
+        
+        App.Console.PrintMessage(f"Verarbeite {nx} Kopien...\n")
+
+        for i in range(nx):
+            link_name = f"Lnk_{base_obj.Name}_{i:02d}"
+            
+            # Position im Array-System berechnen
+            offset = step_x.multiply(float(i))
+            m_copy_world = App.Matrix(m_array_world)
+            m_copy_world.move(offset)
+            
+            # Umrechnen in das lokale System des Ziel-Containers (z.B. U1)
+            m_final_local = m_target_world_inv.multiply(m_copy_world)
+
+            # Link erstellen und in Container schieben
+            new_link = App.ActiveDocument.addObject("App::Link", link_name)
+            new_link.setLink(base_obj)
+            new_link.Placement = App.Placement(m_final_local)
+            new_link.Label = base_obj.Label
+            target_container.addObject(new_link)
+
+        array_obj.Visibility = False
+        App.Console.PrintMessage("Transfer erfolgreich abgeschlossen!\n")
+
+    except Exception as e:
+        App.Console.PrintError(f"FEHLER: {str(e)}\n")
+
+    App.ActiveDocument.commitTransaction()
+    App.ActiveDocument.recompute()
+
+run_pattern_fix()
