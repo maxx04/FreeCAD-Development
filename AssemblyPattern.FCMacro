@@ -1,0 +1,21 @@
+import FreeCAD as App
+import FreeCADGui as Gui
+
+# Nachricht in die FreeCAD-Report-Ansicht schreiben
+App.Console.PrintMessage("\n" + "="*30 + "\n")
+App.Console.PrintMessage("VSC Verbindung steht!\n")
+App.Console.PrintMessage("="*30 + "\n")
+
+# Ein Test-Objekt im aktuellen Dokument erstellen
+doc = App.activeDocument()
+if not doc:
+    doc = App.newDocument("VSC_Test")
+
+# Erstelle einen einfachen Würfel (Box)
+test_box = doc.addObject("Part::Box", "VSC_Test_Box")
+test_box.Label = "Erstellt via VS Code"
+
+App.ActiveDocument.recompute()
+Gui.SendMsgToActiveView("ViewFit")
+
+print("Skript erfolgreich an FreeCAD übertragen!")

@@ -1,0 +1,11 @@
+# Python temporäre Dateien
+__pycache__/
+*.py[cod]
+*$py.class
+
+# FreeCAD temporäre Dateien
+*.fcstd.lock
+*.bak
+
+# VS Code Einstellungen (optional, falls du sie nicht teilen willst)
+.vscode/
