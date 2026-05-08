@@ -1,5 +1,16 @@
 import FreeCAD as App
 import FreeCADGui as Gui
+import debugpy
+try:
+    debugpy.configure(python="python3") # Pfad zu deinem System-Python
+    debugpy.listen(5678)
+    debugpy.breakpoint()
+    print("Warte auf VS Code...")
+    # Optional: Das Makro pausiert hier, bis du in VSC auf F5 drückst
+    # debugpy.wait_for_client() 
+except Exception as e:
+    print(f"Debugger-Info: {str(e)}")
+
 
 def run_pattern_fix():
     # Debug-Startmeldung
