@@ -12,58 +12,41 @@ except Exception as e:
     print(f"Debugger-Info: {str(e)}")
 
 
-def run_pattern_fix():
-    # Debug-Startmeldung
-    App.Console.PrintMessage("\n" + ">"*10 + " Starte Assembly-Fix via VSC " + "<"*10 + "\n")
+import FreeCAD as App
+import FreeCADGui as Gui
+
+def select_parent_assembly():
+    App.Console.PrintMessage("\n" + ">"*10 + " Suche Parent Assembly " + "<"*10 + "\n")
     
+    # 1. Prüfung: Nur genau EINE Selektion erlauben
     selection = Gui.Selection.getSelection()
-    if len(selection) < 2:
-        App.Console.PrintError("FEHLER: Bitte erst ARRAY, dann ZIEL-CONTAINER wählen!\n")
+    if len(selection) != 1:
+        App.Console.PrintError("ABBRUCH: Bitte wähle genau EIN Teil aus!\n")
         return
 
-    # Auswahl sortieren
-    array_obj = selection[0] if hasattr(selection[0], "Base") else selection[1]
-    target_container = selection[1] if array_obj == selection[0] else selection[0]
-    base_obj = array_obj.Base
+    selected_obj = selection[0]
+    
+    # 2. Den direkten Parent (Vater-Objekt) finden
+    parent_assembly = None
+    
+    if selected_obj.InList:
+        for p in selected_obj.InList:
+            # Prüfung: Ist der Parent eine Assembly? 
+            # In FreeCAD 1.1 erkennt man sie am Typ 'App::Part' 
+            # (oft mit dem Attribut 'AssemblyType', aber 'App::Part' ist die Basis)
+            if p.isDerivedFrom("App::Part"):
+                parent_assembly = p
+                break
 
-    # MATHEMATIK: Wir nutzen die globale Matrix, um Versätze zu neutralisieren
-    m_array_world = array_obj.getGlobalPlacement().toMatrix()
-    m_target_world_inv = target_container.getGlobalPlacement().inverse().toMatrix()
-
-    App.ActiveDocument.openTransaction("VSC_Pattern_Fix")
-
-    try:
-        # Wir lesen die Gitter-Daten (Ortho-Array)
-        nx = getattr(array_obj, "NumberX", 1)
-        step_x = array_obj.IntervalX
+    # 3. Finale Prüfung und Selektion
+    if parent_assembly:
+        App.Console.PrintMessage(f"Erfolg: '{selected_obj.Label}' gehört zu Assembly '{parent_assembly.Label}'\n")
         
-        App.Console.PrintMessage(f"Verarbeite {nx} Kopien...\n")
+        # Visuelle Selektion im Baum ändern
+        Gui.Selection.clearSelection()
+        Gui.Selection.addSelection(parent_assembly)
+    else:
+        App.Console.PrintMessage(f"Info: '{selected_obj.Label}' hat keine übergeordnete Assembly.\n")
 
-        for i in range(nx):
-            link_name = f"Lnk_{base_obj.Name}_{i:02d}"
-            
-            # Position im Array-System berechnen
-            offset = step_x.multiply(float(i))
-            m_copy_world = App.Matrix(m_array_world)
-            m_copy_world.move(offset)
-            
-            # Umrechnen in das lokale System des Ziel-Containers (z.B. U1)
-            m_final_local = m_target_world_inv.multiply(m_copy_world)
-
-            # Link erstellen und in Container schieben
-            new_link = App.ActiveDocument.addObject("App::Link", link_name)
-            new_link.setLink(base_obj)
-            new_link.Placement = App.Placement(m_final_local)
-            new_link.Label = base_obj.Label
-            target_container.addObject(new_link)
-
-        array_obj.Visibility = False
-        App.Console.PrintMessage("Transfer erfolgreich abgeschlossen!\n")
-
-    except Exception as e:
-        App.Console.PrintError(f"FEHLER: {str(e)}\n")
-
-    App.ActiveDocument.commitTransaction()
-    App.ActiveDocument.recompute()
-
-run_pattern_fix()
+# Start
+select_parent_assembly()
