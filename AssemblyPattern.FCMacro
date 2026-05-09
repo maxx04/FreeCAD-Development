@@ -15,38 +15,46 @@ except Exception as e:
 import FreeCAD as App
 import FreeCADGui as Gui
 
-def select_parent_assembly():
-    App.Console.PrintMessage("\n" + ">"*10 + " Suche Parent Assembly " + "<"*10 + "\n")
+def move_array_to_part_assembly():
+    App.Console.PrintMessage("\n" + ">"*10 + " Array-to-Parent-Assembly " + "<"*10 + "\n")
     
-    # 1. Prüfung: Nur genau EINE Selektion erlauben
+        # 1. Prüfung: Nur ein Objekt auswählen (das Array)
     selection = Gui.Selection.getSelection()
     if len(selection) != 1:
-        App.Console.PrintError("ABBRUCH: Bitte wähle genau EIN Teil aus!\n")
+        App.Console.PrintError("Bitte wähle genau EIN Draft-Array aus.\n")
         return
 
-    selected_obj = selection[0]
+    # KORREKTUR: Das erste Element aus der Liste nehmen
+    array_obj = selection[0]
     
-    # 2. Den direkten Parent (Vater-Objekt) finden
+    # Jetzt funktioniert .Label, da array_obj kein 'list' mehr ist
+    if not hasattr(array_obj, "Base") or array_obj.Base is None:
+        App.Console.PrintError(f"Das Objekt '{array_obj.Label}' ist kein Muster oder hat keine Basis.\n")
+        return
+
+
+    base_obj = array_obj.Base
+    App.Console.PrintMessage(f"Basis-Teil identifiziert: {base_obj.Label}\n")
+
+    # 2. Die Assembly des Basis-Teils suchen (Nach oben wandern)
     parent_assembly = None
-    
-    if selected_obj.InList:
-        for p in selected_obj.InList:
-            # Prüfung: Ist der Parent eine Assembly? 
-            # In FreeCAD 1.1 erkennt man sie am Typ 'App::Part' 
-            # (oft mit dem Attribut 'AssemblyType', aber 'App::Part' ist die Basis)
+    if base_obj.InList:
+        for p in base_obj.InList:
             if p.isDerivedFrom("App::Part"):
                 parent_assembly = p
                 break
 
-    # 3. Finale Prüfung und Selektion
-    if parent_assembly:
-        App.Console.PrintMessage(f"Erfolg: '{selected_obj.Label}' gehört zu Assembly '{parent_assembly.Label}'\n")
-        
-        # Visuelle Selektion im Baum ändern
-        Gui.Selection.clearSelection()
-        Gui.Selection.addSelection(parent_assembly)
+    if not parent_assembly:
+        App.Console.PrintMessage(f"Basis '{base_obj.Label}' liegt in keiner Unterbaugruppe.\n")
+        return
+
+    # 3. Das Array in diese Assembly verschieben
+    if array_obj in parent_assembly.Group:
+        App.Console.PrintMessage(f"Array '{array_obj.Label}' ist bereits in '{parent_assembly.Label}'.\n")
     else:
-        App.Console.PrintMessage(f"Info: '{selected_obj.Label}' hat keine übergeordnete Assembly.\n")
+        parent_assembly.addObject(array_obj)
+        App.Console.PrintMessage(f"ERFOLG: '{array_obj.Label}' wurde zu '{parent_assembly.Label}' verschoben.\n")
+        App.ActiveDocument.recompute()
 
 # Start
-select_parent_assembly()
+move_array_to_part_assembly()

@@ -1,0 +1,21 @@
+Draft vs. Assembly: Draft-Arrays werden standardmäßig im Root-Verzeichnis des Dokuments erstellt. Befindet sich das Basis-Objekt in einer Unterbaugruppe (App::Part), führt dies zu Koordinaten-Versätzen. Das Array muss zwingend in denselben Part-Container verschoben werden wie sein Basis-Objekt.
+## Verknüpfungen in FreeCAD (Abhängigkeiten)
+
+### 1. Die `.Base` Eigenschaft
+Viele Werkzeuge (Draft Array, PartDesign Mirrored, PartDesign LinearPattern) erstellen ein neues Objekt, das ein anderes Objekt als Grundlage nutzt. Diese Grundlage wird intern fast immer in der Eigenschaft `.Base` gespeichert.
+- **Wichtig:** Das Array-Objekt ist vom Basis-Objekt abhängig. Wenn sich das Basis-Objekt ändert, aktualisiert sich das Array.
+
+### 2. Links vs. Direkte Objekte
+In Assemblies arbeiten wir oft mit `App::Link`. Ein Link ist nur ein "Zeiger" auf ein echtes Objekt.
+- Wenn ein Array einen Link als Basis nutzt, zeigt `array.Base` auf den Link.
+- Um das eigentliche Bauteil zu finden, muss man `array.Base.LinkedObject` abfragen.
+
+### 3. InList vs. OutList
+Um im Baum zu navigieren, nutzt man:
+- `obj.InList`: "Wer benutzt mich?" (Zeigt nach oben im Baum zu den Eltern/Containern).
+- `obj.OutList`: "Wen benutze ich?" (Zeigt nach unten zu den Kindern/Abhängigkeiten).
+
+### 4. Workflow-Umkehr
+ Es ist effizienter, vom abhängigen Objekt (Array) auf das Quell-Objekt (Base) zu schließen, um die Ziel-Hierarchie zu bestimmen. obj.Base ist der Schlüssel, um die logische Zusammengehörigkeit in komplexen Assemblies zu wahren.
+
+ Selection-Handling: Gui.Selection.getSelection() gibt ein Listen-Objekt zurück. Auch bei Einzelwahl muss über den Index [0] auf das eigentliche Objekt zugegriffen werden, um Attribute wie .Label, .Name oder .Base nutzen zu können.
