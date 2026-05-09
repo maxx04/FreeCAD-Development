@@ -19,3 +19,6 @@ Um im Baum zu navigieren, nutzt man:
  Es ist effizienter, vom abhängigen Objekt (Array) auf das Quell-Objekt (Base) zu schließen, um die Ziel-Hierarchie zu bestimmen. obj.Base ist der Schlüssel, um die logische Zusammengehörigkeit in komplexen Assemblies zu wahren.
 
  Selection-Handling: Gui.Selection.getSelection() gibt ein Listen-Objekt zurück. Auch bei Einzelwahl muss über den Index [0] auf das eigentliche Objekt zugegriffen werden, um Attribute wie .Label, .Name oder .Base nutzen zu können.
+
+ Robustheit bei Dokumentzugriffen: Der Zugriff auf App.ActiveDocument sollte immer validiert werden (if not doc:). In komplexen Baugruppen-Operationen ist es zudem ratsam, openTransaction() und commitTransaction() zu nutzen, um die Datenintegrität während des Verschiebens zu sichern und Recompute-Fehler zu minimieren.
+ 

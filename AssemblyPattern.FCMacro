@@ -16,6 +16,8 @@ import FreeCAD as App
 import FreeCADGui as Gui
 
 def move_array_to_part_assembly():
+    doc = App.ActiveDocument
+
     App.Console.PrintMessage("\n" + ">"*10 + " Array-to-Parent-Assembly " + "<"*10 + "\n")
     
         # 1. Prüfung: Nur ein Objekt auswählen (das Array)
@@ -49,12 +51,33 @@ def move_array_to_part_assembly():
         return
 
     # 3. Das Array in diese Assembly verschieben
+        # Sicherstellen, dass wir das Dokument greifen
+    doc = App.ActiveDocument
+    
+    if not doc:
+        App.Console.PrintError("FEHLER: Kein aktives Dokument gefunden!\n")
+        return
+
+    # 3. Das Array in diese Assembly verschieben
     if array_obj in parent_assembly.Group:
         App.Console.PrintMessage(f"Array '{array_obj.Label}' ist bereits in '{parent_assembly.Label}'.\n")
     else:
+        # Dokument-Transaktion starten (macht das Ganze stabiler)
+        doc.openTransaction("Array Move")
+        
+        # Verschieben
         parent_assembly.addObject(array_obj)
-        App.Console.PrintMessage(f"ERFOLG: '{array_obj.Label}' wurde zu '{parent_assembly.Label}' verschoben.\n")
-        App.ActiveDocument.recompute()
+        
+        # Status bereinigen, um den "still touched" Loop zu verhindern
+        array_obj.purgeTouched()
+        
+        # Neu berechnen
+        doc.recompute()
+        doc.commitTransaction()
+        
+        App.Console.PrintMessage(f"ERFOLG: '{array_obj.Label}' verschoben.\n")
+
+
 
 # Start
 move_array_to_part_assembly()
