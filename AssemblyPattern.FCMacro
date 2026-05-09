@@ -61,21 +61,29 @@ def move_array_to_part_assembly():
     # 3. Das Array in diese Assembly verschieben
     if array_obj in parent_assembly.Group:
         App.Console.PrintMessage(f"Array '{array_obj.Label}' ist bereits in '{parent_assembly.Label}'.\n")
+            # ...
     else:
-        # Dokument-Transaktion starten (macht das Ganze stabiler)
-        doc.openTransaction("Array Move")
+        # 1. Die globale Position (Welt-Koordinate) VOR dem Verschieben merken
+        global_placement = array_obj.getGlobalPlacement()
         
-        # Verschieben
+        # 2. Verschieben
         parent_assembly.addObject(array_obj)
         
-        # Status bereinigen, um den "still touched" Loop zu verhindern
+        # 3. KORREKTUR: Die Position im neuen Container so anpassen, 
+        # dass die Welt-Koordinate gleich bleibt (Matrix-Mathematik)
+        # Formel: (Parent-Invers) * Welt-Position
+        parent_m_inv = parent_assembly.getGlobalPlacement().inverse().toMatrix()
+        local_m = parent_m_inv.multiply(global_placement.toMatrix())
+        array_obj.Placement = App.Placement(local_m)
+
+        # 4. Den "Still Touched" Loop unterbrechen
         array_obj.purgeTouched()
-        
-        # Neu berechnen
         doc.recompute()
-        doc.commitTransaction()
         
-        App.Console.PrintMessage(f"ERFOLG: '{array_obj.Label}' verschoben.\n")
+        # 5. Ein zweiter Recompute NUR für die Assembly
+        parent_assembly.recompute()
+        
+        App.Console.PrintMessage(f"ERFOLG: '{array_obj.Label}' verschoben und stabilisiert.\n")
 
 
 
