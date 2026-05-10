@@ -23,47 +23,62 @@ def convert_array_to_bom_group():
         App.Console.PrintError("Keine Assembly gefunden.\n")
         return
 
-    # 2. Eine Gruppe für die Ordnung und die BOM erstellen
-    group_name = f"Gruppe_{base_obj.Label}"
+    # 2. Expansion erzwingen (Das ist der Schlüssel!)
+    array_obj.ExpandArray = True
+    doc.recompute()
+
+    # 3. Positionen auslesen - ROBUSTER WEG
+    placements = []
+    # Wir schauen in die 'OutList'. Wenn ExpandArray an ist, liegen dort die Kopien als Objekte.
+    sub_elements = [o for o in array_obj.OutList if hasattr(o, "Placement")]
+    
+    if sub_elements:
+        placements = [el.Placement for el in sub_elements]
+    elif hasattr(array_obj, "Proxy") and hasattr(array_obj.Proxy, "getPlacements"):
+        # Zweiter Versuch über den Proxy
+        placements = array_obj.Proxy.getPlacements(array_obj)
+    else:
+        # Letzter Versuch über den Geometrie-Compound
+        placements = [c.Placement for c in array_obj.Shape.Compounds]
+
+    if not placements:
+        App.Console.PrintError("FEHLER: Konnte keine Positionen extrahieren.\n")
+        return
+
+    # 4. Gruppe erstellen
+    group_name = f"Muster_Links_{base_obj.Label}"
     pattern_group = doc.getObject(group_name)
     if not pattern_group:
         pattern_group = doc.addObject("App::DocumentObjectGroup", group_name)
-        pattern_group.Label = f"Muster {base_obj.Label}"
-        # Die Gruppe in die Assembly einsortieren
+        pattern_group.Label = f"Kaufteile {base_obj.Label}"
         parent_asm.addObject(pattern_group)
 
-    # 3. Placements holen (mit unserem Force-Expand-Trick von vorhin)
-    array_obj.ExpandArray = True
-    doc.recompute()
-    placements = array_obj.Proxy.getPlacements(array_obj)
-
-    # 4. Links erstellen und in die Gruppe schieben
-    doc.openTransaction("BOM Grouping")
-    
+    # 5. Links erstellen
+    doc.openTransaction("BOM Clean Grouping")
     m_asm_inv = parent_asm.getGlobalPlacement().inverse().toMatrix()
     m_array_global = array_obj.getGlobalPlacement().toMatrix()
 
     for i, p in enumerate(placements):
         link_name = f"Lnk_{base_obj.Name}_{i:02d}"
+        
+        # Falls der Link schon existiert, löschen wir ihn (für Updates)
+        old_lnk = doc.getObject(link_name)
+        if old_lnk: doc.removeObject(old_lnk.Name)
+            
         new_link = doc.addObject("App::Link", link_name)
         new_link.setLink(base_obj)
-        new_link.Label = base_obj.Label # Gleiches Label für korrekte Zählung
+        new_link.Label = base_obj.Label
         
-        # Matrix-Berechnung
         m_copy_world = m_array_global.multiply(p.toMatrix())
         new_link.Placement = App.Placement(m_asm_inv.multiply(m_copy_world))
         
-        # Link in die Gruppe schieben
         pattern_group.addObject(new_link)
 
-    # 5. DAS WICHTIGSTE FÜR DIE KAUFMENGE:
-    # Wir blenden das Array aus.
+    # 6. Original-Array "stumm" schalten
     array_obj.Visibility = False
-    # Das Original-Teil sollte NICHT in der gleichen Gruppe wie die Links liegen,
-    # damit die BOM es nicht als 5. Teil zählt, wenn "detail Parts" an ist.
     
     doc.commitTransaction()
     doc.recompute()
-    App.Console.PrintMessage(f"ERFOLG: {len(placements)} Balken in Gruppe '{group_name}' erstellt.\n")
+    App.Console.PrintMessage(f"ERFOLG: {len(placements)} Balken in '{pattern_group.Label}' einsortiert.\n")
 
 convert_array_to_bom_group()
