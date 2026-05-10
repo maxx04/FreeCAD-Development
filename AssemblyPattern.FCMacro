@@ -1,97 +1,69 @@
 import FreeCAD as App
 import FreeCADGui as Gui
 
-def convert_array_to_links():
+def convert_array_to_bom_group():
     doc = App.ActiveDocument
-    if not doc: return
-
-    App.Console.PrintMessage("\n" + ">"*10 + " Array-to-Links Conversion " + "<"*10 + "\n")
-    
     selection = Gui.Selection.getSelection()
+    
     if len(selection) != 1:
-        App.Console.PrintError("Bitte ein Draft-Array auswählen.\n")
+        App.Console.PrintError("Bitte das Draft-Array auswählen.\n")
         return
 
     array_obj = selection[0]
-    if not hasattr(array_obj, "Base") or array_obj.Base is None:
-        return
-
     base_obj = array_obj.Base
     
-    # 1. Parent Assembly finden (wie gehabt)
-    parent_assembly = None
+    # 1. Parent Assembly finden
+    parent_asm = None
     for p in base_obj.InList:
         if p.isDerivedFrom("App::Part"):
-            parent_assembly = p
+            parent_asm = p
             break
-
-    if not parent_assembly:
-        App.Console.PrintError("Basis-Teil ist in keiner Assembly.\n")
+            
+    if not parent_asm:
+        App.Console.PrintError("Keine Assembly gefunden.\n")
         return
 
-    # 2. Positionen aus dem Array extrahieren (FORCIERTER WEG)
-    
-    # Merken, wie es vorher war
-    old_expand = getattr(array_obj, "ExpandArray", False)
-    
-    # Schritt A: Wir zwingen das Array zur Expansion
+    # 2. Eine Gruppe für die Ordnung und die BOM erstellen
+    group_name = f"Gruppe_{base_obj.Label}"
+    pattern_group = doc.getObject(group_name)
+    if not pattern_group:
+        pattern_group = doc.addObject("App::DocumentObjectGroup", group_name)
+        pattern_group.Label = f"Muster {base_obj.Label}"
+        # Die Gruppe in die Assembly einsortieren
+        parent_asm.addObject(pattern_group)
+
+    # 3. Placements holen (mit unserem Force-Expand-Trick von vorhin)
     array_obj.ExpandArray = True
-    doc.recompute() # Wichtig, damit FreeCAD die Einzelteile berechnet
+    doc.recompute()
+    placements = array_obj.Proxy.getPlacements(array_obj)
+
+    # 4. Links erstellen und in die Gruppe schieben
+    doc.openTransaction("BOM Grouping")
     
-    placements = []
-    
-    # Schritt B: Jetzt greifen wir die Placements ab
-    if hasattr(array_obj, "Proxy") and hasattr(array_obj.Proxy, "getPlacements"):
-        placements = array_obj.Proxy.getPlacements(array_obj)
-    
-    # Falls das immer noch nicht geht, nutzen wir die OutList (die Kinder des Arrays)
-    if len(placements) <= 1:
-        placements = [o.Placement for o in array_obj.OutList if hasattr(o, "Placement")]
-
-    # Schritt C: Zurück zum alten Zustand (optional, falls du das Array behalten willst)
-    # array_obj.ExpandArray = old_expand 
-
-    if len(placements) <= 1:
-        App.Console.PrintError("FEHLER: Immer noch nur 1 Position. Das Array gibt seine Daten nicht frei.\n")
-        return
-
-    App.Console.PrintMessage(f"ERFOLG: {len(placements)} Kopien identifiziert!\n")
-
-
-    # 3. Links erstellen und einsortieren
-    doc.openTransaction("Convert Array to Links")
-    
-    # Wir brauchen die Matrix der Assembly für die globale Korrektur
-    m_asm_inv = parent_assembly.getGlobalPlacement().inverse().toMatrix()
+    m_asm_inv = parent_asm.getGlobalPlacement().inverse().toMatrix()
     m_array_global = array_obj.getGlobalPlacement().toMatrix()
 
     for i, p in enumerate(placements):
-        # Name und Label wie das Originalteil + Index
         link_name = f"Lnk_{base_obj.Name}_{i:02d}"
         new_link = doc.addObject("App::Link", link_name)
         new_link.setLink(base_obj)
+        new_link.Label = base_obj.Label # Gleiches Label für korrekte Zählung
         
-        # Jedes Teil bekommt das Label des Basis-Objekts (WICHTIG FÜR BOM)
-        new_link.Label = base_obj.Label 
+        # Matrix-Berechnung
+        m_copy_world = m_array_global.multiply(p.toMatrix())
+        new_link.Placement = App.Placement(m_asm_inv.multiply(m_copy_world))
         
-        # Position berechnen: Array-Welt-Position * Relative Kopie-Position
-        # Dann umrechnen in die lokale Assembly-Welt
-        m_copy_local_to_array = p.toMatrix()
-        m_copy_world = m_array_global.multiply(m_copy_local_to_array)
-        m_final_local = m_asm_inv.multiply(m_copy_world)
-        
-        new_link.Placement = App.Placement(m_final_local)
-        
-        # Link in die Assembly schieben
-        parent_assembly.addObject(new_link)
+        # Link in die Gruppe schieben
+        pattern_group.addObject(new_link)
 
-    # 4. Das alte Array "entsorgen"
-    # Wir löschen es nicht direkt, sondern verstecken es und nehmen es aus der BOM
+    # 5. DAS WICHTIGSTE FÜR DIE KAUFMENGE:
+    # Wir blenden das Array aus.
     array_obj.Visibility = False
+    # Das Original-Teil sollte NICHT in der gleichen Gruppe wie die Links liegen,
+    # damit die BOM es nicht als 5. Teil zählt, wenn "detail Parts" an ist.
     
     doc.commitTransaction()
     doc.recompute()
-    App.Console.PrintMessage("ERFOLG: Array durch Links ersetzt. BOM sollte nun stimmen!\n")
+    App.Console.PrintMessage(f"ERFOLG: {len(placements)} Balken in Gruppe '{group_name}' erstellt.\n")
 
-# Start
-convert_array_to_links()
+convert_array_to_bom_group()
