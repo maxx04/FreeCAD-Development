@@ -29,14 +29,29 @@ def convert_array_to_links():
         App.Console.PrintError("Basis-Teil ist in keiner Assembly.\n")
         return
 
-    # 2. Positionen aus dem Array extrahieren
-    # Wir nutzen die berechneten Platzierungen der Array-Elemente
-    if hasattr(array_obj, "ArrayType"):
-        # Hol die Placements (funktioniert bei den meisten Draft-Arrays)
+    # 2. Positionen aus dem Array extrahieren (ROBUSTERER WEG)
+    placements = []
+    
+    # Weg A: Direkt über das Objekt (falls verfügbar)
+    if hasattr(array_obj, "getPlacements"):
+        placements = array_obj.getPlacements()
+    
+    # Weg B: Über das Proxy-Objekt (Häufig bei Draft-Arrays)
+    elif hasattr(array_obj, "Proxy") and hasattr(array_obj.Proxy, "getPlacements"):
         placements = array_obj.Proxy.getPlacements(array_obj)
+    
+    # Weg C: Manuelle Berechnung (Falls A und B scheitern)
     else:
-        App.Console.PrintError("Objekt ist kein unterstütztes Draft-Array.\n")
+        # Wir versuchen die Platzierungen aus dem Shape-Compound zu ziehen
+        if hasattr(array_obj, "Shape") and array_obj.Shape.Compounds:
+            placements = [c.Placement for c in array_obj.Shape.Compounds]
+
+    if not placements:
+        App.Console.PrintError("FEHLER: Konnte keine Positionen im Array finden.\n")
         return
+
+    App.Console.PrintMessage(f"DEBUG: {len(placements)} Positionen gefunden.\n")
+
 
     App.Console.PrintMessage(f"Erstelle {len(placements)} Links für {base_obj.Label}...\n")
 
