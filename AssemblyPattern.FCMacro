@@ -10,8 +10,7 @@ try:
     # debugpy.wait_for_client() 
 except Exception as e:
     print(f"Debugger-Info: {str(e)}")
-
-
+    
 import FreeCAD as App
 import FreeCADGui as Gui
 
