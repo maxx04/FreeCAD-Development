@@ -1,90 +1,79 @@
 import FreeCAD as App
 import FreeCADGui as Gui
-import debugpy
-try:
-    debugpy.configure(python="python3") # Pfad zu deinem System-Python
-    debugpy.listen(5678)
-    debugpy.breakpoint()
-    print("Warte auf VS Code...")
-    # Optional: Das Makro pausiert hier, bis du in VSC auf F5 drückst
-    # debugpy.wait_for_client() 
-except Exception as e:
-    print(f"Debugger-Info: {str(e)}")
-    
-import FreeCAD as App
-import FreeCADGui as Gui
 
-def move_array_to_part_assembly():
+def convert_array_to_links():
     doc = App.ActiveDocument
+    if not doc: return
 
-    App.Console.PrintMessage("\n" + ">"*10 + " Array-to-Parent-Assembly " + "<"*10 + "\n")
+    App.Console.PrintMessage("\n" + ">"*10 + " Array-to-Links Conversion " + "<"*10 + "\n")
     
-        # 1. Prüfung: Nur ein Objekt auswählen (das Array)
     selection = Gui.Selection.getSelection()
     if len(selection) != 1:
-        App.Console.PrintError("Bitte wähle genau EIN Draft-Array aus.\n")
+        App.Console.PrintError("Bitte ein Draft-Array auswählen.\n")
         return
 
-    # KORREKTUR: Das erste Element aus der Liste nehmen
     array_obj = selection[0]
-    
-    # Jetzt funktioniert .Label, da array_obj kein 'list' mehr ist
     if not hasattr(array_obj, "Base") or array_obj.Base is None:
-        App.Console.PrintError(f"Das Objekt '{array_obj.Label}' ist kein Muster oder hat keine Basis.\n")
         return
-
 
     base_obj = array_obj.Base
-    App.Console.PrintMessage(f"Basis-Teil identifiziert: {base_obj.Label}\n")
-
-    # 2. Die Assembly des Basis-Teils suchen (Nach oben wandern)
+    
+    # 1. Parent Assembly finden (wie gehabt)
     parent_assembly = None
-    if base_obj.InList:
-        for p in base_obj.InList:
-            if p.isDerivedFrom("App::Part"):
-                parent_assembly = p
-                break
+    for p in base_obj.InList:
+        if p.isDerivedFrom("App::Part"):
+            parent_assembly = p
+            break
 
     if not parent_assembly:
-        App.Console.PrintMessage(f"Basis '{base_obj.Label}' liegt in keiner Unterbaugruppe.\n")
+        App.Console.PrintError("Basis-Teil ist in keiner Assembly.\n")
         return
 
-    # 3. Das Array in diese Assembly verschieben
-        # Sicherstellen, dass wir das Dokument greifen
-    doc = App.ActiveDocument
-    
-    if not doc:
-        App.Console.PrintError("FEHLER: Kein aktives Dokument gefunden!\n")
-        return
-
-    # 3. Das Array in diese Assembly verschieben
-    if array_obj in parent_assembly.Group:
-        App.Console.PrintMessage(f"Array '{array_obj.Label}' ist bereits in '{parent_assembly.Label}'.\n")
-            # ...
+    # 2. Positionen aus dem Array extrahieren
+    # Wir nutzen die berechneten Platzierungen der Array-Elemente
+    if hasattr(array_obj, "ArrayType"):
+        # Hol die Placements (funktioniert bei den meisten Draft-Arrays)
+        placements = array_obj.Proxy.getPlacements(array_obj)
     else:
-        # 1. Die globale Position (Welt-Koordinate) VOR dem Verschieben merken
-        global_placement = array_obj.getGlobalPlacement()
-        
-        # 2. Verschieben
-        parent_assembly.addObject(array_obj)
-        
-        # 3. KORREKTUR: Die Position im neuen Container so anpassen, 
-        # dass die Welt-Koordinate gleich bleibt (Matrix-Mathematik)
-        # Formel: (Parent-Invers) * Welt-Position
-        parent_m_inv = parent_assembly.getGlobalPlacement().inverse().toMatrix()
-        local_m = parent_m_inv.multiply(global_placement.toMatrix())
-        array_obj.Placement = App.Placement(local_m)
+        App.Console.PrintError("Objekt ist kein unterstütztes Draft-Array.\n")
+        return
 
-        # 4. Den "Still Touched" Loop unterbrechen
-        array_obj.purgeTouched()
-        doc.recompute()
-        
-        # 5. Ein zweiter Recompute NUR für die Assembly
-        parent_assembly.recompute()
-        
-        App.Console.PrintMessage(f"ERFOLG: '{array_obj.Label}' verschoben und stabilisiert.\n")
+    App.Console.PrintMessage(f"Erstelle {len(placements)} Links für {base_obj.Label}...\n")
 
+    # 3. Links erstellen und einsortieren
+    doc.openTransaction("Convert Array to Links")
+    
+    # Wir brauchen die Matrix der Assembly für die globale Korrektur
+    m_asm_inv = parent_assembly.getGlobalPlacement().inverse().toMatrix()
+    m_array_global = array_obj.getGlobalPlacement().toMatrix()
 
+    for i, p in enumerate(placements):
+        # Name und Label wie das Originalteil + Index
+        link_name = f"Lnk_{base_obj.Name}_{i:02d}"
+        new_link = doc.addObject("App::Link", link_name)
+        new_link.setLink(base_obj)
+        
+        # Jedes Teil bekommt das Label des Basis-Objekts (WICHTIG FÜR BOM)
+        new_link.Label = base_obj.Label 
+        
+        # Position berechnen: Array-Welt-Position * Relative Kopie-Position
+        # Dann umrechnen in die lokale Assembly-Welt
+        m_copy_local_to_array = p.toMatrix()
+        m_copy_world = m_array_global.multiply(m_copy_local_to_array)
+        m_final_local = m_asm_inv.multiply(m_copy_world)
+        
+        new_link.Placement = App.Placement(m_final_local)
+        
+        # Link in die Assembly schieben
+        parent_assembly.addObject(new_link)
+
+    # 4. Das alte Array "entsorgen"
+    # Wir löschen es nicht direkt, sondern verstecken es und nehmen es aus der BOM
+    array_obj.Visibility = False
+    
+    doc.commitTransaction()
+    doc.recompute()
+    App.Console.PrintMessage("ERFOLG: Array durch Links ersetzt. BOM sollte nun stimmen!\n")
 
 # Start
-move_array_to_part_assembly()
+convert_array_to_links()

@@ -23,3 +23,5 @@ Um im Baum zu navigieren, nutzt man:
  Robustheit bei Dokumentzugriffen: Der Zugriff auf App.ActiveDocument sollte immer validiert werden (if not doc:). In komplexen Baugruppen-Operationen ist es zudem ratsam, openTransaction() und commitTransaction() zu nutzen, um die Datenintegrität während des Verschiebens zu sichern und Recompute-Fehler zu minimieren.
  
  Verschieben in Container (Matrix-Fix): Wenn ein Objekt in ein App::Part verschoben wird, muss seine Platzierung von Welt-Koordinaten in lokale Koordinaten umgerechnet werden (ParentInverse * WorldPlacement). Ohne diese Korrektur bleibt das Objekt im Status "Touched", da die Assembly-Logik und die Objekt-Logik widersprüchliche Positionen berechnen wollen.
+
+ Client-Kritik: Wenn ein logisch korrektes Makro in einer Datei versagt, in einer neuen aber funktioniert, liegt das oft an korrupten internen Abhängigkeits-Graphen (DAG) der alten Datei. In FreeCAD 1.1 hilft es oft, die Struktur in einem frischen Dokument neu aufzubauen, anstatt gegen "Geister-Fehler" zu kämpfen.
