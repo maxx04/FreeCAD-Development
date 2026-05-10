@@ -25,3 +25,6 @@ Um im Baum zu navigieren, nutzt man:
  Verschieben in Container (Matrix-Fix): Wenn ein Objekt in ein App::Part verschoben wird, muss seine Platzierung von Welt-Koordinaten in lokale Koordinaten umgerechnet werden (ParentInverse * WorldPlacement). Ohne diese Korrektur bleibt das Objekt im Status "Touched", da die Assembly-Logik und die Objekt-Logik widersprüchliche Positionen berechnen wollen.
 
  Client-Kritik: Wenn ein logisch korrektes Makro in einer Datei versagt, in einer neuen aber funktioniert, liegt das oft an korrupten internen Abhängigkeits-Graphen (DAG) der alten Datei. In FreeCAD 1.1 hilft es oft, die Struktur in einem frischen Dokument neu aufzubauen, anstatt gegen "Geister-Fehler" zu kämpfen.
+
+ Shape-Explosion: Wenn getPlacements nur ein Element liefert, kann man über obj.Shape.Compounds auf die Platzierungen der tatsächlichen Geometrie-Kopien zugreifen. Dies ist besonders bei Draft-Arrays wichtig, die auf Expand Array = False stehen, da sie ihre Kopien in einem einzigen Compound-Objekt „verstecken“.
+ 

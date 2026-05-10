@@ -29,31 +29,34 @@ def convert_array_to_links():
         App.Console.PrintError("Basis-Teil ist in keiner Assembly.\n")
         return
 
-    # 2. Positionen aus dem Array extrahieren (ROBUSTERER WEG)
+    # 2. Positionen aus dem Array extrahieren (FORCIERTER WEG)
+    
+    # Merken, wie es vorher war
+    old_expand = getattr(array_obj, "ExpandArray", False)
+    
+    # Schritt A: Wir zwingen das Array zur Expansion
+    array_obj.ExpandArray = True
+    doc.recompute() # Wichtig, damit FreeCAD die Einzelteile berechnet
+    
     placements = []
     
-    # Weg A: Direkt über das Objekt (falls verfügbar)
-    if hasattr(array_obj, "getPlacements"):
-        placements = array_obj.getPlacements()
-    
-    # Weg B: Über das Proxy-Objekt (Häufig bei Draft-Arrays)
-    elif hasattr(array_obj, "Proxy") and hasattr(array_obj.Proxy, "getPlacements"):
+    # Schritt B: Jetzt greifen wir die Placements ab
+    if hasattr(array_obj, "Proxy") and hasattr(array_obj.Proxy, "getPlacements"):
         placements = array_obj.Proxy.getPlacements(array_obj)
     
-    # Weg C: Manuelle Berechnung (Falls A und B scheitern)
-    else:
-        # Wir versuchen die Platzierungen aus dem Shape-Compound zu ziehen
-        if hasattr(array_obj, "Shape") and array_obj.Shape.Compounds:
-            placements = [c.Placement for c in array_obj.Shape.Compounds]
+    # Falls das immer noch nicht geht, nutzen wir die OutList (die Kinder des Arrays)
+    if len(placements) <= 1:
+        placements = [o.Placement for o in array_obj.OutList if hasattr(o, "Placement")]
 
-    if not placements:
-        App.Console.PrintError("FEHLER: Konnte keine Positionen im Array finden.\n")
+    # Schritt C: Zurück zum alten Zustand (optional, falls du das Array behalten willst)
+    # array_obj.ExpandArray = old_expand 
+
+    if len(placements) <= 1:
+        App.Console.PrintError("FEHLER: Immer noch nur 1 Position. Das Array gibt seine Daten nicht frei.\n")
         return
 
-    App.Console.PrintMessage(f"DEBUG: {len(placements)} Positionen gefunden.\n")
+    App.Console.PrintMessage(f"ERFOLG: {len(placements)} Kopien identifiziert!\n")
 
-
-    App.Console.PrintMessage(f"Erstelle {len(placements)} Links für {base_obj.Label}...\n")
 
     # 3. Links erstellen und einsortieren
     doc.openTransaction("Convert Array to Links")
