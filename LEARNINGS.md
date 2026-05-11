@@ -28,3 +28,7 @@ Um im Baum zu navigieren, nutzt man:
 
  Shape-Explosion: Wenn getPlacements nur ein Element liefert, kann man über obj.Shape.Compounds auf die Platzierungen der tatsächlichen Geometrie-Kopien zugreifen. Dies ist besonders bei Draft-Arrays wichtig, die auf Expand Array = False stehen, da sie ihre Kopien in einem einzigen Compound-Objekt „verstecken“.
  
+ ## Label-Degradierung: 
+ In FreeCAD 1.1 ist das Label leider nicht mehr nur ein reiner "Anzeigename" (wie in Creo), sondern wird von der GUI als Sekundär-Index missbraucht. Das macht das Label für die Stückliste (BOM) unzuverlässig, da die GUI es eigenmächtig ändert. 
+
+ 
