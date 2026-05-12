@@ -2,11 +2,15 @@
     "python.analysis.extraPaths": [
         "~/.local/lib/python3.11/site-packages",
         "/home/maxx/Documents/FreeCAD-Resources/squashfs-root/usr/lib",
-        "~/.local/share/FreeCAD/v1-1/Mod"
+        "~/.local/share/FreeCAD/v1-1/Mod",
+        "${workspaceFolder}/.venv/lib/python3.11/site-packages",
+        "${workspaceFolder}/.venv/lib/python3.12/site-packages"
     ],
     "python.autoComplete.extraPaths": [
         "~/.local/lib/python3.11/site-packages",
         "/home/maxx/Documents/FreeCAD-Resources/squashfs-root/usr/lib",
-         "~/.local/share/FreeCAD/v1-1/Mod"
+         "~/.local/share/FreeCAD/v1-1/Mod",
+         "${workspaceFolder}/.venv/lib/python3.11/site-packages",
+        "${workspaceFolder}/.venv/lib/python3.12/site-packages"
     ]
 }

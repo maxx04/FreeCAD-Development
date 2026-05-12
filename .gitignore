@@ -9,3 +9,4 @@ __pycache__/
 
 # VS Code Einstellungen (optional, falls du sie nicht teilen willst)
 #.vscode/
+.venv/
