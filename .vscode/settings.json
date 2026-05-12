@@ -12,5 +12,9 @@
          "~/.local/share/FreeCAD/v1-1/Mod",
          "${workspaceFolder}/.venv/lib/python3.11/site-packages",
         "${workspaceFolder}/.venv/lib/python3.12/site-packages"
-    ]
+    ],
+    
+   //"python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+   // "python.terminal.activateEnvInSelectedTerminal": true
 }
+
