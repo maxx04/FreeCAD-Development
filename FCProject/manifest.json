@@ -1,0 +1,63 @@
+{
+  "OpenTheme": {
+    "addon_id": "OpenTheme",
+    "migrated": false,
+    "first_installed": "2026-05-03T16:18:50.761837+00:00",
+    "last_updated": "2026-05-03T16:18:50.761845+00:00",
+    "branch_display_name": "main",
+    "extra_files": [],
+    "freecad_version": [
+      "1",
+      "1",
+      "1"
+    ]
+  },
+  "sheetmetal": {
+    "addon_id": "sheetmetal",
+    "migrated": false,
+    "first_installed": "2026-05-03T16:40:59.815377+00:00",
+    "last_updated": "2026-05-11T15:19:46.919847+00:00",
+    "branch_display_name": "master",
+    "extra_files": [
+      "/home/maxx/.local/share/FreeCAD/v1-1/Macro/SheetMetalUnfoldUpdater.FCMacro"
+    ],
+    "freecad_version": [
+      "1",
+      "1",
+      "1"
+    ]
+  },
+  "addFC": {
+    "addon_id": "addFC",
+    "migrated": false,
+    "first_installed": "2026-05-03T16:42:14.141665+00:00",
+    "last_updated": "2026-05-11T15:16:52.542807+00:00",
+    "branch_display_name": "main",
+    "extra_files": [],
+    "freecad_version": [
+      "1",
+      "1",
+      "1"
+    ]
+  },
+  "FCProject": {
+    "addon_id": "FCProject",
+    "description": "Projektmanagement und BOM-Strukturierung für Assemblies",
+    "version": "1.0.0",
+    "author": "maxx",
+    "maintainer": "maxx",
+    "license": "LGPL-2.1-or-later",
+    "url": "https://github.com",
+    "freecad_version": [1, 1, 0],
+    "tags": ["Assembly", "BOM", "Management", "Workflow"],
+    "content": {
+        "workbenches": [
+            "FCProjectWorkbench"
+        ],
+        "macros": [],
+        "commands": [
+            "FCProject_HelloWorld"
+        ]
+    }
+  }
+}
