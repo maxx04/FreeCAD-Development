@@ -39,6 +39,11 @@ Um im Baum zu navigieren, nutzt man:
 
 nitGui Path Resolution (__file__ limitation): In der InitGui.py darf die Variable __file__ nicht zur Pfadbestimmung verwendet werden, da FreeCAD das Skript im globalen Kontext via String-Execution lädt. Die Ermittlung des Modul-Pfads muss stattdessen via App.getUserAppDataDir() kombiniert mit dem Workbench-Ordnernamen erfolgen.
 
+Workbench Lifecycle Hooks (Activated): FreeCAD-Workbenches bieten eingebaute Lebenszyklus-Methoden. Während Initialize() nur einmal beim Systemstart geladen wird, triggert Activated() jedes Mal, wenn der Benutzer die Workbench im GUI-Menü auswählt. Dies ist der perfekte Ort für automatische Workspace-Prüfungen, PDM-Kontext-Scans oder das automatische Einlesen von Projekt-Konfigurationsdateien (.json), ohne dass der Anwender manuell Knöpfe drücken muss.
+
+Command Execution in Lifecycle Hooks: Um andere Workbench-Befehle innerhalb von Lifecycle-Methoden wie Activated() automatisiert auszuführen, sollte nicht versucht werden, die Instanz über den C++ Kern (FreeCADGui.getCommand) abzufragen. Der direkte Python-Import des Ziel-Moduls und das anschließende manuelle Aufrufen der .Activated()-Methode der Klasse ist der robustere und API-unabhängige Weg [1, 2].
 
 
- 
+Lazy Module Loading: In FreeCAD 1.1 sind spezialisierte Objekttypen wie Assembly::Assembly oder PartDesign::Body beim Systemstart nicht zwingend registriert. Um einen is not a document object type-Fehler im Skript zu verhindern, muss das entsprechende C++ Modul programmatisch im Hintergrund über den Befehl App.getBus().send("App", "LoadModule", "ModuleName") erzwungen werden.
+
+Document Name Sanitization: Beim Erstellen von Dokumenten via App.newDocument(String) kann der interne C++ Name von der übergebenen Zeichenkette abweichen (z. B. durch String-Bereinigungen des Kerns). Für nachfolgende Befehle wie App.setActiveDocument() muss zwingend die Objekteigenschaft new_doc.Name abgefragt werden, um unknown document Verknüpfungsfehler zu verhindern.
