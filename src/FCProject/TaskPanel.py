@@ -23,9 +23,17 @@ class FCProjectTaskPanel:
         self.type_combo.addItem("G - Geometrie (Skelett/Referenz)", "G")
         layout.addWidget(self.type_combo)
         
-        # Teilnummer
-        layout.addWidget(QtWidgets.QLabel("<b>Teilnummer (z.B. 001):</b>"))
-        self.number_input = QtWidgets.QLineEdit("001")
+        # AUTOMATISCHE NUMMER HOLEN
+        proj_name, proj_dir = self._get_project_context()
+        suggested_num = "0001"
+        if proj_name and proj_dir:
+            from PartCreator import PartCreator
+            checker = PartCreator(proj_name, proj_dir)
+            suggested_num = checker.get_next_available_number()
+
+        # Teilnummer-Feld mit dem automatischen Vorschlag befüllen
+        layout.addWidget(QtWidgets.QLabel("<b>Teilnummer:</b>"))
+        self.number_input = QtWidgets.QLineEdit(suggested_num)
         layout.addWidget(self.number_input)
         
         # Button zum Auslösen
@@ -34,6 +42,7 @@ class FCProjectTaskPanel:
         layout.addWidget(self.create_btn)
         
         layout.addStretch()
+
 
     def _get_project_context(self):
         """Sucht die JSON und extrahiert Pfad und Projektname."""
