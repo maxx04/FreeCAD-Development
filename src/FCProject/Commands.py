@@ -3,7 +3,18 @@ import os
 import debugpy
 import FreeCAD as App
 import FreeCADGui as Gui
-from PySide6 import QtWidgets
+# Modul-Import für plattform- und versionsunabhängiges Qt
+try:
+    # Standardweg für FreeCAD 1.1 (Qt6)
+    from PySide6 import QtWidgets, QtCore, QtGui
+except ImportError:
+    # Fallback-Sicherungen für ältere Versionen
+    try:
+        from PySide2 import QtWidgets, QtCore, QtGui
+    except ImportError:
+        from PySide import QtWidgets, QtCore, QtGui
+
+
 
 # --- DEBUGGER SETUP ---
 # Unterdrückt die Validierungswarnung für Python 3.11+
@@ -64,7 +75,11 @@ class FCProjectTaskPanel:
 
     def getStandardButtons(self):
         # Zeigt nur einen Schließen-Button am unteren Rand des TaskPanels
-        return int(QtWidgets.QDialogButtonBox.Close)
+        return QtWidgets.QDialogButtonBox.Close
+
+
+
+
 
 # --- COMMAND KLASSEN (Für die Toolbar) ---
 

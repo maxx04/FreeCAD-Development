@@ -31,4 +31,14 @@ Um im Baum zu navigieren, nutzt man:
  ## Label-Degradierung: 
  In FreeCAD 1.1 ist das Label leider nicht mehr nur ein reiner "Anzeigename" (wie in Creo), sondern wird von der GUI als Sekundär-Index missbraucht. Das macht das Label für die Stückliste (BOM) unzuverlässig, da die GUI es eigenmächtig ändert. 
 
+ PySide Versioning (FreeCAD 1.1): FreeCAD 1.1 basiert nativ auf PySide6 (Qt6) [1]. Beim Entwickeln externer Workbenches sichert ein try-except-Importblock die Kompatibilität zwischen der lokalen VS Code Entwicklungsumgebung (wo PySide6 installiert ist) und der internen FreeCAD-Laufzeitumgebung.
+ 
+ Modular Architecture: Große Erweiterungen sollten pro Feature-Set eine eigene Datei spendieren bekommen (z.B. ProjectManager.py, PartCreator.py). In der InitGui.py werden diese Module über einfache import-Statements geladen, wodurch die jeweiligen Gui.addCommand()-Aufrufe ausgeführt und registriert werden [1].
+
+ Python Path Injection (sys.path): Wenn ein Addon über symbolische Links aus einer tieferen Git-Struktur (src/AddonName) geladen wird, verliert der Python-Interpreter beim Start oft den Bezug zu den Submodulen. Durch das Einfügen von sys.path.append(os.path.dirname(__file__)) am Anfang der InitGui.py wird der aktuelle Ordner erzwungen. Das verhindert ModuleNotFoundError-Abstürze beim Laden von Commands oder ProjectManager.
+
+nitGui Path Resolution (__file__ limitation): In der InitGui.py darf die Variable __file__ nicht zur Pfadbestimmung verwendet werden, da FreeCAD das Skript im globalen Kontext via String-Execution lädt. Die Ermittlung des Modul-Pfads muss stattdessen via App.getUserAppDataDir() kombiniert mit dem Workbench-Ordnernamen erfolgen.
+
+
+
  
