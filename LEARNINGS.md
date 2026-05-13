@@ -47,3 +47,5 @@ Command Execution in Lifecycle Hooks: Um andere Workbench-Befehle innerhalb von 
 Lazy Module Loading: In FreeCAD 1.1 sind spezialisierte Objekttypen wie Assembly::Assembly oder PartDesign::Body beim Systemstart nicht zwingend registriert. Um einen is not a document object type-Fehler im Skript zu verhindern, muss das entsprechende C++ Modul programmatisch im Hintergrund über den Befehl App.getBus().send("App", "LoadModule", "ModuleName") erzwungen werden.
 
 Document Name Sanitization: Beim Erstellen von Dokumenten via App.newDocument(String) kann der interne C++ Name von der übergebenen Zeichenkette abweichen (z. B. durch String-Bereinigungen des Kerns). Für nachfolgende Befehle wie App.setActiveDocument() muss zwingend die Objekteigenschaft new_doc.Name abgefragt werden, um unknown document Verknüpfungsfehler zu verhindern.
+
+
