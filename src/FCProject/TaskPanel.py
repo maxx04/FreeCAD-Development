@@ -1,38 +1,75 @@
-from PySide import QtWidgets
-import FreeCADGui as Gui
+# Macro Version: 1.6.0 - FCProject: Reines GUI TaskPanel mit PDM-Anbindung
+import os
+import json
+import FreeCAD as App
+from PySide6 import QtWidgets
+# Wir importieren die reine Logik-Klasse
+from PartCreator import PartCreator
 
 class FCProjectTaskPanel:
+    """TaskPanel für die Benutzeroberfläche des PDM-Creators."""
     def __init__(self):
-        # Das ist das Herzstück deines Addons
         self.form = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.form)
         
-        layout.addWidget(QtWidgets.QLabel("### FCProject: Neues Teil ###"))
+        layout.addWidget(QtWidgets.QLabel("<h3>FCProject: PDM-Creator</h3>"))
         
-        self.name_input = QtWidgets.QLineEdit("P1")
-        layout.addWidget(QtWidgets.QLabel("Bauteil-Name:"))
-        layout.addWidget(self.name_input)
+        # Typ-Auswahl
+        layout.addWidget(QtWidgets.QLabel("<b>Komponenten-Typ:</b>"))
+        self.type_combo = QtWidgets.QComboBox()
+        self.type_combo.addItem("P - Einzelteil (Part)", "P")
+        self.type_combo.addItem("A - Baugruppe (Assembly)", "A")
+        self.type_combo.addItem("R - Halbzeug (Profile/Rohmaterial)", "R")
+        self.type_combo.addItem("G - Geometrie (Skelett/Referenz)", "G")
+        layout.addWidget(self.type_combo)
         
-        self.btn = QtWidgets.QPushButton("Erstellen & ArticleID setzen")
-        self.btn.clicked.connect(self.create_part)
-        layout.addWidget(self.btn)
+        # Teilnummer
+        layout.addWidget(QtWidgets.QLabel("<b>Teilnummer (z.B. 001):</b>"))
+        self.number_input = QtWidgets.QLineEdit("001")
+        layout.addWidget(self.number_input)
+        
+        # Button zum Auslösen
+        self.create_btn = QtWidgets.QPushButton("Neue Komponente & Datei erstellen")
+        self.create_btn.clicked.connect(self.on_create_clicked)
+        layout.addWidget(self.create_btn)
         
         layout.addStretch()
 
-    def create_part(self):
-        import FreeCAD as App
-        name = self.name_input.text()
-        doc = App.activeDocument() or App.newDocument()
-        
-        # Neues Teil erstellen
-        new_part = doc.addObject("App::Part", name)
-        # ArticleID hinzufügen
-        new_part.addProperty("App::PropertyString", "ArticleID", "FCProject")
-        new_part.ArticleID = name
-        
-        App.Console.PrintMessage(f"FCProject: {name} erstellt.\n")
-        doc.recompute()
+    def _get_project_context(self):
+        """Sucht die JSON und extrahiert Pfad und Projektname."""
+        active_doc = App.ActiveDocument
+        if active_doc and active_doc.FileName:
+            current_dir = os.path.dirname(active_doc.FileName)
+            json_path = os.path.join(current_dir, "FCProject.json")
+            if os.path.exists(json_path):
+                try:
+                    with open(json_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    proj_name = data.get("ProjectMetadata", {}).get("ProjectName", "PROJ")
+                    return proj_name, current_dir
+                except:
+                    pass
+        return None, None
+
+    def on_create_clicked(self):
+        """Reine GUI-Event-Methode: Sammelt Daten und ruft den Creator auf."""
+        proj_name, proj_dir = self._get_project_context()
+        if not proj_dir:
+            QtWidgets.QMessageBox.warning(None, "FCProject", "Kein initialisiertes Projekt gefunden!\nBitte zuerst Projekt initialisieren.")
+            return
+
+        comp_type = self.type_combo.currentData()
+        comp_num = self.number_input.text().strip()
+
+        # DIE ÜBERGABE AN DIE LOGIK-KLASSE:
+        try:
+            creator = PartCreator(proj_name, proj_dir)
+            generated_name = creator.create_pdm_document(comp_type, comp_num)
+            QtWidgets.QMessageBox.information(None, "FCProject", f"Komponente {generated_name} erfolgreich erstellt!")
+        except FileExistsError as fe:
+            QtWidgets.QMessageBox.warning(None, "FCProject", str(fe))
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(None, "FCProject", f"Unerwarteter Fehler: {str(e)}")
 
     def getStandardButtons(self):
-        # Zeigt OK und Abbrechen unten am Panel an
-        return int(QtWidgets.QDialogButtonBox.Close)
+        return QtWidgets.QDialogButtonBox.Close
