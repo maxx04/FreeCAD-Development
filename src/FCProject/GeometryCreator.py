@@ -1,22 +1,16 @@
-# Macro Version: 2.0.0 - FCProject: Spezialisierter PartCreator (Typ P)
+# Macro Version: 2.0.0 - FCProject: Spezialisierter GeometryCreator (Typ G)
 import FreeCAD as App
-import PartDesign # type: ignore
 
-class PartCreator:
+class GeometryCreator:
     def create(self, file_path, base_name, trailing_name, config, properties):
         new_doc = App.newDocument(trailing_name)
         App.setActiveDocument(new_doc.Name)
         
-        # Native FreeCAD 1.1 Body-Instanziierung
+        # Skelette nutzen App::Part als Geometrie-Referenz-Container
         core_obj = new_doc.addObject(config.get("FreeCADType"), base_name)
         core_obj.Label = trailing_name
         
-        # ArticleID für BOM verankern
         core_obj.addProperty("App::PropertyString", "ArticleID", "FCProject").ArticleID = trailing_name
         
-        # Eigenschaften aus der JSON spritzen
-        if "Bezeichnung" in properties:
-            core_obj.addProperty("App::PropertyString", "Bezeichnung", "FCProject_PDM").Bezeichnung = properties["Bezeichnung"]
-            
         new_doc.saveAs(file_path)
         new_doc.recompute()

@@ -3,7 +3,7 @@ import os
 import json
 import FreeCAD as App
 from PySide6 import QtWidgets, QtCore
-from PartCreator import PartCreator
+from EntityCreator import EntityCreator 
 
 class FCProjectTaskPanel:
     """TaskPanel, das sich komplett dynamisch an die JSON-Struktur anpasst."""
@@ -28,7 +28,7 @@ class FCProjectTaskPanel:
         # 3. Teilnummer (Auto-Zählung)
         suggested_num = "0001"
         if self.proj_name and self.proj_dir:
-            checker = PartCreator(self.proj_name, self.proj_dir)
+            checker = EntityCreator(self.proj_name, self.proj_dir)
             suggested_num = checker.get_next_available_number()
             
         self.main_layout.addWidget(QtWidgets.QLabel("<b>Teilnummer:</b>"))
@@ -113,7 +113,7 @@ class FCProjectTaskPanel:
             payload_properties[prop_name] = field.text().strip()
 
         try:
-            creator = PartCreator(self.proj_name, self.proj_dir)
+            creator = EntityCreator(self.proj_name, self.proj_dir)
             # Wir übergeben das gesamte JSON-Eigenschafts-Paket an die Logik
             generated_name = creator.create_pdm_document(comp_type, comp_num, payload_properties)
             QtWidgets.QMessageBox.information(None, "FCProject", f"Komponente {generated_name} erfolgreich erstellt!")

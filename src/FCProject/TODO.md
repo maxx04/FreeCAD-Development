@@ -1,2 +1,3 @@
 - [ ] Bennenungen zu Teilenahmen hinzufügen (z.B Latte )
 - [ ] JSON Versionsprüfung kontrollieren
+- [ ] Versionskontrolle neue Klass erstellen in Dateinahme einbezihen
