@@ -1,4 +1,6 @@
 # Macro Version: 1.6.0 - FCProject: Command-Schnittstelle für Toolbar
+
+import FreeCAD as App
 import FreeCADGui as Gui
 from TaskPanel import FCProjectTaskPanel
 
@@ -15,8 +17,8 @@ class PartCreatorCommand:
         panel = FCProjectTaskPanel()
         Gui.Control.showDialog(panel)
 
-    def IsActive(self):
-        import FreeCAD as App
-        return not App.ActiveDocument is None
+def IsActive(self):
+        # Extrem schneller Einzeiler ohne Imports – blockiert den Debugger nicht
+        return App.ActiveDocument is not None
 
 Gui.addCommand('FCProject_CreatePart', PartCreatorCommand())

@@ -1,16 +1,17 @@
-
+# Macro Version: 1.10.1 - FCProject: Robustes Datums-Handling ohne Qt-Abhängigkeit
 import os
 import json
+from datetime import datetime  # <-- NEU: Unabhängig von PySide/QtCore!
 import FreeCAD as App
 import FreeCADGui as Gui
 
 try:
-    from PySide6 import QtWidgets, QtCore
+    from PySide6 import QtWidgets
 except ImportError:
     try:
-        from PySide2 import QtWidgets, QtCore
+        from PySide2 import QtWidgets
     except ImportError:
-        from PySide import QtWidgets, QtCore  # type: ignore
+        from PySide import QtWidgets  # type: ignore
 
 class ProjectManagerCommand:
     """Befehl zum Initialisieren und Verwalten des FCProject-Datenfiles."""
@@ -23,26 +24,58 @@ class ProjectManagerCommand:
         }
 
     def get_default_project_data(self, project_name):
-        """DEFINITIION DER DATENSTRUKTUR: Hier werden alle Standard-Projektvariablen zentral gepflegt."""
+        """ZENTRALE STEUERUNG: Konfiguration für UI und PartCreator."""
+        # Das aktuelle Datum im ISO-Format (YYYY-MM-DD) über pfeilschnelles Standard-Python
+        iso_date = datetime.now().strftime("%Y-%m-%d")
+        
         return {
+            "Configuration": {
+                "Version": "1.0",
+                "CreatedBy": os.getlogin(),
+                "CreationDate": iso_date  # <-- KORREKTUR: Keine QtCore-Abhängigkeit mehr!
+            },
             "ProjectMetadata": {
                 "ProjectName": project_name,
-                "CreatedBy": os.getlogin(),
-                "FreeCADVersion": "1.1",
-                "CreationDate": QtCore.QDate.currentDate().toString(QtCore.Qt.ISODate)
+                "FreeCADVersion": "1.1"
             },
-            "Components": {
-                "Parts": {},       # Hier landen deine Standard-Bauteile
-                "Halbzeuge": {}    # Hier landen deine Profile/Halbzeuge mit Längen
-            },
-            "BOM_Settings": {
-                "GroupBy": "ArticleID",
-                "DetailParts": True,
-                "IncludeGroups": False
+            "Entities": {
+                "P": {
+                    "Label": "P - Einzelteil (Part)",
+                    "FreeCADType": "PartDesign::Body",
+                    "Prefix": "BODY",
+                    "Properties": {
+                        "Bezeichnung": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "Standardteil"}
+                    }
+                },
+                "A": {
+                    "Label": "A - Baugruppe (Assembly)",
+                    "FreeCADType": "Assembly::AssemblyObject",
+                    "Prefix": "ASM",
+                    "Properties": {
+                        "Gewicht": {"Type": "App::PropertyFloat", "Category": "FCProject_PDM", "Default": 0.0}
+                    }
+                },
+                "R": {
+                    "Label": "R - Halbzeug (Profile/Rohmaterial)",
+                    "FreeCADType": "PartDesign::Body",
+                    "Prefix": "RAW",
+                    "Properties": {
+                        "Length": {"Type": "App::PropertyLength", "Category": "FCProject_PDM", "Default": 500.0},
+                        "ProfilTyp": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "60x40"}
+                    }
+                },
+                "G": {
+                    "Label": "G - Geometrie (Skelett/Referenz)",
+                    "FreeCADType": "App::Part",
+                    "Prefix": "SKEL",
+                    "Properties": {}
+                }
             }
         }
 
+
     def Activated(self):
+        main_window = Gui.getMainWindow()
         doc = App.ActiveDocument
         if not doc:
             QtWidgets.QMessageBox.warning(None, "FCProject", "Bitte erstelle oder öffne zuerst ein FreeCAD-Dokument!")
@@ -59,20 +92,26 @@ class ProjectManagerCommand:
         project_dir = os.path.dirname(doc.FileName)
         json_path = os.path.join(project_dir, "FCProject.json")
 
-        # 2. Prüfen, ob die JSON existiert
+# 2. Wenn das Projekt existiert (Korrektur von None zu main_window)
         if os.path.exists(json_path):
             try:
                 with open(json_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                # Tiefere Verschachtelung auslesen, da wir die Struktur geändert haben
                 metadata = data.get("ProjectMetadata", {})
                 project_name = metadata.get("ProjectName", "Unbekannt")
-                QtWidgets.QMessageBox.information(None, "FCProject", f"Projekt gefunden!\n\nProjektname: {project_name}\nDatei: {json_path}")
+                
+                # HIER: main_window statt None!
+                QtWidgets.QMessageBox.information(main_window, "FCProject", f"Projekt gefunden!\n\nProjektname: {project_name}\nDatei: {json_path}")
             except Exception as e:
-                App.Console.PrintError(f"Fehler beim Lesen der JSON: {str(e)}\n")
+                App.Console.PrintError(f"Fehler: {str(e)}\n")
         else:
-            # 3. Wenn keine Datei da ist -> Abfragen und über Klassenstruktur generieren
-            project_name, ok = QtWidgets.QInputDialog.getText(None, "FCProject: Neu", "Keine Projektdatei gefunden.\nBitte gib den Namen für das neue Projekt ein:")
+            # 3. Wenn das Projekt neu ist (Korrektur von None zu main_window)
+            # HIER: main_window statt None!
+            project_name, ok = QtWidgets.QInputDialog.getText(
+            main_window, 
+            "FCProject: Neu", 
+            "Keine Projektdatei gefunden.\nBitte gib den Namen für das neue Projekt ein:"
+                )
             if ok and project_name:
                 # HIER NUTZEN WIR DIE INTERNE STRUKTUR DER KLASSE:
                 project_data = self.get_default_project_data(project_name)
@@ -81,7 +120,7 @@ class ProjectManagerCommand:
                     with open(json_path, 'w', encoding='utf-8') as f:
                         json.dump(project_data, f, indent=4, ensure_ascii=False)
                     App.Console.PrintMessage(f"FCProject: 'FCProject.json' erfolgreich in {project_dir} erstellt.\n")
-                    QtWidgets.QMessageBox.information(None, "FCProject", f"Projekt '{project_name}' erfolgreich initialisiert!")
+                    QtWidgets.QMessageBox.information(main_window, "FCProject", f"Projekt '{project_name}' erfolgreich initialisiert!")
                 except Exception as e:
                     App.Console.PrintError(f"Schreibfehler: {str(e)}\n")
 

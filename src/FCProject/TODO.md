@@ -1,0 +1,2 @@
+- [ ] Bennenungen zu Teilenahmen hinzufügen (z.B Latte )
+- [ ] 

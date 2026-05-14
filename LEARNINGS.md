@@ -48,4 +48,8 @@ Lazy Module Loading: In FreeCAD 1.1 sind spezialisierte Objekttypen wie Assembly
 
 Document Name Sanitization: Beim Erstellen von Dokumenten via App.newDocument(String) kann der interne C++ Name von der übergebenen Zeichenkette abweichen (z. B. durch String-Bereinigungen des Kerns). Für nachfolgende Befehle wie App.setActiveDocument() muss zwingend die Objekteigenschaft new_doc.Name abgefragt werden, um unknown document Verknüpfungsfehler zu verhindern.
 
+GUI Debugger Frictional Locks: Methoden wie IsActive(), die von der FreeCAD-GUI zyklisch zur Interface-Aktualisierung abgefragt werden, dürfen während einer aktiven Debugger-Sitzung (debugpy) keine Breakpoints enthalten. Da Qt-Dialoge im selben Thread laufen, führt ein Haltepunkt in diesen Überwachungsfunktionen zum sofortigen Einfrieren der gesamten Benutzeroberfläche.
+
+Passive Context Scans: Automatische Hintergrund-Aktionen in Workbench-Lifecycle-Hooks (Activated) sollten rein passiv und statusorientiert ablaufen. Das Öffnen modaler Eingabefenster oder das Auslagern von GUI-Elementen in Standard-Hintergrund-Threads (threading.Thread) verletzt die Thread-Sicherheit der Qt-Grafik-Engine. Die Interaktions-Logik gehört ausschließlich in dedizierte, vom Benutzer aktivierte Befehls-Klassen (GuiCommand).
+
 
