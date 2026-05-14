@@ -1,2 +1,2 @@
 - [ ] Bennenungen zu Teilenahmen hinzufügen (z.B Latte )
-- [ ] 
+- [ ] JSON Versionsprüfung kontrollieren
