@@ -1,5 +1,6 @@
-[ ] Bennenungen zu Teilenahmen hinzufügen (z.B Latte )
-[ ] JSON Versionsprüfung kontrollieren
+-[ ] Bennenungen zu Teilenahmen hinzufügen (z.B Latte )
+
+-[ ] JSON Versionsprüfung kontrollieren
 
 Halbzeuge:
 1. TraceParts
@@ -10,5 +11,7 @@ Rückwärtserzeugung Halbzeuge möglich!
 
 
 JSON als include in ProjectManager Reinziehen.
+
+Materialänderung in Tree synchronisieren als .ShapeMatirial.Name
 
 
