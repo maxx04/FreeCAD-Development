@@ -56,8 +56,7 @@ class FCProjectTaskPanel:
         self.main_layout.addStretch()
 
     def rebuild_dynamic_fields(self):
-        """Löscht alte Felder und baut die GUI passend zu den JSON-Properties neu auf."""
-        # Alte Widgets im dynamischen Layout löschen
+        """Baut die GUI passend zu den JSON-Properties auf. Scannt den Profiles-Ordner."""
         while self.dynamic_layout.count():
             item = self.dynamic_layout.takeAt(0)
             if item.widget():
@@ -66,19 +65,51 @@ class FCProjectTaskPanel:
         self.inputs_map.clear()
         comp_type = self.type_combo.currentData()
         
-        # Properties aus der JSON für diesen Typ holen
         entity_config = self.config_data.get("Entities", {}).get(comp_type, {})
         properties = entity_config.get("Properties", {})
         
-        # Für jede definierte Eigenschaft ein Eingabefeld erzeugen
         for prop_name, prop_meta in properties.items():
             self.dynamic_layout.addWidget(QtWidgets.QLabel(f"<b>{prop_name}:</b>"))
+            prop_type = prop_meta.get("Type", "App::PropertyString")
             default_val = str(prop_meta.get("Default", ""))
-            input_field = QtWidgets.QLineEdit(default_val)
             
-            self.dynamic_layout.addWidget(input_field)
-            # Speichern für den Create-Klick
-            self.inputs_map[prop_name] = input_field
+            # KORREKTUR: Wenn es der ProfilTyp für Halbzeuge (R) ist, scanne die Festplatte
+            if comp_type == "R" and prop_name == "ProfilTyp":
+                combo_field = QtWidgets.QComboBox()
+                
+                # Pfad zum Profiles-Ordner ermitteln (Liegt direkt im Addon-Verzeichnis)
+                addon_dir = os.path.dirname(__file__)
+                profiles_dir = os.path.join(addon_dir, "Profiles")
+                
+                if os.path.exists(profiles_dir):
+                    # Finde alle .FCStd-Dateien im Vorlagenordner
+                    for file in os.listdir(profiles_dir):
+                        if file.endswith(".FCStd"):
+                            # Name ohne Endung extrahieren (z.B. "Alu_40x40")
+                            clean_name = os.path.splitext(file)[0]
+                            combo_field.addItem(clean_name, clean_name)
+                else:
+                    combo_field.addItem("Keine Profile gefunden", "None")
+                    
+                self.dynamic_layout.addWidget(combo_field)
+                self.inputs_map[prop_name] = combo_field
+                
+            else:
+                # Normales Textfeld für alle anderen Eigenschaften (Length, Bezeichnung)
+                input_field = QtWidgets.QLineEdit(default_val)
+                self.dynamic_layout.addWidget(input_field)
+                self.inputs_map[prop_name] = input_field
+
+        # ZUSATZ: Wenn Typ R ausgewählt ist, hängen wir eine native FreeCAD Material-Auswahl an
+        if comp_type == "R":
+            self.dynamic_layout.addWidget(QtWidgets.QLabel("<b>Material (CAD Standard):</b>"))
+            self.material_combo = QtWidgets.QComboBox()
+            # Die Standard-Materialien von FreeCAD zur Auswahl anbieten
+            self.material_combo.addItem("Aluminium", "Aluminum")
+            self.material_combo.addItem("Stahl (Steel)", "Steel")
+            self.material_combo.addItem("Kunststoff (Plastics)", "Plastics")
+            self.dynamic_layout.addWidget(self.material_combo)
+            self.inputs_map["MaterialCard"] = self.material_combo
 
     def _load_config(self):
         """Lädt die JSON Konfigurationsdatei."""
@@ -109,8 +140,11 @@ class FCProjectTaskPanel:
         
         # Werte aus der dynamischen GUI einsammeln
         payload_properties = {}
-        for prop_name, field in self.inputs_map.items():
-            payload_properties[prop_name] = field.text().strip()
+        for prop_name, widget in self.inputs_map.items():
+            if isinstance(widget, QtWidgets.QComboBox):
+                payload_properties[prop_name] = widget.currentData()
+            else:
+                payload_properties[prop_name] = widget.text().strip()
 
         try:
             creator = EntityCreator(self.proj_name, self.proj_dir)
