@@ -1,5 +1,5 @@
-- [ ] Bennenungen zu Teilenahmen hinzufügen (z.B Latte )
-- [ ] JSON Versionsprüfung kontrollieren
+[ ] Bennenungen zu Teilenahmen hinzufügen (z.B Latte )
+[ ] JSON Versionsprüfung kontrollieren
 
 Halbzeuge:
 1. TraceParts
