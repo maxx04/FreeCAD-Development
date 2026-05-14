@@ -40,7 +40,7 @@ class ProjectManagerCommand:
                 "ProjectName": project_name,
                 "FreeCADVersion": "1.1"
             },
-             "Entities": {
+            "Entities": {
                 "P": {
                     "Label": "P - Einzelteil (Part)",
                     "FreeCADType": "PartDesign::Body",
@@ -73,6 +73,7 @@ class ProjectManagerCommand:
                     "Properties": {}
                 }
             }
+
 
         }
 

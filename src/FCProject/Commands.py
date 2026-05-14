@@ -14,8 +14,11 @@ class PartCreatorCommand:
         }
 
     def Activated(self):
-        panel = FCProjectTaskPanel()
-        Gui.Control.showDialog(panel)
+        # Altes Gui.Control.showDialog(panel) ERSETZEN durch:
+        from TaskPanel import FCProjectTaskPanel
+        self.dialog = FCProjectTaskPanel()
+        self.dialog.show() # Öffnet das Fenster schwebend im Vordergrund
+
 
 def IsActive(self):
         # Extrem schneller Einzeiler ohne Imports – blockiert den Debugger nicht

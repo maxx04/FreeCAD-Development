@@ -6,6 +6,7 @@ __pycache__/
 # FreeCAD temporäre Dateien
 *.fcstd.lock
 *.bak
+*.FCBak
 
 # VS Code Einstellungen (optional, falls du sie nicht teilen willst)
 #.vscode/
