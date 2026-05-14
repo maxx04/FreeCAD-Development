@@ -99,7 +99,7 @@ class FCProjectTaskPanel(QtWidgets.QDialog): # <-- KORREKTUR: Erbt jetzt von QDi
             self.inputs_map[prop_name] = input_field
 
     def open_material_gui_via_dummy_object(self):
-        """Erstellt einen fiktiven Körper im aktiven Dokument, da die Seitenleiste jetzt FREI ist!"""
+        """Erstellt einen fiktiven Körper im aktiven Dokument, holt die GUI und schließt sie nach der Auswahl."""
         active_doc = App.ActiveDocument
         if not active_doc:
             QtWidgets.QMessageBox.warning(self, "FCProject", "Bitte öffne zuerst ein Dokument!")
@@ -115,26 +115,36 @@ class FCProjectTaskPanel(QtWidgets.QDialog): # <-- KORREKTUR: Erbt jetzt von QDi
             Gui.Selection.addSelection(active_doc.Name, dummy_obj.Name)
             QtWidgets.QApplication.processEvents()
             
-            # 3. Den offiziellen Dialog aufrufen (Die Seitenleiste ist frei -> Es poppt garantiert auf!)
+            # 3. Den offiziellen Dialog aufrufen
             Gui.runCommand('Std_SetMaterial', 0)
             
-            # 4. Asynchroner Scan
+            # 4. Asynchroner Scan mit automatischem Schließen
             def check_dummy_selection():
                 if dummy_obj and hasattr(dummy_obj, "ShapeMaterial") and dummy_obj.ShapeMaterial:
                     detected_mat = dummy_obj.ShapeMaterial.Name
                     
+                    # Sobald du im rechten Fenster ein Material anklickst
                     if detected_mat and detected_mat != "Default":
+                        # Text im Feld setzen
                         self.material_input.setText(detected_mat)
                         self.timer.stop()
                         
+                        # KORREKTUR: Das offizielle FreeCAD-Materialfenster rechts sofort schließen!
+                        Gui.Control.closeDialog()
+                        
+                        # Fiktiven Körper sauber aus der CAD-Datei löschen
                         active_doc.removeObject(dummy_obj.Name)
                         active_doc.recompute()
-                        App.Console.PrintMessage(f"FCProject: Fiktiver Körper gelöscht. Material: {detected_mat}\n")
+                        
+                        App.Console.PrintMessage(f"FCProject: Material '{detected_mat}' gewählt. GUI geschlossen.\n")
                         
             self.timer = QtCore.QTimer()
             self.timer.timeout.connect(check_dummy_selection)
-            self.timer.start(300)
+            self.timer.start(300) # Scannt alle 300ms im Hintergrund
             
+        except Exception as e:
+            App.Console.PrintError(f"FCProject: Fehler beim Material-GUI Auto-Close: {str(e)}\n")
+       
         except Exception as e:
             App.Console.PrintError(f"FCProject: Fehler beim Fiktiv-Körper-Trick: {str(e)}\n")
 
@@ -166,6 +176,8 @@ class FCProjectTaskPanel(QtWidgets.QDialog): # <-- KORREKTUR: Erbt jetzt von QDi
         for prop_name, field in self.inputs_map.items():
             payload_properties[prop_name] = field.text().strip()
             
+        # KORREKTUR: Wir lesen den TEXT direkt frisch aus dem Eingabefeld ab,
+        # da der Timer ihn dort hineingeschrieben hat!
         if comp_type in ["P", "R"]:
             payload_properties["__TargetMaterialName__"] = self.material_input.text().strip()
 
@@ -175,4 +187,4 @@ class FCProjectTaskPanel(QtWidgets.QDialog): # <-- KORREKTUR: Erbt jetzt von QDi
             QtWidgets.QMessageBox.information(self, "FCProject", f"Komponente {generated_name} erfolgreich erstellt!")
             self.number_input.setText(creator.get_next_available_number())
         except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "FCProject", f"Fehler: {str(e)}")
+            QtWidgets.QMessageBox.critical(None, "FCProject", f"Fehler: {str(e)}")

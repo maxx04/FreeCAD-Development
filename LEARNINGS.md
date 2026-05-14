@@ -52,4 +52,4 @@ GUI Debugger Frictional Locks: Methoden wie IsActive(), die von der FreeCAD-GUI 
 
 Passive Context Scans: Automatische Hintergrund-Aktionen in Workbench-Lifecycle-Hooks (Activated) sollten rein passiv und statusorientiert ablaufen. Das Öffnen modaler Eingabefenster oder das Auslagern von GUI-Elementen in Standard-Hintergrund-Threads (threading.Thread) verletzt die Thread-Sicherheit der Qt-Grafik-Engine. Die Interaktions-Logik gehört ausschließlich in dedizierte, vom Benutzer aktivierte Befehls-Klassen (GuiCommand).
 
-
+C++ Material Object Factory (App.createMaterial): Die Eigenschaft .ShapeMaterial an geometrischen Körpern (PartDesign::Body) erlaubt keine Zuweisung von Python-Dictionaries. Die Instanziierung muss über die im C++ Kern verankerte Fabrikmethode App.createMaterial('MaterialName') erfolgen. Diese Funktion lädt die physikalischen Attribute aus der .FCMat-Systemdatenbank und liefert ein typkonformes C++ Objekt zurück, das direkt vom .ShapeMaterial-Attribut akzeptiert wird.
