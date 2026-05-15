@@ -26,6 +26,8 @@ Halbzeuge interessant seitens Kostenabschätzung.
 
 1. Änderung: Projekt anlegen - Verzeichnis mit Projektname anlegen und dort json mit Projektname. Gemeinsame Verzeichnisse für  Profile, Materialien, Kaufteile finden.
 
+1. Versionskontrolle hinzufügen.
+
 
 
 
