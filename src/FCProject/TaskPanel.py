@@ -1,4 +1,4 @@
-# Macro Version: 2.6.1 - FCProject: Umbau von TaskPanel zu schwebendem QDialog
+# Macro Version: 2.8.0 - FCProject: TaskPanel mit automatischer Arbeitsverzeichnis-JSON-Abfrage
 import os
 import json
 import FreeCAD as App
@@ -6,19 +6,25 @@ import FreeCADGui as Gui
 from PySide6 import QtWidgets, QtCore
 from EntityCreator import EntityCreator
 
-class FCProjectTaskPanel(QtWidgets.QDialog): # <-- KORREKTUR: Erbt jetzt von QDialog statt nacktem Objekt
+class FCProjectTaskPanel(QtWidgets.QDialog):
     def __init__(self):
-        super().__init__(Gui.getMainWindow()) # Bindet das Fenster fest an das FreeCAD Hauptfenster
+        super().__init__(Gui.getMainWindow())
         
         self.setWindowTitle("FCProject: PDM-Creator")
-        self.resize(350, 400)
+        self.resize(350, 420)
         
         self.main_layout = QtWidgets.QVBoxLayout(self)
         self.main_layout.addWidget(QtWidgets.QLabel("<h3>FCProject: PDM-Creator</h3>"))
         
+        # KORREKTUR: Kontext direkt aus dem verifizierten System-Arbeitsverzeichnis laden!
         self.proj_name, self.proj_dir = self._get_project_context()
         self.config_data = self._load_config()
         
+        if not self.config_data:
+            QtWidgets.QMessageBox.critical(self, "FCProject", "Keine gültige Projekt-Konfiguration im aktiven Arbeitsverzeichnis gefunden!\nBitte nutze zuerst Button 1.")
+            QtCore.QTimer.singleShot(10, self.close)
+            return
+
         # 1. Typ-Auswahl
         self.main_layout.addWidget(QtWidgets.QLabel("<b>Komponenten-Typ:</b>"))
         self.type_combo = QtWidgets.QComboBox()
@@ -68,7 +74,6 @@ class FCProjectTaskPanel(QtWidgets.QDialog): # <-- KORREKTUR: Erbt jetzt von QDi
         self.create_btn.clicked.connect(self.on_create_clicked)
         self.main_layout.addWidget(self.create_btn)
         
-        # Schließen Button für das Fenster hinzufügen
         self.close_btn = QtWidgets.QPushButton("Schließen")
         self.close_btn.clicked.connect(self.close)
         self.main_layout.addWidget(self.close_btn)
@@ -83,7 +88,7 @@ class FCProjectTaskPanel(QtWidgets.QDialog): # <-- KORREKTUR: Erbt jetzt von QDi
         self.inputs_map.clear()
         comp_type = self.type_combo.currentData()
         
-        if comp_type in ["P", "R"]:
+        if comp_type in ["P", "R", "B"]: # Material für Parts, Rohmaterial und Kaufteile einblenden
             self.material_widget.setVisible(True)
         else:
             self.material_widget.setVisible(False)
@@ -99,71 +104,74 @@ class FCProjectTaskPanel(QtWidgets.QDialog): # <-- KORREKTUR: Erbt jetzt von QDi
             self.inputs_map[prop_name] = input_field
 
     def open_material_gui_via_dummy_object(self):
-        """Erstellt einen fiktiven Körper im aktiven Dokument, holt die GUI und schließt sie nach der Auswahl."""
         active_doc = App.ActiveDocument
         if not active_doc:
             QtWidgets.QMessageBox.warning(self, "FCProject", "Bitte öffne zuerst ein Dokument!")
             return
 
         try:
-            # 1. Fiktiven Körper im aktuellen Dokument anlegen
             dummy_obj = active_doc.addObject("PartDesign::Body", "FCProject_DummyMaterialBody")
             active_doc.recompute()
             
-            # 2. In der GUI selektieren
             Gui.Selection.clearSelection()
             Gui.Selection.addSelection(active_doc.Name, dummy_obj.Name)
             QtWidgets.QApplication.processEvents()
             
-            # 3. Den offiziellen Dialog aufrufen
             Gui.runCommand('Std_SetMaterial', 0)
             
-            # 4. Asynchroner Scan mit automatischem Schließen
             def check_dummy_selection():
                 if dummy_obj and hasattr(dummy_obj, "ShapeMaterial") and dummy_obj.ShapeMaterial:
                     detected_mat = dummy_obj.ShapeMaterial.Name
-                    
-                    # Sobald du im rechten Fenster ein Material anklickst
                     if detected_mat and detected_mat != "Default":
-                        # Text im Feld setzen
                         self.material_input.setText(detected_mat)
                         self.timer.stop()
-                        
-                        # KORREKTUR: Das offizielle FreeCAD-Materialfenster rechts sofort schließen!
                         Gui.Control.closeDialog()
-                        
-                        # Fiktiven Körper sauber aus der CAD-Datei löschen
                         active_doc.removeObject(dummy_obj.Name)
                         active_doc.recompute()
                         
-                        App.Console.PrintMessage(f"FCProject: Material '{detected_mat}' gewählt. GUI geschlossen.\n")
-                        
             self.timer = QtCore.QTimer()
             self.timer.timeout.connect(check_dummy_selection)
-            self.timer.start(300) # Scannt alle 300ms im Hintergrund
-            
+            self.timer.start(300)
         except Exception as e:
-            App.Console.PrintError(f"FCProject: Fehler beim Material-GUI Auto-Close: {str(e)}\n")
-       
-        except Exception as e:
-            App.Console.PrintError(f"FCProject: Fehler beim Fiktiv-Körper-Trick: {str(e)}\n")
+            App.Console.PrintError(f"FCProject: Fehler beim Material-Dialog: {str(e)}\n")
 
     def _load_config(self):
         if self.proj_dir:
-            json_path = os.path.join(self.proj_dir, "FCProject.json")
+            # Sucht die JSON, die exakt wie der Projektordner benannt ist
+            folder_name = os.path.basename(self.proj_dir)
+            json_path = os.path.join(self.proj_dir, f"{folder_name}.json")
             if os.path.exists(json_path):
                 with open(json_path, 'r', encoding='utf-8') as f: return json.load(f)
         return {}
 
     def _get_project_context(self):
+        """Ermittelt den Kontext aus dem System-Arbeitsverzeichnis oder dem aktiven Dokument."""
+        current_dir = os.getcwd()
+        folder_name = os.path.basename(current_dir)
+        
+        # 1. Versuch: Über den Namen des Arbeitsverzeichnisses gehen
+        if folder_name and folder_name.startswith("PROJ_"):
+            proj_name = folder_name.replace("PROJ_", "")
+            return proj_name, current_dir
+            
+        # 2. Versuch: Wenn wir im falschen Verzeichnis stehen, nutze das aktive Dokument
         active_doc = App.ActiveDocument
-        if active_doc and active_doc.FileName:
-            current_dir = os.path.dirname(active_doc.FileName)
-            json_path = os.path.join(current_dir, "FCProject.json")
-            if os.path.exists(json_path):
-                with open(json_path, 'r', encoding='utf-8') as f: data = json.load(f)
-                metadata = data.get("ProjectMetadata", {})
-                return metadata.get("ProjectName", "PROJ"), current_dir
+        if active_doc:
+            # Falls die Datei auf der Festplatte liegt, nimm das Verzeichnis
+            if active_doc.FileName:
+                doc_dir = os.path.dirname(active_doc.FileName)
+                doc_folder = os.path.basename(doc_dir)
+                if doc_folder.startswith("PROJ_"):
+                    return doc_folder.replace("PROJ_", ""), doc_dir
+            
+            # Fallback: Nutze einfach den reinen Namen des Dokuments im RAM (z.B. "U15")
+            if active_doc.Name:
+                return active_doc.Name, current_dir
+                
+        # Ultimativer Rettungsanker, damit niemals 'None' übergeben wird
+        return "PROJ", current_dir
+
+                
         return None, None
 
     def on_create_clicked(self):
@@ -176,9 +184,7 @@ class FCProjectTaskPanel(QtWidgets.QDialog): # <-- KORREKTUR: Erbt jetzt von QDi
         for prop_name, field in self.inputs_map.items():
             payload_properties[prop_name] = field.text().strip()
             
-        # KORREKTUR: Wir lesen den TEXT direkt frisch aus dem Eingabefeld ab,
-        # da der Timer ihn dort hineingeschrieben hat!
-        if comp_type in ["P", "R"]:
+        if comp_type in ["P", "R", "B"]:
             payload_properties["__TargetMaterialName__"] = self.material_input.text().strip()
 
         try:
@@ -187,4 +193,4 @@ class FCProjectTaskPanel(QtWidgets.QDialog): # <-- KORREKTUR: Erbt jetzt von QDi
             QtWidgets.QMessageBox.information(self, "FCProject", f"Komponente {generated_name} erfolgreich erstellt!")
             self.number_input.setText(creator.get_next_available_number())
         except Exception as e:
-            QtWidgets.QMessageBox.critical(None, "FCProject", f"Fehler: {str(e)}")
+            QtWidgets.QMessageBox.critical(self, "FCProject", f"Fehler: {str(e)}")

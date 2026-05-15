@@ -1,38 +1,27 @@
-# Macro Version: 1.11.1 - FCProject: ProjectManager mit automatischer JSON-Versionsprüfung
+# Macro Version: 2.8.0 - FCProject: Automatische Erstellung der Stamm-CAD-Datei
 import os
 import json
 from datetime import datetime
 import FreeCAD as App
 import FreeCADGui as Gui
-
-try:
-    from PySide6 import QtWidgets
-except ImportError:
-    try:
-        from PySide2 import QtWidgets
-    except ImportError:
-        from PySide import QtWidgets  # type: ignore
+from PySide6 import QtWidgets
 
 class ProjectManagerCommand:
-    """Befehl zum Initialisieren und Verwalten des FCProject-Datenfiles mit Versionsschutz."""
-
-    # SCRIPT_VERSION: Die Version, die dieses Python-Script maximal versteht
     SCRIPT_VERSION = "1.0"
 
     def GetResources(self):
         return {
             'Pixmap': 'freecad', 
             'MenuText': 'FCProject: Projekt initialisieren',
-            'ToolTip': 'Sucht oder erstellt die FCProject.json im aktuellen Verzeichnis'
+            'ToolTip': 'Erstellt PDM-Umgebung inklusive der leeren Stamm-CAD-Datei'
         }
 
     def get_default_project_data(self, project_name):
-        """ZENTRALE STEUERUNG: Konfiguration für UI und PartCreator."""
+        """ZENTRALE STEUERUNG: Konfiguration für Eigen-, Kaufteile und Profile."""
         iso_date = datetime.now().strftime("%Y-%m-%d")
-        
         return {
             "Configuration": {
-                "Version": self.SCRIPT_VERSION, # Nutzt die zentral definierte Version
+                "Version": self.SCRIPT_VERSION,
                 "CreatedBy": os.getlogin(),
                 "CreationDate": iso_date
             },
@@ -41,102 +30,72 @@ class ProjectManagerCommand:
                 "FreeCADVersion": "1.1"
             },
             "Entities": {
-                "P": {
-                    "Label": "P - Einzelteil (Part)",
-                    "FreeCADType": "PartDesign::Body",
-                    "Prefix": "BODY",
-                    "Properties": {
-                        "Bezeichnung": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "Standardteil"}
-                    }
-                },
-                "A": {
-                    "Label": "A - Baugruppe (Assembly)",
-                    "FreeCADType": "Assembly::AssemblyObject",
-                    "Prefix": "ASM",
-                    "Properties": {
-                        "Bezeichnung": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "Unterbaugruppe"}
-                    }
-                },
-                "R": {
-                    "Label": "R - Halbzeug (Profile/Rohmaterial)",
-                    "FreeCADType": "PartDesign::Body",
-                    "Prefix": "RAW",
-                    "Properties": {
-                        "Length": {"Type": "App::PropertyLength", "Category": "FCProject_PDM", "Default": 500.0},
-                        "ProfilTyp": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "60x40"}
-                    }
-                },
-                "G": {
-                    "Label": "G - Geometrie (Skelett/Referenz)",
-                    "FreeCADType": "App::Part",
-                    "Prefix": "SKEL",
-                    "Properties": {}
-                }
+                "P": {"Label": "P - Einzelteil (Part)", "FreeCADType": "PartDesign::Body", "Prefix": "BODY", "Properties": {"Bezeichnung": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "Latte"}}},
+                "A": {"Label": "A - Baugruppe (Assembly)", "FreeCADType": "Assembly::AssemblyObject", "Prefix": "ASM", "Properties": {"Bezeichnung": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "Unterbaugruppe"}}},
+                "R": {"Label": "R - Halbzeug (Profile/Rohmaterial)", "FreeCADType": "PartDesign::Body", "Prefix": "RAW", "Properties": {"Length": {"Type": "App::PropertyLength", "Category": "FCProject_PDM", "Default": 500.0}, "ProfilTyp": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "60x40"}}},
+                "G": {"Label": "G - Geometrie (Skelett/Referenz)", "FreeCADType": "App::Part", "Prefix": "SKEL", "Properties": {}},
+                "B": {"Label": "B - Kaufteil (Purchased Component)", "FreeCADType": "App::Part", "Prefix": "PUR", "Properties": {"Bezeichnung": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "Kaufteil"}, "Hersteller": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "TraceParts"}, "Bestellnummer": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "000-000"}}}
             }
-
-
         }
 
     def Activated(self):
-        doc = App.ActiveDocument
-        if not doc:
-            QtWidgets.QMessageBox.warning(None, "FCProject", "Bitte erstelle oder öffne zuerst ein FreeCAD-Dokument!")
-            return
-
         main_window = Gui.getMainWindow()
-
-        if not doc.FileName:
-            QtWidgets.QMessageBox.information(main_window, "FCProject", "Das Dokument ist noch nicht gespeichert. Bitte wähle einen Speicherort für dein Projekt.")
-            save_path, _ = QtWidgets.QFileDialog.getSaveFileName(main_window, "Projekt speichern unter...", "", "FreeCAD Dateien (*.FCStd)")
-            if not save_path:
-                return
-            doc.saveAs(save_path)
         
-        project_dir = os.path.dirname(doc.FileName)
-        json_path = os.path.join(project_dir, "FCProject.json")
+        # 1. Arbeitsverzeichnis abfragen
+        base_dir = QtWidgets.QFileDialog.getExistingDirectory(main_window, "Wähle deinen zentralen CAD-Arbeitsordner")
+        if not base_dir: return
 
-        # 2. Prüfen, ob die JSON existiert
+        # 2. Ressourcen-Verzeichnisse absichern
+        common_dir = os.path.join(base_dir, "_Common_Resources")
+        os.makedirs(os.path.join(common_dir, "Profiles"), exist_ok=True)
+        os.makedirs(os.path.join(common_dir, "PurchasedComponents"), exist_ok=True)
+
+        # 3. Projektnamen abfragen (z.B. U10)
+        project_name, ok = QtWidgets.QInputDialog.getText(main_window, "FCProject: Neues Projekt", "Bitte gib den Projektnamen ein (z.B. U10):")
+        if not ok or not project_name: return
+
+        # 4. Projektordner anlegen (z.B. PROJ_U10)
+        project_folder_name = f"PROJ_{project_name}"
+        target_project_dir = os.path.join(base_dir, project_folder_name)
+        os.makedirs(target_project_dir, exist_ok=True)
+
+        # 5. Pfade für JSON und die Stamm-CAD-Datei bestimmen
+        json_path = os.path.join(target_project_dir, f"{project_folder_name}.json")
+        fc_file_path = os.path.join(target_project_dir, f"{project_name}.FCStd") # <-- NEU: Zieldatei z.B. U10.FCStd
+
+        # System-Arbeitsverzeichnis sofort umschalten, damit alle Folgemodule hier ansetzen
+        os.chdir(target_project_dir)
+
         if os.path.exists(json_path):
-            try:
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                
-                # VERSIONS-PRÜFUNG: Version aus der JSON auslesen
-                config_section = data.get("Configuration", {})
-                json_version = config_section.get("Version", "0.0")
-                
-                # Vergleich: Passt die Datei-Version zu unserem Python-Script?
-                if json_version != self.SCRIPT_VERSION:
-                    QtWidgets.QMessageBox.critical(
-                        main_window, 
-                        "FCProject: Versions-Konflikt!", 
-                        f"WARNUNG: Die vorhandene Projektdatei nutzt Version {json_version}.\n"
-                        f"Dieses Makro unterstützt jedoch nur Version {self.SCRIPT_VERSION}.\n\n"
-                        "Bitte aktualisiere dein FCProject-Addon, um Datenverlust zu vermeiden!"
-                    )
-                    return # Ablauf abbrechen, um die Datei nicht zu beschädigen
-
-                metadata = data.get("ProjectMetadata", {})
-                project_name = metadata.get("ProjectName", "Unbekannt")
-                QtWidgets.QMessageBox.information(main_window, "FCProject", f"Projekt erfolgreich verifiziert!\n\nProjektname: {project_name}\nKonfig-Version: {json_version}\nDatei: {json_path}")
-                
-            except Exception as e:
-                App.Console.PrintError(f"Fehler beim Lesen der JSON: {str(e)}\n")
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if data.get("Configuration", {}).get("Version") != self.SCRIPT_VERSION:
+                QtWidgets.QMessageBox.critical(main_window, "Versions-Konflikt", "Inkompatible JSON-Version!")
+                return
         else:
-            # 3. Wenn keine Datei da ist -> Neu anlegen
-            project_name, ok = QtWidgets.QInputDialog.getText(main_window, "FCProject: Neu", "Keine Projektdatei gefunden.\nBitte gib den Namen für das neue Projekt ein:")
-            if ok and project_name:
-                project_data = self.get_default_project_data(project_name)
-                
-                try:
-                    with open(json_path, 'w', encoding='utf-8') as f:
-                        json.dump(project_data, f, indent=4, ensure_ascii=False)
-                    App.Console.PrintMessage(f"FCProject: 'FCProject.json' erfolgreich in {project_dir} erstellt.\n")
-                    QtWidgets.QMessageBox.information(main_window, "FCProject", f"Projekt '{project_name}' (V{self.SCRIPT_VERSION}) erfolgreich initialisiert!")
-                except Exception as e:
-                    App.Console.PrintError(f"Schreibfehler: {str(e)}\n")
+            # Neue JSON wegschreiben
+            project_data = self.get_default_project_data(project_name)
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(project_data, f, indent=4, ensure_ascii=False)
+
+        # 6. NEU: Leere Stamm-CAD-Datei anlegen, falls sie noch nicht existiert
+        if not os.path.exists(fc_file_path):
+            new_doc = App.newDocument(project_name)
+            new_doc.saveAs(fc_file_path)
+            new_doc.recompute()
+            Gui.setActiveDocument(new_doc.Name)
+            App.Console.PrintMessage(f"FCProject: Stammdatei '{project_name}.FCStd' erfolgreich generiert.\n")
+        else:
+            # Falls die Datei schon existiert, öffnen wir sie einfach!
+            App.openDocument(fc_file_path)
+            Gui.setActiveDocument(project_name)
+
+        QtWidgets.QMessageBox.information(
+            main_window, "FCProject", 
+            f"Projekt '{project_name}' erfolgreich initialisiert und geöffnet!\n\nArbeitsverzeichnis ist aktiv gesetzt."
+        )
 
     def IsActive(self):
-        return not App.ActiveDocument is None
+        return True
 
 Gui.addCommand('FCProject_ProjectManager', ProjectManagerCommand())
