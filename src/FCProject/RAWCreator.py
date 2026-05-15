@@ -50,26 +50,27 @@ class RAWCreator:
         core_obj.addObject(pad_obj)
 
          # 6. TYPKONFORMES MATERIAL-BINDING ÜBER CORE UUID UTILS
+        # 6. KORREKTUR: Dynamische Material-Synchronisation via setExpression (.ShapeMaterial.Name)
         try:
-            material_target = properties.get("__TargetMaterialName__", "Aluminum")
-            
             if hasattr(core_obj, "ShapeMaterial"):
+                # C++ Objekt über die UUID-Schnittstelle laden
                 from MaterialUtils import get_native_material_by_name
-                # Das C++ Objekt über die UUID-Schnittstelle laden
                 cpp_material = get_native_material_by_name(material_target)
                 
                 if cpp_material:
-                    # Direkte Zuweisung an das Profil
                     core_obj.ShapeMaterial = cpp_material
-                    
-                    if not hasattr(core_obj, "MaterialName"):
-                        core_obj.addProperty("App::PropertyString", "MaterialName", "FCProject_PDM", "Material-Textbezeichnung")
-                    core_obj.MaterialName = material_target
-                    App.Console.PrintMessage(f"FCProject: Material '{material_target}' erfolgreich via UUID-Objekt im RAW-Körper eingebrannt.\n")
-            else:
-                App.Console.PrintWarning("FCProject Warnung: Der RAW-Körper besitzt kein .ShapeMaterial Attribut!\n")
+                
+                # PDM-Metadaten-String anlegen, falls noch nicht vorhanden
+                if not hasattr(core_obj, "MaterialName"):
+                    core_obj.addProperty("App::PropertyString", "MaterialName", "FCProject_PDM", "Material-Textbezeichnung")
+                
+                # TRICK: Expression-Kopplung an den C++ Kern binden
+                core_obj.setExpression('MaterialName', 'ShapeMaterial.Name')
+                App.Console.PrintMessage("FCProject: RAW-MaterialName erfolgreich dynamisch an ShapeMaterial.Name gekoppelt.\n")
+                
         except Exception as mat_err:
-            App.Console.PrintWarning(f"FCProject: Fehler bei UUID-Material-Speicherung im RAW-Körper: {str(mat_err)}\n")
+            App.Console.PrintWarning(f"FCProject: Fehler bei RAW-Material-Expression-Kopplung: {str(mat_err)}\n")
+
 
         # 7. Reine PDM-Metadaten in den Parametertree spritzen
         if not hasattr(core_obj, "ArticleID"):

@@ -64,25 +64,32 @@ class PartCreator:
             core_obj.Label = trailing_name
 
         # 4. TYPKONFORMES MATERIAL-BINDING MIT AUTOMATISCHER VERERBUNG
+        # 4. KORREKTUR: Dynamische Material-Synchronisation via setExpression (.ShapeMaterial.Name)
         try:
             if hasattr(core_obj, "ShapeMaterial"):
                 if extracted_material:
-                    # KÖNIGSWEG: Das kopierte C++ Material direkt zuweisen (Kein Suchen, kein Tippen!)
+                    # Wenn wir aus einem Halbzeug klonen, kopieren wir das C++ Objekt
                     core_obj.ShapeMaterial = extracted_material
                     App.Console.PrintMessage(f"FCProject: Werkstoff erfolgreich vom Basis-Halbzeug geerbt.\n")
                 else:
-                    # Fallback über die UUID-Suchmaschine, falls nackt erstellt
+                    # Andernfalls nutzen wir unsere UUID-Suchmaschine
                     from MaterialUtils import get_native_material_by_name
                     cpp_material = get_native_material_by_name(material_target)
                     if cpp_material:
                         core_obj.ShapeMaterial = cpp_material
                 
-                # PDM-Metadaten-String synchronisieren
+                # PDM-Metadaten-String anlegen, falls noch nicht vorhanden
                 if not hasattr(core_obj, "MaterialName"):
                     core_obj.addProperty("App::PropertyString", "MaterialName", "FCProject_PDM", "Material-Textbezeichnung")
-                core_obj.MaterialName = material_target
+                
+                # TRICK: Wir schreiben keinen statischen Text, sondern eine C++ Expression!
+                # Das koppelt die PDM-Eigenschaft 'MaterialName' permanent an das native 'ShapeMaterial.Name'
+                core_obj.setExpression('MaterialName', 'ShapeMaterial.Name')
+                App.Console.PrintMessage("FCProject: PDM-MaterialName erfolgreich dynamisch an ShapeMaterial.Name gekoppelt.\n")
+                
         except Exception as mat_err:
-            App.Console.PrintWarning(f"FCProject: Fehler bei Material-Vererbung: {str(mat_err)}\n")
+            App.Console.PrintWarning(f"FCProject: Fehler bei Material-Expression-Kopplung: {str(mat_err)}\n")
+
 
         # 5. PDM Metadaten spritzen
         if not hasattr(core_obj, "ArticleID"):
