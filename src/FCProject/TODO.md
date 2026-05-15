@@ -22,6 +22,12 @@ Halbzeuge interessant seitens Kostenabschätzung.
 
 1. B als Kaufteile hinzufügen.
 
+1. Beim Part fragen nach Halbzeug, wenn ja integrieren.
+
+1. Änderung: Projekt anlegen - Verzeichnis mit Projektname anlegen und dort json mit Projektname. Gemeinsame Verzeichnisse für  Profile, Materialien, Kaufteile finden.
+
+
+
 
 
 
