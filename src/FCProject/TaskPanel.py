@@ -187,10 +187,36 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         if comp_type in ["P", "R", "B"]:
             payload_properties["__TargetMaterialName__"] = self.material_input.text().strip()
 
+        # DYNAMISCHE DATEIAUSWAHL FÜR HALBZEUGE (TYP P)
+        if comp_type == "P":
+            msg_box = QtWidgets.QMessageBox(self)
+            msg_box.setWindowTitle("FCProject: Halbzeug-Kopplung")
+            msg_box.setText("Basiert dieses Einzelteil auf einem bestehenden Halbzeug/Profil?")
+            msg_box.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+            msg_box.setDefaultButton(QtWidgets.QMessageBox.No)
+            
+            if msg_box.exec() == QtWidgets.QMessageBox.Yes:
+                # Standardmäßig im globalen Ressourcen-Ordner starten
+                common_profiles_dir = os.path.join(os.path.dirname(self.proj_dir), "_Common_Resources", "Profiles")
+                if not os.path.exists(common_profiles_dir):
+                    common_profiles_dir = os.path.dirname(self.proj_dir)
+                
+                # ECHTER DATEIAUSWAHL-DIALOG auf der Festplatte aufrufen
+                selected_file, _ = QtWidgets.QFileDialog.getOpenFileName(
+                    self, 
+                    "Halbzeug-Rohling auswählen...", 
+                    common_profiles_dir, 
+                    "FreeCAD Dokumente (*.FCStd)"
+                )
+                
+                if selected_file:
+                    # Wir übergeben den ABSOLUTEN PFAD der gewählten Datei an den PartCreator!
+                    payload_properties["__LinkedRawProfilePath__"] = selected_file
+
         try:
             creator = EntityCreator(self.proj_name, self.proj_dir)
             generated_name = creator.create_pdm_document(comp_type, comp_num, payload_properties)
             QtWidgets.QMessageBox.information(self, "FCProject", f"Komponente {generated_name} erfolgreich erstellt!")
             self.number_input.setText(creator.get_next_available_number())
         except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "FCProject", f"Fehler: {str(e)}")
+            QtWidgets.QMessageBox.critical(None, "FCProject", f"Fehler: {str(e)}")
