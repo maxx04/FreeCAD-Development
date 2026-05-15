@@ -1,4 +1,4 @@
-# Macro Version: 2.9.7 - FCProject: Dynamischer JSON-Scanner für PROJ_*.json
+# Macro Version: 1.0.4 - FCProject: InitGui Hintergrund-Scanner mit Versions-Guard
 import os
 import sys
 import FreeCAD as App
@@ -16,13 +16,16 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
     Icon = FreeCADGui.getIcon("freecad")
     MenuText = "FCProject"
 
+    # CRITICAL SECURITY GUARD: Muss exakt mit der Version des ProjectManagers übereinstimmen!
+    SUPPORTED_VERSION = "1.0"
+
     def Initialize(self):
         import ProjectManager
         import Commands  
         self.appendToolbar("FCProject Tools", ["FCProject_ProjectManager", "FCProject_CreatePart"])
 
     def Activated(self):
-        """AUTOMATISCHER CHECK: Scannt dynamisch nach der PROJ_[Name].json."""
+        """AUTOMATISCHER CHECK: Validiert den Projektkontext und schützt vor Versionskonflikten."""
         import json
         doc = App.ActiveDocument
         main_win = FreeCADGui.getMainWindow()
@@ -35,27 +38,42 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         project_dir = os.path.dirname(doc.FileName)
         folder_name = os.path.basename(project_dir)
 
-        # DYNAMISCHER NAMENS-CHECK VIA MATCH-CASE
+        # Dynamische JSON-Pfadermittlung via match-case
         match folder_name.startswith("PROJ_"):
             case True:
-                # Baut den Namen exakt nach deinem Schema: PROJ_U17.json
                 json_filename = f"{folder_name}.json"
                 json_path = os.path.join(project_dir, json_filename)
             case _:
-                # Fallback für unstrukturierte Verzeichnisse
-                json_path = os.path.join(project_dir, "FCProject.json")
+                json_filename = "FCProject.json"
+                json_path = os.path.join(project_dir, json_filename)
 
         if os.path.exists(json_path):
             try:
                 with open(json_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 
+                # 1. KORREKTUR: Version direkt beim Workbench-Wechsel validieren!
+                config_version = data.get("Configuration", {}).get("Version", "0.0")
+                
+                if config_version != self.SUPPORTED_VERSION:
+                    # Rote Warnung in die Konsole knallen
+                    App.Console.PrintError(
+                        f"\n[FCProject CRITICAL] ABBRUCH: Die geladene '{json_filename}' nutzt das Schema V{config_version}.\n"
+                        f"Diese Workbench unterstützt aktuell nur die Version V{self.SUPPORTED_VERSION}!\n"
+                        f"Bitte initialisiere das Projekt neu oder aktualisiere dein Addon.\n\n"
+                    )
+                    if main_win: 
+                        main_win.statusBar().showMessage(f"FCProject ERROR: Inkompatible Projekt-Version V{config_version}!", 6000)
+                    return # Ablauf hart abbrechen!
+                
+                # 2. Wenn die Version passt, laden wir die Metadaten
                 metadata = data.get("ProjectMetadata", {})
                 proj_name = metadata.get("ProjectName", "Unbekannt")
                 
                 if main_win:
                     main_win.statusBar().showMessage(f"FCProject: Kontext '{proj_name}' aktiv.", 5000)
-                App.Console.PrintMessage(f"FCProject: Projekt '{proj_name}' erfolgreich über {json_filename} verifiziert.\n")
+                App.Console.PrintMessage(f"FCProject: Projekt '{proj_name}' erfolgreich über {json_filename} verifiziert (V{config_version}).\n")
+                
             except Exception as e:
                 App.Console.PrintError(f"FCProject: Fehler beim JSON-Scan ({json_filename}): {str(e)}\n")
         else:

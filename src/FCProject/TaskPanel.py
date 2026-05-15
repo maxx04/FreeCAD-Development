@@ -81,14 +81,17 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         self.main_layout.addStretch()
 
     def rebuild_dynamic_fields(self):
+        """Baut die dynamischen Felder auf. Erzeugt bei Typ R ein Dropdown für die Profile."""
         while self.dynamic_layout.count():
             item = self.dynamic_layout.takeAt(0)
-            if item.widget(): item.widget().deleteLater()
+            if item.widget(): 
+                item.widget().deleteLater()
                 
         self.inputs_map.clear()
         comp_type = self.type_combo.currentData()
         
-        if comp_type in ["P", "R", "B"]: # Material für Parts, Rohmaterial und Kaufteile einblenden
+        # Material-Bereich ein- oder ausblenden
+        if comp_type in ["P", "R", "B"]:
             self.material_widget.setVisible(True)
         else:
             self.material_widget.setVisible(False)
@@ -99,9 +102,37 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         for prop_name, prop_meta in properties.items():
             self.dynamic_layout.addWidget(QtWidgets.QLabel(f"<b>{prop_name}:</b>"))
             default_val = str(prop_meta.get("Default", ""))
-            input_field = QtWidgets.QLineEdit(default_val)
-            self.dynamic_layout.addWidget(input_field)
-            self.inputs_map[prop_name] = input_field
+            
+            # KORREKTUR: Wenn wir ein Halbzeug (R) erstellen und beim Feld 'ProfilTyp' sind
+            if comp_type == "R" and prop_name == "ProfilTyp":
+                combo_field = QtWidgets.QComboBox()
+                
+                # Pfad zum GLOBALEN Ressourcen-Profilordner ermitteln
+                # self.proj_dir ist z.B. .../Arbeitsordner/PROJ_U20
+                # Der gemeinsame Ordner liegt eine Ebene höher unter _Common_Resources/Profiles
+                if self.proj_dir:
+                    base_cad_dir = os.path.dirname(self.proj_dir)
+                    global_profiles_dir = os.path.join(base_cad_dir, "_Common_Resources", "Profiles")
+                    
+                    if os.path.exists(global_profiles_dir):
+                        # Scanne den globalen Ordner nach echten Master-Skizzen
+                        for file in os.listdir(global_profiles_dir):
+                            if file.endswith(".FCStd"):
+                                clean_name = os.path.splitext(file)[0]
+                                combo_field.addItem(clean_name, clean_name)
+                
+                # Falls der Ordner noch komplett leer ist, einen Hinweis einfügen
+                if combo_field.count() == 0:
+                    combo_field.addItem("Keine Vorlagen in _Common_Resources gefunden", "None")
+                    
+                self.dynamic_layout.addWidget(combo_field)
+                self.inputs_map[prop_name] = combo_field
+            else:
+                # Normales Textfeld für alle anderen Eigenschaften (Length, Bezeichnung, Hersteller etc.)
+                input_field = QtWidgets.QLineEdit(default_val)
+                self.dynamic_layout.addWidget(input_field)
+                self.inputs_map[prop_name] = input_field
+
 
     def open_material_gui_via_dummy_object(self):
         active_doc = App.ActiveDocument
@@ -180,9 +211,15 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         comp_type = self.type_combo.currentData()
         comp_num = self.number_input.text().strip()
         
+        # In deiner TaskPanel.py -> Innerhalb von on_create_clicked:
+        # Werte aus der dynamischen GUI einsammeln (Unterstützt jetzt LineEdit und QComboBox)
         payload_properties = {}
-        for prop_name, field in self.inputs_map.items():
-            payload_properties[prop_name] = field.text().strip()
+        for prop_name, widget in self.inputs_map.items():
+            if isinstance(widget, QtWidgets.QComboBox):
+                payload_properties[prop_name] = widget.currentData()
+            else:
+                payload_properties[prop_name] = widget.text().strip()
+
             
         if comp_type in ["P", "R", "B"]:
             payload_properties["__TargetMaterialName__"] = self.material_input.text().strip()
