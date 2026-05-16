@@ -13,7 +13,7 @@ if user_mod_dir not in sys.path:
     sys.path.append(user_mod_dir)
 
 class FCProjectWorkbench(FreeCADGui.Workbench):
-    Icon = FreeCADGui.getIcon("freecad")
+    Icon = os.path.join(App.getUserAppDataDir(), 'Mod', 'FCProject', 'resources', 'icons', 'fcproject.svg') #FreeCADGui.getIcon("freecad")
     MenuText = "FCProject"
 
     # CRITICAL SECURITY GUARD: Muss exakt mit der Version des ProjectManagers übereinstimmen!
@@ -22,13 +22,15 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
     def Initialize(self):
         import ProjectManager
         import Commands  
-        import BOMCommand  # <-- NEU: Das neue Command-Modul importieren
+        import BOMCommand
+        import AssemblyPatternCommand  # <-- NEU: Assembly Pattern Command
         
         # KORREKTUR: Wir hängen den 3. Button ("FCProject_ExportBOM") hinten an die Toolbar an!
         self.appendToolbar("FCProject Tools", [
             "FCProject_ProjectManager", 
             "FCProject_CreatePart", 
-            "FCProject_ExportBOM"  # <-- NEU: Der Stücklisten-Knopf in der Leiste
+            "FCProject_ExportBOM",  # Stücklisten-Knopf
+            "FCProject_AssemblyPattern"  # <-- NEU: Assembly Pattern Button
         ])
 
 

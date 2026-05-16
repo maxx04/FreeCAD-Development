@@ -7,8 +7,10 @@ from TaskPanel import FCProjectTaskPanel
 class PartCreatorCommand:
     """Befehl zum Öffnen des FCProject TaskPanels aus der Toolbar."""
     def GetResources(self):
+        import os
+        icon_path = os.path.join(os.path.dirname(__file__), 'resources', 'icons', 'part_creator.svg')
         return {
-            'Pixmap': 'freecad', 
+            'Pixmap': icon_path,
             'MenuText': 'FCProject: PDM-Teil erstellen',
             'ToolTip': 'Erstellt eine neue, strukturierte Bauteil-Datei'
         }

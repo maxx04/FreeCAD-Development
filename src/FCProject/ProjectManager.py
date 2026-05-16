@@ -11,8 +11,10 @@ class ProjectManagerCommand:
     SCRIPT_VERSION = "1.0"
 
     def GetResources(self):
+        import os
+        icon_path = os.path.join(os.path.dirname(__file__), 'resources', 'icons', 'project_manager.svg')
         return {
-            'Pixmap': 'freecad', 
+            'Pixmap': icon_path,
             'MenuText': 'FCProject: Projekt initialisieren',
             'ToolTip': 'Erstellt eine strukturierte PDM-Umgebung und setzt das Arbeitsverzeichnis'
         }

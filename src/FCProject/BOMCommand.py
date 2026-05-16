@@ -7,8 +7,10 @@ from BOMManager import BOMManager
 
 class BOMExportCommand:
     def GetResources(self):
+        import os
+        icon_path = os.path.join(os.path.dirname(__file__), 'resources', 'icons', 'bom_export.svg')
         return {
-            'Pixmap': 'freecad', # Hier kannst du später dein eigenes Stücklisten-Icon (.svg) hinterlegen
+            'Pixmap': icon_path,
             'MenuText': 'FCProject: Stückliste (BOM) exportieren',
             'ToolTip': 'Generiert eine Excel-konforme CSV-Stückliste aus dem aktiven Dokument'
         }

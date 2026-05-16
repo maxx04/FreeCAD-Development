@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Assembly Pattern Icon - Array/Pattern von Objekten -->
+  <defs>
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4A90E2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#357ABD;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Hintergrund -->
+  <rect width="64" height="64" fill="white" opacity="0"/>
+  
+  <!-- Erste Reihe von Kuben (Pattern) -->
+  <!-- Würfel 1 -->
+  <g transform="translate(8, 16)">
+    <rect x="0" y="0" width="10" height="10" fill="url(#grad1)" stroke="#2E5C8A" stroke-width="0.5"/>
+    <polygon points="0,0 4,-3 14,-3 10,0" fill="#5BA3F5" opacity="0.8"/>
+    <polygon points="10,0 14,-3 14,7 10,10" fill="#2E5C8A" opacity="0.6"/>
+  </g>
+  
+  <!-- Würfel 2 -->
+  <g transform="translate(22, 16)">
+    <rect x="0" y="0" width="10" height="10" fill="url(#grad1)" stroke="#2E5C8A" stroke-width="0.5"/>
+    <polygon points="0,0 4,-3 14,-3 10,0" fill="#5BA3F5" opacity="0.8"/>
+    <polygon points="10,0 14,-3 14,7 10,10" fill="#2E5C8A" opacity="0.6"/>
+  </g>
+  
+  <!-- Würfel 3 -->
+  <g transform="translate(36, 16)">
+    <rect x="0" y="0" width="10" height="10" fill="url(#grad1)" stroke="#2E5C8A" stroke-width="0.5"/>
+    <polygon points="0,0 4,-3 14,-3 10,0" fill="#5BA3F5" opacity="0.8"/>
+    <polygon points="10,0 14,-3 14,7 10,10" fill="#2E5C8A" opacity="0.6"/>
+  </g>
+  
+  <!-- Würfel 4 -->
+  <g transform="translate(50, 16)">
+    <rect x="0" y="0" width="10" height="10" fill="url(#grad1)" stroke="#2E5C8A" stroke-width="0.5"/>
+    <polygon points="0,0 4,-3 14,-3 10,0" fill="#5BA3F5" opacity="0.8"/>
+    <polygon points="10,0 14,-3 14,7 10,10" fill="#2E5C8A" opacity="0.6"/>
+  </g>
+  
+  <!-- Zweite Reihe von Kuben -->
+  <!-- Würfel 5 -->
+  <g transform="translate(8, 34)">
+    <rect x="0" y="0" width="10" height="10" fill="url(#grad1)" stroke="#2E5C8A" stroke-width="0.5"/>
+    <polygon points="0,0 4,-3 14,-3 10,0" fill="#5BA3F5" opacity="0.8"/>
+    <polygon points="10,0 14,-3 14,7 10,10" fill="#2E5C8A" opacity="0.6"/>
+  </g>
+  
+  <!-- Würfel 6 -->
+  <g transform="translate(22, 34)">
+    <rect x="0" y="0" width="10" height="10" fill="url(#grad1)" stroke="#2E5C8A" stroke-width="0.5"/>
+    <polygon points="0,0 4,-3 14,-3 10,0" fill="#5BA3F5" opacity="0.8"/>
+    <polygon points="10,0 14,-3 14,7 10,10" fill="#2E5C8A" opacity="0.6"/>
+  </g>
+  
+  <!-- Würfel 7 -->
+  <g transform="translate(36, 34)">
+    <rect x="0" y="0" width="10" height="10" fill="url(#grad1)" stroke="#2E5C8A" stroke-width="0.5"/>
+    <polygon points="0,0 4,-3 14,-3 10,0" fill="#5BA3F5" opacity="0.8"/>
+    <polygon points="10,0 14,-3 14,7 10,10" fill="#2E5C8A" opacity="0.6"/>
+  </g>
+  
+  <!-- Würfel 8 -->
+  <g transform="translate(50, 34)">
+    <rect x="0" y="0" width="10" height="10" fill="url(#grad1)" stroke="#2E5C8A" stroke-width="0.5"/>
+    <polygon points="0,0 4,-3 14,-3 10,0" fill="#5BA3F5" opacity="0.8"/>
+    <polygon points="10,0 14,-3 14,7 10,10" fill="#2E5C8A" opacity="0.6"/>
+  </g>
+</svg>
