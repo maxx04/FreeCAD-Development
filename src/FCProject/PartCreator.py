@@ -1,13 +1,15 @@
-# Macro Version: 3.7.1 - FCProject: PartCreator mit Doppel-Klon und fixierter Label-Zuweisung
+# Macro Version: 3.7.2 - FCProject: PartCreator mit sauber getrenntem Standard-Fallback
 import os
 import FreeCAD as App
 
 class PartCreator:
-    """PDM-Logik für Einzelteile (Typ P). Erzeugt zwei autarke Klone im App::Part-Container."""
+    """PDM-Logik für Einzelteile (Typ P). Unterstützt Klonierung und leere Standard-Erstellung."""
 
     def create(self, file_path, base_name, trailing_name, config, properties):
         bezeichnung_val = properties.get("Bezeichnung", "Standardteil")
         material_target = properties.get("__TargetMaterialName__", "Steel")
+        
+        # Der absolute Pfad zur gewählten Halbzeug-Datei (wird nur gesetzt, wenn im Dialog 'Ja' geklickt wurde)
         profile_path = properties.get("__LinkedRawProfilePath__", None)
 
         import PartDesign  # type: ignore
@@ -22,7 +24,7 @@ class PartCreator:
 
         core_obj = None
 
-        # 3. WENN EIN HALBZEUG GEWÄHLT WURDE: Doppelten physischen Klon (Deep Copy) ausführen
+        # 3. STRATEGIE-WEICHE: Nur klonen, wenn wir WIRKLICH einen gültigen Pfad vom Dateidialog haben!
         if profile_path and os.path.exists(profile_path):
             try:
                 template_doc = App.openDocument(profile_path)
@@ -44,8 +46,6 @@ class PartCreator:
                     
                     # KLON 2: Der Bearbeitungs-Klon (Vollständig autark zum Weiterkonstruieren)
                     core_obj = new_doc.copyObject(source_body, True)
-                    
-                    # KORREKTUR: Niemals das schreibgeschützte .Name beschreiben! Nur das .Label ändern!
                     core_obj.Label = f"Bearbeitung_{base_name}"
                     part_container.addObject(core_obj)
                     
@@ -54,17 +54,25 @@ class PartCreator:
                         part_container.addProperty("App::PropertyString", "BasiertAufHalbzeug", "FCProject_PDM", "Rohmaterial-Kopplung")
                     part_container.BasiertAufHalbzeug = os.path.basename(profile_path)
                     
-                    App.Console.PrintMessage(f"FCProject: Doppelte Deep-Copy-Klonierung erfolgreich abgeschlossen.\n")
+                    App.Console.PrintMessage(f"FCProject: Doppel-Klon für Halbzeug erfolgreich durchgeführt.\n")
                 
                 App.closeDocument(template_doc.Name)
             except Exception as e:
-                App.Console.PrintWarning(f"FCProject: Fehler beim doppelten Profil-Klonen: {str(e)}\n")
+                App.Console.PrintWarning(f"FCProject: Fehler beim Profil-Klonen: {str(e)}\n")
 
-        # 4. FALLBACK: Wenn kein Halbzeug gewählt wurde, leeren Standard-Body anlegen
+        # 4. DAS IST DIE KORREKTUR: Wenn KEIN Halbzeug ausgewählt wurde (Klassischer, leerer Body)
         if not core_obj:
+            # Wir erzeugen einen komplett leeren, nativen PartDesign::Body im Container
             core_obj = new_doc.addObject("PartDesign::Body", f"Body_{base_name}")
             core_obj.Label = f"Bearbeitung_{base_name}"
             part_container.addObject(core_obj)
+            
+            # Da es kein Halbzeug gibt, setzen wir das PDM-Attribut auf den Standard-Strich
+            if not hasattr(part_container, "BasiertAufHalbzeug"):
+                part_container.addProperty("App::PropertyString", "BasiertAufHalbzeug", "FCProject_PDM", "Rohmaterial-Kopplung")
+            part_container.BasiertAufHalbzeug = "-"
+            
+            App.Console.PrintMessage("FCProject: Normales, leeres Einzelteil ohne Halbzeug-Basis erfolgreich initialisiert.\n")
 
         # 5. Dynamische Material-Synchronisation via setExpression am Haupt-Body
         try:
@@ -82,14 +90,12 @@ class PartCreator:
         except Exception as mat_err:
             App.Console.PrintWarning(f"FCProject: Fehler bei Container-Material-Kopplung: {str(mat_err)}\n")
 
-        # 6. PDM Metadaten am Hauptcontainer spritzen
+        # 6. PDM Metadaten am Hauptcontainer spritzen (Mit der reinen ArtikelID)
+        pure_id = properties.get("__PureArticleID__", trailing_name)
+        
         if not hasattr(part_container, "ArticleID"):
             part_container.addProperty("App::PropertyString", "ArticleID", "FCProject", "Eindeutige ID")
-        
-        # KORREKTUR: Wir holen die reine PDM-Nummer aus dem Datenpaket!
-        # Falls sie fehlt, nutzen wir den trailing_name als sicheren Fallback.
-        pure_pdm_id = properties.get("__PureArticleID__", trailing_name)
-        part_container.ArticleID = pure_pdm_id
+        part_container.ArticleID = pure_id
         
         if not hasattr(part_container, "Bezeichnung"):
             part_container.addProperty("App::PropertyString", "Bezeichnung", "FCProject_PDM", "Logische Bauteilbenennung")
@@ -98,4 +104,3 @@ class PartCreator:
         # 7. Sichern und Berechnen
         new_doc.saveAs(file_path)
         new_doc.recompute()
-        App.Console.PrintMessage(f"FCProject: Gekapseltes PDM-Part '{trailing_name}' mit reiner ID erfolgreich generiert.\n")
