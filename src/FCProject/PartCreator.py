@@ -85,7 +85,11 @@ class PartCreator:
         # 6. PDM Metadaten am Hauptcontainer spritzen
         if not hasattr(part_container, "ArticleID"):
             part_container.addProperty("App::PropertyString", "ArticleID", "FCProject", "Eindeutige ID")
-        part_container.ArticleID = trailing_name
+        
+        # KORREKTUR: Wir holen die reine PDM-Nummer aus dem Datenpaket!
+        # Falls sie fehlt, nutzen wir den trailing_name als sicheren Fallback.
+        pure_pdm_id = properties.get("__PureArticleID__", trailing_name)
+        part_container.ArticleID = pure_pdm_id
         
         if not hasattr(part_container, "Bezeichnung"):
             part_container.addProperty("App::PropertyString", "Bezeichnung", "FCProject_PDM", "Logische Bauteilbenennung")
@@ -94,4 +98,4 @@ class PartCreator:
         # 7. Sichern und Berechnen
         new_doc.saveAs(file_path)
         new_doc.recompute()
-        App.Console.PrintMessage(f"FCProject: Gekapseltes PDM-Part mit sicherem Doppel-Klon erfolgreich generiert.\n")
+        App.Console.PrintMessage(f"FCProject: Gekapseltes PDM-Part '{trailing_name}' mit reiner ID erfolgreich generiert.\n")

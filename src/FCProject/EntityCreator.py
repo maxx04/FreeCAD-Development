@@ -52,13 +52,19 @@ class EntityCreator:
 
     def create_pdm_document(self, comp_type, comp_num, user_properties):
         """Generiert den Basisnamen und delegiert die Erstellung an die Ziel-Klasse."""
-        # 1. Suffix-Bezeichnung bestimmen
+                # In deiner EntityCreator.py -> Methode create_pdm_document:
+        
+        # 1. Die REINE PDM-ID ohne jeglichen Text berechnen (Der Kern für die BOM!)
+        base_pdm_id = f"{self.project_name}_{comp_num}_{comp_type}_"
+        
+        # 2. Das Suffix für den physischen Dateinamen ermitteln
         bezeichnung_suffix = ""
-        if comp_type in ["P", "A"] and "Bezeichnung" in user_properties and user_properties["Bezeichnung"]:
+        if comp_type in ["P", "A", "B"] and "Bezeichnung" in user_properties and user_properties["Bezeichnung"]:
             bezeichnung_suffix = f"_{user_properties['Bezeichnung']}"
         elif comp_type == "R" and "ProfilTyp" in user_properties and user_properties["ProfilTyp"]:
             bezeichnung_suffix = f"_{user_properties['ProfilTyp']}"
 
+        # Dateiname bleibt für das Auge lang und beschreibend
         pdm_base_name = f"{self.project_name}_{comp_num}_{comp_type}{bezeichnung_suffix}"
         filename_with_trailing = f"{pdm_base_name}_"
         new_file_path = os.path.join(self.project_dir, f"{filename_with_trailing}.FCStd")
@@ -66,14 +72,12 @@ class EntityCreator:
         if os.path.exists(new_file_path):
             raise FileExistsError(f"Die Datei {filename_with_trailing}.FCStd existiert bereits!")
 
+        # Wir packen die reine, saubere ID als Steuerungs-Variable in die Properties!
+        user_properties["__PureArticleID__"] = base_pdm_id
+
         entity_config = self.config_data.get("Entities", {}).get(comp_type, {})
         
-        # 2. STRATEGY-DELEGATION: Dynamischer Import des spezialisierten Creators
-         # In deiner EntityCreator.py -> Methode create_pdm_document:
-        
-        entity_config = self.config_data.get("Entities", {}).get(comp_type, {})
-        
-        # 2. STRATEGY-DELEGATION: Modernes, sauberes match-case statt if-elif-Wüste
+        # 3. Modernes match-case für die Delegation (wie von dir eingerichtet)
         match comp_type:
             case "P":
                 from PartCreator import PartCreator
@@ -92,6 +96,12 @@ class EntityCreator:
                 creator = PurchasedPartCreator()
             case _:
                 raise ValueError(f"Unbekannter PDM-Komponenten-Typ: {comp_type}")
+
+        # Den Creator ausführen
+        creator.create(new_file_path, pdm_base_name, filename_with_trailing, entity_config, user_properties)
+        
+        return filename_with_trailing
+
 
         # 3. Den spezialisierten Creator ausführen
         creator.create(new_file_path, pdm_base_name, filename_with_trailing, entity_config, user_properties)

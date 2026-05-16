@@ -240,22 +240,21 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
             msg_box.setDefaultButton(QtWidgets.QMessageBox.No)
             
             if msg_box.exec() == QtWidgets.QMessageBox.Yes:
-                # Standardmäßig im globalen Ressourcen-Ordner starten
-                common_profiles_dir = os.path.join(os.path.dirname(self.proj_dir), "_Common_Resources", "Profiles")
-                if not os.path.exists(common_profiles_dir):
-                    common_profiles_dir = os.path.dirname(self.proj_dir)
+                # KORREKTUR: Wir zwingen den Dialog, exakt im aktiven Projektverzeichnis zu starten!
+                # self.proj_dir zeigt z.B. direkt in deinen aktuellen /PROJ_U20/ Ordner
+                start_dir = self.proj_dir if self.proj_dir and os.path.exists(self.proj_dir) else os.getcwd()
                 
-                # ECHTER DATEIAUSWAHL-DIALOG auf der Festplatte aufrufen
+                # ECHTER DATEIAUSWAHL-DIALOG direkt im Projektordner öffnen
                 selected_file, _ = QtWidgets.QFileDialog.getOpenFileName(
                     self, 
-                    "Halbzeug-Rohling auswählen...", 
-                    common_profiles_dir, 
+                    "Halbzeug-Rohling aus Projekt auswählen...", 
+                    start_dir, 
                     "FreeCAD Dokumente (*.FCStd)"
                 )
                 
                 if selected_file:
-                    # Wir übergeben den ABSOLUTEN PFAD der gewählten Datei an den PartCreator!
                     payload_properties["__LinkedRawProfilePath__"] = selected_file
+
 
         try:
             creator = EntityCreator(self.proj_name, self.proj_dir)

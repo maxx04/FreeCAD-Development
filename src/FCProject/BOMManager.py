@@ -1,23 +1,27 @@
-# Macro Version: 4.2.5 - FCProject: BOMManager mit direktem C++ .ArticleID.Value Auszug
+# Macro Version: 4.2.6 - FCProject: BOMManager mit strikter LinkedObject-Erzwingung für die ID
 import os
 import csv
 import FreeCAD as App
 
 class BOMManager:
-    """Struktur-BOM Engine, die PDM-Werte direkt aus .ArticleID.Value im C++ Kern liest."""
+    """Struktur-BOM Engine, die Metadaten radikal und exklusiv aus dem verlinkten Kernobjekt liest."""
 
     def __init__(self, active_doc=None):
         self.doc = active_doc if active_doc else App.ActiveDocument
 
     def _resolve_pdm_value(self, obj, prop_name):
-        """Sucht eine PDM-Eigenschaft auf allen Ebenen und liest den echten C++ .Value aus."""
+        """Sucht eine PDM-Eigenschaft. Löst Links sofort auf, um die echten C++ .Value-Daten zu holen."""
         if not obj:
             return None
             
-        # 1. Direkt am übergebenen Element prüfen
-        if hasattr(obj, prop_name) and getattr(obj, prop_name):
-            prop_obj = getattr(obj, prop_name)
-            # WICHTIG: Wenn es eine FreeCAD-Property ist, ziehen wir den reinen Text über .Value!
+        # KORREKTUR: Wenn das Objekt ein Link ist, springen wir SOFORT zum echten Ursprungs-Bauteil!
+        pdm_target = obj
+        if hasattr(obj, "LinkedObject") and obj.LinkedObject:
+            pdm_target = obj.LinkedObject
+
+        # Jetzt lesen wir die Eigenschaft direkt und sauber vom echten Bauteilkern aus
+        if hasattr(pdm_target, prop_name) and getattr(pdm_target, prop_name):
+            prop_obj = getattr(pdm_target, prop_name)
             if hasattr(prop_obj, "Value"):
                 val = str(prop_obj.Value).strip()
             else:
@@ -26,31 +30,25 @@ class BOMManager:
             if val and val != "-":
                 return val
             
-        # 2. Wenn es ein Link ist, im verlinkten echten Quell-Dokumentenobjekt suchen
-        if hasattr(obj, "LinkedObject") and obj.LinkedObject:
-            res = self._resolve_pdm_value(obj.LinkedObject, prop_name)
-            if res: return res
-
-        # 3. Wenn es ein Gruppen-Container ist, in den inneren Unterelementen suchen
-        if hasattr(obj, "Group"):
-            for child in obj.Group:
+        # Fallback-Suche in inneren Gruppen, falls es ein verschachtelter Container ist
+        if hasattr(pdm_target, "Group"):
+            for child in pdm_target.Group:
                 if child.Label.startswith("BOM-Ref:"):
                     continue
-                if hasattr(child, prop_name) and getattr(child, prop_name):
-                    prop_obj = getattr(child, prop_name)
-                    if hasattr(prop_obj, "Value"):
-                        val = str(prop_obj.Value).strip()
-                    else:
-                        val = str(prop_obj).strip()
-                        
+                inner_child = child.LinkedObject if hasattr(child, "LinkedObject") and child.LinkedObject else child
+                if hasattr(inner_child, prop_name) and getattr(inner_child, prop_name):
+                    prop_obj = getattr(inner_child, prop_name)
+                    val = str(prop_obj.Value).strip() if hasattr(prop_obj, "Value") else str(prop_obj).strip()
                     if val and val != "-":
                         return val
         return None
 
     def _extract_pdm_data(self, obj):
-        """Sammelt Metadaten direkt und unverfälscht aus den echten PDM-Properties."""
-        # KORREKTUR: Zieht den sauberen, reinen Wert direkt über die neue .Value-Kaskade!
+        """Sammelt Metadaten direkt und unverfälscht aus den aufgelösten Kern-Properties."""
+        # Durch die korrigierte Kaskade oben wird hier garantiert die echte, reine ID gezogen!
         article_id = self._resolve_pdm_value(obj, "ArticleID")
+        
+        # Ultativer Fallback über den echten C++ Namen des Ursprungsbauteils (z.B. Part001)
         if not article_id:
             pdm_obj = obj.LinkedObject if hasattr(obj, "LinkedObject") and obj.LinkedObject else obj
             article_id = pdm_obj.Name
@@ -76,8 +74,16 @@ class BOMManager:
                 if not material: material = "-"
 
         # Rohling-Verknüpfung auflösen
-        rohteil = self._resolve_pdm_value(obj, "BasiertAufHalbzeug")
-        if not rohteil: rohteil = "-"
+        rohteil = "-"
+        
+        # KORREKTUR: Wenn das aktuelle Hauptobjekt KEINE Baugruppe ist, lesen wir das Rohteil aus
+        pdm_obj = obj.LinkedObject if hasattr(obj, "LinkedObject") and obj.LinkedObject else obj
+        if not pdm_obj.isDerivedFrom("Assembly::AssemblyObject"):
+            if hasattr(pdm_obj, "BasiertAufHalbzeug") and pdm_obj.BasiertAufHalbzeug:
+                rohteil = str(pdm_obj.BasiertAufHalbzeug)
+        else:
+            # Baugruppen besitzen per Definition niemals einen Rohling-Zuschnitt
+            rohteil = "-"
 
         return {
             "ArticleID": article_id,
@@ -85,6 +91,7 @@ class BOMManager:
             "Material": material,
             "Rohling": rohteil
         }
+
 
     def _scan_recursive(self, current_obj, current_index, bom_list, visited_objects):
         if current_obj in visited_objects:
