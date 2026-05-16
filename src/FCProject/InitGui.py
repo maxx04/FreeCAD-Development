@@ -22,7 +22,15 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
     def Initialize(self):
         import ProjectManager
         import Commands  
-        self.appendToolbar("FCProject Tools", ["FCProject_ProjectManager", "FCProject_CreatePart"])
+        import BOMCommand  # <-- NEU: Das neue Command-Modul importieren
+        
+        # KORREKTUR: Wir hängen den 3. Button ("FCProject_ExportBOM") hinten an die Toolbar an!
+        self.appendToolbar("FCProject Tools", [
+            "FCProject_ProjectManager", 
+            "FCProject_CreatePart", 
+            "FCProject_ExportBOM"  # <-- NEU: Der Stücklisten-Knopf in der Leiste
+        ])
+
 
     def Activated(self):
         """AUTOMATISCHER CHECK: Validiert den Projektkontext und schützt vor Versionskonflikten."""

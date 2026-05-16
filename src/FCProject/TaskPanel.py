@@ -79,6 +79,13 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         self.main_layout.addWidget(self.close_btn)
         
         self.main_layout.addStretch()
+        
+        # 6. Stücklisten Button (BOM)
+        self.bom_btn = QtWidgets.QPushButton("Projekt-Stückliste (BOM) exportieren")
+        self.bom_btn.setStyleSheet("background-color: #2b579a; color: white; font-weight: bold;")
+        self.bom_btn.clicked.connect(self.on_export_bom_clicked)
+        self.main_layout.addWidget(self.bom_btn)
+
 
     def rebuild_dynamic_fields(self):
         """Baut die dynamischen Felder auf. Erzeugt bei Typ R ein Dropdown für die Profile."""
@@ -257,3 +264,24 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
             self.number_input.setText(creator.get_next_available_number())
         except Exception as e:
             QtWidgets.QMessageBox.critical(None, "FCProject", f"Fehler: {str(e)}")
+
+
+    def on_export_bom_clicked(self):
+        """Triggert den PDM Stücklisten-Export."""
+        if not self.proj_dir:
+            QtWidgets.QMessageBox.warning(self, "FCProject BOM", "Kein aktiver Projektordner ermittelbar!")
+            return
+            
+        try:
+            from BOMManager import BOMManager
+            manager = BOMManager()
+            csv_result_path = manager.export_to_csv(self.proj_dir)
+            
+            if csv_result_path:
+                QtWidgets.QMessageBox.information(
+                    self, "FCProject: BOM Export", 
+                    f"Stückliste erfolgreich generiert!\n\nDatei: {os.path.basename(csv_result_path)}\nPfad: {self.proj_dir}"
+                )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "FCProject", f"Fehler beim BOM-Export: {str(e)}")
+
