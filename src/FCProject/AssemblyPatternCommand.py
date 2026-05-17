@@ -106,7 +106,7 @@ class AssemblyPatternDialog(QtWidgets.QDialog):
         # Joint-Abstand
         layout.addWidget(QtWidgets.QLabel("Abstand zwischen Elementen (mm):"))
         self.distance_spinbox = QtWidgets.QDoubleSpinBox()
-        self.distance_spinbox.setMinimum(0.1)
+        self.distance_spinbox.setMinimum(0.001)
         self.distance_spinbox.setMaximum(10000.0)
         # Erlaube mehr Nachkommastellen/Größeren Werte
         try:

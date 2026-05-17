@@ -124,12 +124,21 @@ class AssemblyPatternCreator:
         }
         return direction_map.get(direction, Vector(1, 0, 0))
 
+    def _safe_getattr(self, obj, name, default=None):
+        try:
+            return getattr(obj, name, default)
+        except Exception:
+            return default
+
+    def _has_shape(self, obj):
+        shape = self._safe_getattr(obj, 'Shape', None)
+        return shape is not None
+
     def _duplicate_element(self, source_element, new_label):
         """Dupliziert ein Element in der Assembly."""
         App.Console.PrintMessage(f"FCProject: Dupliziere Element '{source_element.Label}' (TypeId: {source_element.TypeId}).\n")
         
         try:
-            # Versuche zuerst einen nativen Dokument-Klon, der auch Group-/Link-Objekte abdeckt.
             if hasattr(self.doc, 'copyObject'):
                 try:
                     App.Console.PrintMessage(f"FCProject: Versuche doc.copyObject für '{source_element.Label}'.\n")
@@ -139,64 +148,55 @@ class AssemblyPatternCreator:
                 except Exception as copy_err:
                     App.Console.PrintWarning(f"FCProject: doc.copyObject fehlgeschlagen: {str(copy_err)}\n")
 
-            # Strategie 1: Wenn es eine Shape hat (Part::Feature, PartDesign::Body, etc.)
-            if hasattr(source_element, 'Shape') and source_element.Shape:
+            shape = self._safe_getattr(source_element, 'Shape', None)
+            if shape is not None:
                 App.Console.PrintMessage(f"FCProject: Kopiere Shape-Objekt.\n")
                 new_obj = self.doc.addObject(source_element.TypeId, f"obj_{new_label}")
-                
-                # Kopiere die Shape
-                new_obj.Shape = source_element.Shape
+                new_obj.Shape = shape
                 new_obj.Label = new_label
-                
-                # Kopiere Eigenschaften (Material, Farbe, etc.)
+
                 if hasattr(source_element, 'Material'):
                     try:
                         new_obj.Material = source_element.Material
-                    except:
+                    except Exception:
                         pass
-                
+
                 if hasattr(source_element, 'ViewObject') and source_element.ViewObject:
                     if hasattr(source_element.ViewObject, 'ShapeColor'):
                         new_obj.ViewObject.ShapeColor = source_element.ViewObject.ShapeColor
                     if hasattr(source_element.ViewObject, 'Transparency'):
                         new_obj.ViewObject.Transparency = source_element.ViewObject.Transparency
-                
+
                 return new_obj
-            
-            # Strategie 2: Wenn es ein Link/Referenz ist (Assembly::AssemblyObject)
-            elif hasattr(source_element, 'LinkedObject'):
-                App.Console.PrintMessage(f"FCProject: Erstelle Referenzkopie (Link).\n")
+
+            linked = self._safe_getattr(source_element, 'LinkedObject', None)
+            if linked is not None:
+                App.Console.PrintMessage(f"FCProject: Erstelle Link-Kopie eines referenzierten Objekts.\n")
+                try:
+                    new_obj = self.doc.addObject("App::Link", f"link_{new_label}")
+                    new_obj.LinkedObject = source_element
+                    new_obj.Label = new_label
+                    return new_obj
+                except Exception as link_err:
+                    App.Console.PrintWarning(f"FCProject: Link-Erstellung fehlgeschlagen: {str(link_err)}\n")
+
+            App.Console.PrintMessage(f"FCProject: Erstelle Link-Fallback für '{source_element.Label}'.\n")
+            try:
                 new_obj = self.doc.addObject("App::Link", f"link_{new_label}")
                 new_obj.LinkedObject = source_element
                 new_obj.Label = new_label
                 return new_obj
-            
-            # Strategie 3: Einfaches Container-Objekt
-            else:
-                App.Console.PrintMessage(f"FCProject: Erstelle einfaches Container-Objekt.\n")
-                # Versuche das Objekt zu klonen
-                try:
-                    new_obj = self.doc.addObject(source_element.TypeId, f"obj_{new_label}")
-                    new_obj.Label = new_label
-                    
-                    # Kopiere relevante Properties
-                    for prop_name in source_element.PropertiesList:
-                        if prop_name not in ['Document', 'Expression']:
-                            try:
-                                prop_value = getattr(source_element, prop_name)
-                                if prop_value is not None and not callable(prop_value):
-                                    setattr(new_obj, prop_name, prop_value)
-                            except:
-                                pass
-                    
-                    return new_obj
-                except Exception as e:
-                    App.Console.PrintWarning(f"FCProject: Fallback - Erstelle generisches Dokument-Objekt: {str(e)}\n")
-                    # Ultra-Fallback
-                    new_obj = self.doc.addObject("App::DocumentObjectGroup", f"obj_{new_label}")
-                    new_obj.Label = new_label
-                    return new_obj
-        
+            except Exception as fallback_err:
+                App.Console.PrintWarning(f"FCProject: Link-Fallback fehlgeschlagen: {str(fallback_err)}\n")
+
+            try:
+                new_obj = self.doc.addObject("App::DocumentObjectGroup", f"obj_{new_label}")
+                new_obj.Label = new_label
+                return new_obj
+            except Exception as group_err:
+                App.Console.PrintError(f"FCProject: Ultimativer Fallback fehlgeschlagen: {str(group_err)}\n")
+                raise
+
         except Exception as e:
             App.Console.PrintError(f"FCProject: Fehler beim Duplizieren von '{source_element.Label}': {str(e)}\n")
             import traceback
@@ -206,37 +206,141 @@ class AssemblyPatternCreator:
     def _create_joints_between_elements(self, elements, direction):
         """
         Erstellt Joints zwischen den Elementen für Assembly-Verbindungen.
-        Benötigt eine kompatible Assembly Workbench (FreeCAD 1.1+)
+        Benötigt eine kompatible Assembly Workbench (FreeCAD 1.1+).
         """
-        
-        solver_module = self._get_assembly_solver_module()
-        if not solver_module:
-            App.Console.PrintWarning("FCProject: Assembly Workbench nicht verfügbar - Joints können nicht erstellt werden.\n")
+        JointObject, UtilsAssembly = self._import_assembly_api()
+        if not JointObject or not UtilsAssembly:
+            App.Console.PrintWarning("FCProject: Assembly Workbench API nicht verfügbar - Joints können nicht erstellt werden.\n")
             return
-        
+
         if len(elements) < 2:
             return
-        
-        # Erstelle einfache Joints zwischen aufeinanderfolgenden Elementen
+
+        joint_group = UtilsAssembly.getJointGroup(self.assembly)
+        if joint_group is None:
+            App.Console.PrintWarning("FCProject: Konnte keine Joint-Gruppe in der Assembly finden.\n")
+            return
+
         for i in range(len(elements) - 1):
             elem1 = elements[i]
             elem2 = elements[i + 1]
-            
+
             try:
-                # Richtung für das Joint
-                if direction == "X-Achse":
-                    joint_axis = App.Vector(1, 0, 0)
-                elif direction == "Y-Achse":
-                    joint_axis = App.Vector(0, 1, 0)
-                else:  # Z-Achse
-                    joint_axis = App.Vector(0, 0, 1)
-                
-                # Erstelle ein Rigid Joint (starre Verbindung)
-                # Die exakte Implementierung hängt von der Assembly API ab
+                ref1 = self._build_joint_reference(elem1)
+                ref2 = self._build_joint_reference(elem2)
+
+                if not ref1 or not ref2:
+                    App.Console.PrintWarning(
+                        f"FCProject: Keine geeigneten Referenzgeometrien für Joint zwischen {elem1.Label} und {elem2.Label} gefunden.\n"
+                    )
+                    continue
+
+                joint = joint_group.newObject("App::FeaturePython", f"PatternJoint_{i+1}")
+                joint.Label = f"PatternJoint_{i+1}"
+                JointObject.Joint(joint, 0)
+                if hasattr(JointObject, "ViewProviderJoint"):
+                    JointObject.ViewProviderJoint(joint.ViewObject)
+
+                offset2 = self._compute_fixed_joint_offset(elem1, elem2, ref1, ref2, UtilsAssembly)
+                if offset2 is not None:
+                    joint.Offset2 = offset2
+
+                joint.Proxy.setJointConnectors(joint, [ref1, ref2])
                 App.Console.PrintMessage(f"FCProject: Joint zwischen {elem1.Label} und {elem2.Label} erstellt.\n")
-                
             except Exception as e:
                 App.Console.PrintWarning(f"FCProject: Joint-Erstellung fehlgeschlagen: {str(e)}\n")
+
+    def _try_create_joint(self, solver_module, elem1, elem2, axis):
+        """Versucht mehrere bekannte Assembly-API-Aufrufe für die Joint-Erstellung."""
+        candidates = [
+            'addJoint',
+            'createJoint',
+            'addConstraint',
+            'createConstraint',
+            'addRigid',
+            'createRigid',
+            'addLink',
+        ]
+        for name in candidates:
+            if hasattr(solver_module, name):
+                try:
+                    func = getattr(solver_module, name)
+                    result = func(elem1, elem2, axis)
+                    return result is not None
+                except Exception as e:
+                    App.Console.PrintWarning(f"FCProject: Assembly-Funktion {name} fehlgeschlagen: {str(e)}\n")
+
+        # Fallback: prüfe, ob solver_module selbst ein Joint-Objekt erzeugen kann
+        if hasattr(solver_module, 'Joint'):
+            try:
+                joint = solver_module.Joint(elem1, elem2, axis)
+                return joint is not None
+            except Exception as e:
+                App.Console.PrintWarning(f"FCProject: Assembly-Joint Konstruktor fehlgeschlagen: {str(e)}\n")
+
+        return False
+
+    def _import_assembly_api(self):
+        import importlib
+
+        candidates = [
+            "Assembly",
+            "assembly",
+            "A2",
+            "A2.assembly",
+            "FreeCADAssembly",
+            "FreeCADAssembly.assembly",
+            "freecad.assembly",
+        ]
+
+        for package_name in candidates:
+            try:
+                module = importlib.import_module(package_name)
+                JointObject = getattr(module, 'JointObject', None)
+                UtilsAssembly = getattr(module, 'UtilsAssembly', None)
+                if JointObject and UtilsAssembly:
+                    return JointObject, UtilsAssembly
+            except Exception:
+                continue
+
+        return None, None
+
+    def _build_joint_reference(self, element):
+        """Erstellt eine gültige Assembly-Referenz für das gegebene Element."""
+        if element is None:
+            return None
+
+        shape = self._safe_getattr(element, 'Shape', None)
+        if shape is None:
+            linked = self._safe_getattr(element, 'LinkedObject', None)
+            if linked is not None:
+                shape = self._safe_getattr(linked, 'Shape', None)
+
+        if shape is None:
+            return None
+
+        faces = getattr(shape, 'Faces', None)
+        verts = getattr(shape, 'Vertexes', None)
+        if not faces or not verts:
+            return None
+
+        return [element, ["Face1", "Vertex1"]]
+
+    def _compute_fixed_joint_offset(self, elem1, elem2, ref1, ref2, UtilsAssembly):
+        """Berechnet den Offset für ein fixiertes Joint, damit die aktuelle Position erhalten bleibt."""
+        try:
+            plc1 = UtilsAssembly.findPlacement(ref1, False)
+            plc2 = UtilsAssembly.findPlacement(ref2, False)
+            if plc1 is None or plc2 is None:
+                return None
+
+            global_plc1 = elem1.Placement.multiply(plc1)
+            target_relative = elem2.Placement.inverse().multiply(global_plc1)
+            offset2 = plc2.inverse().multiply(target_relative)
+            return offset2
+        except Exception as e:
+            App.Console.PrintWarning(f"FCProject: Berechnung des Joint-Offsets fehlgeschlagen: {str(e)}\n")
+            return None
 
     def _get_assembly_solver_module(self):
         """Versucht mehrere bekannte Assembly-Workbench-Importpfade."""
