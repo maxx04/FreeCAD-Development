@@ -80,19 +80,19 @@ class EntityCreator:
         # 3. Modernes match-case für die Delegation (wie von dir eingerichtet)
         match comp_type:
             case "P":
-                from FCProject.PartCreator import PartCreator
+                from PartCreator import PartCreator
                 creator = PartCreator()
             case "A":
-                from FCProject.AssemblyCreator import AssemblyCreator
+                from AssemblyCreator import AssemblyCreator
                 creator = AssemblyCreator()
             case "G":
-                from FCProject.GeometryCreator import GeometryCreator
+                from GeometryCreator import GeometryCreator
                 creator = GeometryCreator()
             case "R":
-                from FCProject.RAWCreator import RAWCreator
+                from RAWCreator import RAWCreator
                 creator = RAWCreator()
             case "B":
-                from FCProject.PurchasedPartCreator import PurchasedPartCreator
+                from PurchasedPartCreator import PurchasedPartCreator
                 creator = PurchasedPartCreator()
             case _:
                 raise ValueError(f"Unbekannter PDM-Komponenten-Typ: {comp_type}")

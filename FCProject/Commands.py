@@ -2,7 +2,7 @@
 
 import FreeCAD as App
 import FreeCADGui as Gui
-from FCProject.TaskPanel import FCProjectTaskPanel
+from TaskPanel import FCProjectTaskPanel
 
 class PartCreatorCommand:
     """Befehl zum Öffnen des FCProject TaskPanels aus der Toolbar."""
@@ -17,7 +17,7 @@ class PartCreatorCommand:
 
     def Activated(self):
         # Altes Gui.Control.showDialog(panel) ERSETZEN durch:
-        from FCProject.TaskPanel import FCProjectTaskPanel
+        from TaskPanel import FCProjectTaskPanel
         self.dialog = FCProjectTaskPanel()
         self.dialog.show() # Öffnet das Fenster schwebend im Vordergrund
 

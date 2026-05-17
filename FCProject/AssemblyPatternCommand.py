@@ -5,9 +5,9 @@ from PySide6.QtCore import Qt
 try:
     from .version import __version__
 except ImportError:
-    from FCProject.version import __version__
+    from version import __version__
 
-from FCProject.AssemblyPatternCreator import AssemblyPatternCreator
+import AssemblyPatternCreator
 
 class AssemblyPatternCommand:
     """Command zum Erstellen eines Pattern (Array) von Elementen über Joints in einer Assembly."""

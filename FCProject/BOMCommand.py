@@ -3,7 +3,7 @@ import os
 import FreeCAD as App
 import FreeCADGui as Gui
 from PySide6 import QtWidgets
-from FCProject.BOMManager import BOMManager
+import BOMManager
 
 class BOMExportCommand:
     def GetResources(self):

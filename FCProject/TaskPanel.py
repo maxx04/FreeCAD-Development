@@ -4,7 +4,7 @@ import json
 import FreeCAD as App
 import FreeCADGui as Gui
 from PySide6 import QtWidgets, QtCore
-from FCProject.EntityCreator import EntityCreator
+from EntityCreator import EntityCreator
 
 class FCProjectTaskPanel(QtWidgets.QDialog):
     def __init__(self):
@@ -272,7 +272,7 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
             return
             
         try:
-            from FCProject.BOMManager import BOMManager
+            from BOMManager import BOMManager
             manager = BOMManager()
             csv_result_path = manager.export_to_csv(self.proj_dir)
             
