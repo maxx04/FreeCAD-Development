@@ -1,1 +1,0 @@
-*Debugging Strategy:* Native Addon-Entwicklung nutzt Symbolic Links zum Mod-Ordner und debugpy für Remote-Attach. Der Socket-Server (ListenToVSC) ist nur für kleine Skript-Tests gut, aber instabil für komplexe GUIs.

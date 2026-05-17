@@ -77,7 +77,7 @@ class PartCreator:
         # 5. Dynamische Material-Synchronisation via setExpression am Haupt-Body
         try:
             if hasattr(core_obj, "ShapeMaterial"):
-                from MaterialUtils import get_native_material_by_name
+                from FCProject.MaterialUtils import get_native_material_by_name
                 cpp_material = get_native_material_by_name(material_target)
                 if cpp_material:
                     core_obj.ShapeMaterial = cpp_material

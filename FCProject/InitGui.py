@@ -20,17 +20,17 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
     SUPPORTED_VERSION = "1.0"
 
     def Initialize(self):
-        import ProjectManager
-        import Commands  
-        import BOMCommand
-        import AssemblyPatternCommand  # <-- NEU: Assembly Pattern Command
+        import FCProject.ProjectManager as ProjectManager
+        import FCProject.Commands as Commands  
+        import FCProject.BOMCommand as BOMCommand
+        import FCProject.AssemblyPatternCommand as AssemblyPatternCommand  # <-- NEU: Assembly Pattern Command
         
         # KORREKTUR: Wir hängen den 3. Button ("FCProject_ExportBOM") hinten an die Toolbar an!
         self.appendToolbar("FCProject Tools", [
             "FCProject_ProjectManager", 
             "FCProject_CreatePart", 
-            "FCProject_ExportBOM",  # Stücklisten-Knopf
-            "FCProject_AssemblyPattern"  # <-- NEU: Assembly Pattern Button
+            "FCProject_ExportBOM", 
+            "FCProject_AssemblyPattern" 
         ])
 
 
