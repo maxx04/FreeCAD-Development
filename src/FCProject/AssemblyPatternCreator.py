@@ -12,7 +12,7 @@ class AssemblyPatternCreator:
         self.pattern_group = None
         self._validate_assembly()
 
-    def create_pattern(self, source_element, count=3, distance=10.0, direction="X"):
+    def create_pattern(self, source_element, count=3, distance=600.0, direction="X"):
         """
         Erstellt ein Array-Pattern eines Elements über Joints.
         
@@ -26,6 +26,8 @@ class AssemblyPatternCreator:
         # Validierungen
         if not source_element:
             raise ValueError("Quell-Element ist None oder ungültig!")
+        if not hasattr(source_element, 'Shape') or source_element.Shape is None:
+            raise ValueError("Quell-Element muss eine gültige Shape besitzen!")
         
         if count < 1:
             raise ValueError("Anzahl muss mindestens 1 sein!")
@@ -98,7 +100,7 @@ class AssemblyPatternCreator:
         
         # 4. Erstelle Joints zwischen den Elementen (wenn Joints-Workbench verfügbar)
         try:
-            self._create_joints_between_elements(copied_elements, direction)
+            self._create_joints_between_elements(source_element, copied_elements, direction)
         except Exception as e:
             App.Console.PrintWarning(f"FCProject: Joints konnten nicht erstellt werden: {str(e)}\n")
         
@@ -203,7 +205,7 @@ class AssemblyPatternCreator:
             App.Console.PrintError(traceback.format_exc())
             raise ValueError(f"Element '{source_element.Label}' konnte nicht dupliziert werden: {str(e)}")
 
-    def _create_joints_between_elements(self, elements, direction):
+    def _create_joints_between_elements(self, source_element, elements, direction):
         """
         Erstellt Joints zwischen den Elementen für Assembly-Verbindungen.
         Benötigt eine kompatible Assembly Workbench (FreeCAD 1.1+).
@@ -221,13 +223,15 @@ class AssemblyPatternCreator:
             App.Console.PrintWarning("FCProject: Konnte keine Joint-Gruppe in der Assembly finden.\n")
             return
 
+        preferred_sub_name = self._get_basis_reference_name(source_element, UtilsAssembly, direction)
+
         for i in range(len(elements) - 1):
             elem1 = elements[i]
             elem2 = elements[i + 1]
 
             try:
-                ref1 = self._build_joint_reference(elem1)
-                ref2 = self._build_joint_reference(elem2)
+                ref1 = self._build_joint_reference(elem1, UtilsAssembly, preferred_sub_name)
+                ref2 = self._build_joint_reference(elem2, UtilsAssembly, preferred_sub_name)
 
                 if not ref1 or not ref2:
                     App.Console.PrintWarning(
@@ -241,7 +245,7 @@ class AssemblyPatternCreator:
                 if hasattr(JointObject, "ViewProviderJoint"):
                     JointObject.ViewProviderJoint(joint.ViewObject)
 
-                offset2 = self._compute_fixed_joint_offset(elem1, elem2, ref1, ref2, UtilsAssembly)
+                offset2 = self._compute_fixed_joint_offset(elem1, elem2, ref1, ref2, UtilsAssembly, direction)
                 if offset2 is not None:
                     joint.Offset2 = offset2
 
@@ -282,6 +286,8 @@ class AssemblyPatternCreator:
 
     def _import_assembly_api(self):
         import importlib
+        import os
+        import sys
 
         candidates = [
             "Assembly",
@@ -303,30 +309,199 @@ class AssemblyPatternCreator:
             except Exception:
                 continue
 
+        try:
+            JointObject = importlib.import_module('JointObject')
+            UtilsAssembly = importlib.import_module('UtilsAssembly')
+            if JointObject and UtilsAssembly:
+                return JointObject, UtilsAssembly
+        except Exception:
+            pass
+
+        potential_dirs = []
+        for path in sys.path:
+            if not path:
+                continue
+            if os.path.isfile(os.path.join(path, 'JointObject.py')) and os.path.isfile(os.path.join(path, 'UtilsAssembly.py')):
+                potential_dirs.append(path)
+
+        if hasattr(App, 'getResourcePath'):
+            resource_dir = os.path.join(App.getResourcePath(), 'Mod', 'Assembly')
+            if os.path.isdir(resource_dir) and resource_dir not in potential_dirs:
+                potential_dirs.append(resource_dir)
+
+        for path in potential_dirs:
+            if path not in sys.path:
+                sys.path.insert(0, path)
+            try:
+                JointObject = importlib.import_module('JointObject')
+                UtilsAssembly = importlib.import_module('UtilsAssembly')
+                if JointObject and UtilsAssembly:
+                    return JointObject, UtilsAssembly
+            except Exception:
+                continue
+
         return None, None
 
-    def _build_joint_reference(self, element):
+    def _get_basis_reference_name(self, source_element, UtilsAssembly=None, direction=None):
+        """Bestimmt die bevorzugte Basisreferenz (nur LCS) vom ausgewählten Quellteil."""
+        if source_element is None:
+            return None
+
+        linked = self._safe_getattr(source_element, 'LinkedObject', None)
+        root = linked if linked is not None else source_element
+
+        names = self._get_coordinate_system_names(root)
+        if not names:
+            return None
+
+        chosen = self._select_lcs_name(names, direction)
+        App.Console.PrintMessage(f"FCProject: Gewählte LCS-Referenz für Richtung {direction}: {chosen}\n")
+        return chosen
+
+    def _get_sub_name_for_child(self, child, root):
+        """Ermittelt den Subnamen eines verschachtelten Objekts relativ zur Wurzel."""
+        if child is None or root is None:
+            return None
+
+        if child == root:
+            return None
+
+        if hasattr(child, 'Parents'):
+            for sel in child.Parents:
+                if not sel or len(sel) < 2:
+                    continue
+                parent_obj, path = sel[0], sel[1]
+                if parent_obj == root or parent_obj.Name == root.Name:
+                    if path.endswith('.'):
+                        return f"{path}{child.Name}"
+                    return f"{path}.{child.Name}"
+
+        return child.Name
+
+    def _get_coordinate_system_names(self, element):
+        """Gibt alle LCS-/Datum-Referenznamen im Element zurück."""
+        if element is None:
+            return []
+
+        candidates = []
+        if hasattr(element, 'OutListRecursive'):
+            candidates = list(element.OutListRecursive)
+        elif hasattr(element, 'OutList'):
+            candidates = list(element.OutList)
+
+        names = []
+        for child in candidates:
+            if child is None:
+                continue
+            if getattr(child, 'TypeId', '') == 'App::LocalCoordinateSystem' or child.isDerivedFrom('App::LocalCoordinateSystem'):
+                sub_name = self._get_sub_name_for_child(child, element)
+                if sub_name:
+                    names.append(sub_name)
+            elif child.isDerivedFrom('App::DatumElement'):
+                sub_name = self._get_sub_name_for_child(child, element)
+                if sub_name:
+                    names.append(sub_name)
+
+        return names
+
+    def _select_lcs_name(self, names, direction=None):
+        """Wählt eine LCS-Referenz entsprechend der Pattern-Richtung aus."""
+        if not names:
+            return None
+
+        direction_map = {
+            'X-Achse': ['.Origin', '.XZ_Plane', '.YZ_Plane', '.X_Axis.', '.Y_Axis.', '.Z_Axis.'],
+            'Y-Achse': ['.Origin', '.YZ_Plane', '.XZ_Plane', '.Y_Axis.', '.Z_Axis.', '.X_Axis.'],
+            'Z-Achse': ['.Origin', '.XY_Plane', '.XZ_Plane', '.Z_Axis.', '.X_Axis.', '.Y_Axis.'],
+        }
+        priorities = direction_map.get(direction, ['.Origin', '.X_Axis.', '.Y_Axis.', '.Z_Axis.'])
+
+        for token in priorities:
+            for name in names:
+                if token in name or name.endswith(token.strip('.')):
+                    return name
+
+        return names[0]
+
+    def _find_coordinate_system_name(self, element):
+        """Sucht eine lokale Koordinatensystem-Referenz im Objekt."""
+        if element is None:
+            return None
+
+        candidates = []
+        if hasattr(element, 'OutListRecursive'):
+            candidates = list(element.OutListRecursive)
+        elif hasattr(element, 'OutList'):
+            candidates = list(element.OutList)
+
+        for child in candidates:
+            if child is None:
+                continue
+
+            if getattr(child, 'TypeId', '') == 'App::LocalCoordinateSystem' or child.isDerivedFrom('App::LocalCoordinateSystem'):
+                return self._get_sub_name_for_child(child, element)
+
+            if child.isDerivedFrom('App::DatumElement'):
+                parent = None
+                try:
+                    parent = child.getParent()
+                except Exception:
+                    parent = None
+                if parent is not None and parent.isDerivedFrom('App::LocalCoordinateSystem'):
+                    return self._get_sub_name_for_child(child, element)
+                return self._get_sub_name_for_child(child, element)
+
+        return None
+
+    def _build_joint_reference(self, element, UtilsAssembly=None, preferred_sub_name=None):
         """Erstellt eine gültige Assembly-Referenz für das gegebene Element."""
         if element is None:
             return None
 
-        shape = self._safe_getattr(element, 'Shape', None)
-        if shape is None:
-            linked = self._safe_getattr(element, 'LinkedObject', None)
-            if linked is not None:
-                shape = self._safe_getattr(linked, 'Shape', None)
+        linked = self._safe_getattr(element, 'LinkedObject', None)
+        root = linked if linked is not None else element
 
-        if shape is None:
-            return None
+        if preferred_sub_name:
+            ref = [element, [preferred_sub_name, ""]]
+            if UtilsAssembly and hasattr(UtilsAssembly, 'addTipNameToSub'):
+                tip_sub = UtilsAssembly.addTipNameToSub(ref)
+                if tip_sub:
+                    ref = [element, [tip_sub, ""]]
+            try:
+                plc = UtilsAssembly.findPlacement(ref, False) if UtilsAssembly else None
+                if plc is not None:
+                    App.Console.PrintMessage(f"FCProject: LCS-Referenz für {element.Label}: {ref}\n")
+                    return ref
+            except Exception as e:
+                App.Console.PrintWarning(
+                    f"FCProject: Bevorzugte LCS-Referenz '{preferred_sub_name}' für {element.Label} ist ungültig: {str(e)}\n"
+                )
 
-        faces = getattr(shape, 'Faces', None)
-        verts = getattr(shape, 'Vertexes', None)
-        if not faces or not verts:
-            return None
+        lcs_name = self._find_coordinate_system_name(root)
+        if lcs_name:
+            ref = [element, [lcs_name, ""]]
+            if UtilsAssembly and hasattr(UtilsAssembly, 'addTipNameToSub'):
+                tip_sub = UtilsAssembly.addTipNameToSub(ref)
+                if tip_sub:
+                    ref = [element, [tip_sub, ""]]
+            try:
+                plc = UtilsAssembly.findPlacement(ref, False) if UtilsAssembly else None
+                if plc is not None:
+                    App.Console.PrintMessage(f"FCProject: LCS-Referenz für {element.Label}: {ref}\n")
+                    return ref
+            except Exception as e:
+                App.Console.PrintWarning(
+                    f"FCProject: LCS-Referenz '{lcs_name}' für {element.Label} ist ungültig: {str(e)}\n"
+                )
 
-        return [element, ["Face1", "Vertex1"]]
-
-    def _compute_fixed_joint_offset(self, elem1, elem2, ref1, ref2, UtilsAssembly):
+        App.Console.PrintWarning(
+            f"FCProject: Keine LCS-Referenz für Element '{element.Label}' gefunden. Joint wird ohne Referenz übersprungen.\n"
+        )
+        return None
+    #TODO: Implementiere eine robustere Methode zur Bestimmung von Joint-Offsets, 
+    # um die aktuelle Position der Elemente beizubehalten, auch wenn die Assembly-API dies nicht automatisch unterstützt.
+    #FIXME: was ist mit direction?
+    def _compute_fixed_joint_offset(self, elem1, elem2, ref1, ref2, UtilsAssembly, direction):
         """Berechnet den Offset für ein fixiertes Joint, damit die aktuelle Position erhalten bleibt."""
         try:
             plc1 = UtilsAssembly.findPlacement(ref1, False)
@@ -334,9 +509,14 @@ class AssemblyPatternCreator:
             if plc1 is None or plc2 is None:
                 return None
 
-            global_plc1 = elem1.Placement.multiply(plc1)
-            target_relative = elem2.Placement.inverse().multiply(global_plc1)
-            offset2 = plc2.inverse().multiply(target_relative)
+            global1 = UtilsAssembly.getJcsGlobalPlc(plc1, ref1)
+            global2 = UtilsAssembly.getJcsGlobalPlc(plc2, ref2)
+            if global1 is None or global2 is None:
+                return None
+
+            # Offset2 muss so gesetzt werden, dass der globale JCS von Reference2
+            # mit dem globalen JCS von Reference1 übereinstimmt.
+            offset2 = global2.inverse().multiply(global1)
             return offset2
         except Exception as e:
             App.Console.PrintWarning(f"FCProject: Berechnung des Joint-Offsets fehlgeschlagen: {str(e)}\n")

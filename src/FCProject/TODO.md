@@ -1,12 +1,6 @@
--[ ] Bennenungen zu Teilenahmen hinzufügen (z.B Latte )
+1. Bennenungen zu Teilenahmen hinzufügen (z.B Latte )
 
--[ ] JSON Versionsprüfung kontrollieren
-
-1. Halbzeuge:
-1. TraceParts
-2. AddOns FreeCAD
-3. Eigene Halbzeuge 
-Halbzeuge interessant seitens Kostenabschätzung.
+1. JSON Versionsprüfung kontrollieren
 
 1. Rückwärtserzeugung Halbzeuge soll möglich sein!
 
@@ -26,7 +20,9 @@ Halbzeuge interessant seitens Kostenabschätzung.
 
 1. Änderung: Projekt anlegen - Verzeichnis mit Projektname anlegen und dort json mit Projektname. Gemeinsame Verzeichnisse für  Profile, Materialien, Kaufteile finden.
 
-1. Versionskontrolle hinzufügen.
+1. Versionskontrolle für Parts Assamblies usw. hinzufügen.
+
+1. Kaufteil als Step Datei und als Halbzeug zu körper umwandeln und kopieren umzu bearbeiten wie Profile.
 
 
 

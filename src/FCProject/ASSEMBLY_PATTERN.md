@@ -6,7 +6,8 @@ Der AssemblyPattern Command ermöglicht die Erstellung von Array-Patterns (Reihu
 ## Funktionen
 
 ### 1. Lineares Pattern (Standard)
-- **Verwendung**: Kopiert ein Element mehrfach in einer Linie
+- **Verwendung**: Wählt ein Element als Pattern-Vorlage und kopiert es mehrfach in einer Linie.
+- **Pattern-Basis**: Die gewählte Vorlage dient als Referenzbasis. Wenn vorhanden, wird das lokale Koordinatensystem (LCS) des ausgewählten Körpers verwendet.
 - **Parameter**:
   - `source_element`: Das zu kopierende Element
   - `count`: Anzahl der Kopien (1-100)
@@ -50,9 +51,11 @@ creator.create_circular_pattern(
 ### Workflow:
 1. Benutzer klickt den "Assembly Pattern via Joints" Button
 2. Dialog öffnet sich mit Konfigurationsoptionen
-3. Benutzer wählt Quell-Element, Anzahl, Abstand und Richtung
-4. Pattern wird erstellt und in einer DocumentObjectGroup organisiert
-5. Joints werden automatisch zwischen Elementen erstellt (wenn verfügbar)
+3. Benutzer wählt genau das zu kopierende Quell-Element
+4. Das ausgewählte Element wird geprüft: nur Objekte mit gültiger Shape kommen in Frage
+5. Als Pattern-Basis wird das lokale Koordinatensystem (LCS) des ausgewählten Körpers verwendet, wenn vorhanden
+6. Pattern wird erstellt und in einer DocumentObjectGroup organisiert
+7. Joints werden automatisch zwischen Elementen erstellt (wenn verfügbar)
 
 ## TODO / Erweiterungen
 

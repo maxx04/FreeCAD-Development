@@ -1,7 +1,8 @@
-# Macro Version: 1.0.0 - FCProject: AssemblyPatternCommand für Array-Erstellung über Joints
+# Macro Version: 1.1.0 - FCProject: AssemblyPatternCommand für Array-Erstellung über Joints
 import FreeCAD as App
 import FreeCADGui as Gui
-from PySide6 import QtWidgets
+from PySide6 import QtWidgets, __version__
+from PySide6.QtCore import Qt
 from AssemblyPatternCreator import AssemblyPatternCreator
 
 class AssemblyPatternCommand:
@@ -12,8 +13,8 @@ class AssemblyPatternCommand:
         icon_path = os.path.join(os.path.dirname(__file__), 'resources', 'icons', 'assembly_pattern.svg')
         return {
             'Pixmap': icon_path,
-            'MenuText': 'FCProject: Assembly Pattern via Joints',
-            'ToolTip': 'Erstellt ein Array-Pattern eines Elements in der Assembly über Joints'
+            'MenuText': 'FCProject: Assembly Pattern v1.1 (LCS active) via Joints',
+            'ToolTip': 'Erstellt ein Array-Pattern v1.1 mit richtungsabhängiger LCS-Referenz'
         }
 
     def Activated(self):
@@ -43,6 +44,7 @@ class AssemblyPatternCommand:
             )
             return
 
+        App.Console.PrintMessage("FCProject Assembly Pattern 1.1 aktiv\n")
         try:
             # Starte den Pattern Creator mit einem Dialog
             dialog = AssemblyPatternDialog(active_doc, assembly, main_win)
@@ -84,16 +86,15 @@ class AssemblyPatternDialog(QtWidgets.QDialog):
             raise
 
     def init_ui(self):
-        self.setWindowTitle("FCProject: Assembly Pattern erstellen")
-        self.setGeometry(100, 100, 500, 400)
+        self.setWindowTitle("FCProject: Assembly Pattern v1.1 erstellen")
+        self.setGeometry(100, 100, 500, 420)
 
         layout = QtWidgets.QVBoxLayout()
 
         # Quell-Element auswählen
-        layout.addWidget(QtWidgets.QLabel("Quell-Element (zu vervielfältigend):"))
-        self.element_combo = QtWidgets.QComboBox()
-        self.populate_elements()
-        layout.addWidget(self.element_combo)
+        layout.addWidget(QtWidgets.QLabel("Quell-Element: Bitte wähle im Dokument genau ein Objekt aus."))
+        self.selected_label = QtWidgets.QLabel(self._get_selected_label_text())
+        layout.addWidget(self.selected_label)
 
         # Anzahl der Kopien
         layout.addWidget(QtWidgets.QLabel("Anzahl Kopien:"))
@@ -113,7 +114,7 @@ class AssemblyPatternDialog(QtWidgets.QDialog):
             self.distance_spinbox.setDecimals(3)
         except Exception:
             pass
-        self.distance_spinbox.setValue(10.0)
+        self.distance_spinbox.setValue(600.0)
         self.distance_spinbox.setSingleStep(1.0)
         layout.addWidget(self.distance_spinbox)
 
@@ -122,6 +123,11 @@ class AssemblyPatternDialog(QtWidgets.QDialog):
         self.direction_combo = QtWidgets.QComboBox()
         self.direction_combo.addItems(["X-Achse", "Y-Achse", "Z-Achse"])
         layout.addWidget(self.direction_combo)
+
+        version_label = QtWidgets.QLabel(f"<b>FCProject Assembly Pattern {__version__} aktiv (LCS direction mode)</b>")
+        version_label.setStyleSheet("color: #555555; font-size: 12px;")
+        version_label.setTextFormat(Qt.RichText)
+        layout.addWidget(version_label)
 
         # Buttons
         button_layout = QtWidgets.QHBoxLayout()
@@ -137,55 +143,56 @@ class AssemblyPatternDialog(QtWidgets.QDialog):
 
         self.setLayout(layout)
 
-    def populate_elements(self):
-        """Füllt die Combo-Box mit verfügbaren Elementen."""
-        # FreeCAD 1.1: Verwende Objects statt Children
-        try:
-            objects = getattr(self.assembly, 'Objects', None) or getattr(self.assembly, 'Group', [])
-            if not objects:
-                objects = []
-            
-            App.Console.PrintMessage(f"FCProject: {len(objects)} Objekte in Assembly gefunden.\n")
-            
-            # Filter: nur copyable Objekte
-            copyable_objects = []
-            for obj in objects:
-                if not hasattr(obj, 'Label'):
-                    continue
-                if obj.TypeId == 'App::DocumentObjectGroup':
-                    continue
-                if obj.TypeId == 'Assembly::AssemblyObject':
-                    continue
-                
-                # Prüfe ob Objekt eine Shape oder LinkedObject hat
-                has_shape = hasattr(obj, 'Shape') and obj.Shape is not None
-                has_link = hasattr(obj, 'LinkedObject')
-                
-                if has_shape or has_link or hasattr(obj, 'PropertiesList'):
-                    copyable_objects.append(obj)
-                    App.Console.PrintMessage(f"FCProject: Objekt '{obj.Label}' (Type: {obj.TypeId}) ist kopierbar.\n")
-            
-            for obj in copyable_objects:
-                self.element_combo.addItem(obj.Label, obj)
-            
-            if self.element_combo.count() == 0:
-                self.element_combo.addItem("(Keine kopierbaren Elemente)", None)
-                App.Console.PrintWarning("FCProject: Keine kopierbaren Elemente in Assembly gefunden.\n")
-        except Exception as e:
-            App.Console.PrintError(f"FCProject: Fehler beim Auflisten der Elemente: {str(e)}\n")
-            import traceback
-            App.Console.PrintError(traceback.format_exc())
-            self.element_combo.addItem("(Fehler beim Auflisten)", None)
+    def _get_selected_label_text(self):
+        selection = Gui.Selection.getSelection()
+        if not selection:
+            return "(Kein Objekt ausgewählt)"
+        if len(selection) > 1:
+            return "Mehrere Objekte ausgewählt – bitte genau ein Objekt wählen."
+
+        source_element = selection[0]
+        if not self._is_valid_source_element(source_element):
+            return f"Ausgewähltes Objekt '{source_element.Label}' ist nicht gültig."
+        return f"Ausgewählt: {source_element.Label} ({source_element.Name})"
+
+    def _is_valid_source_element(self, element):
+        if element is None:
+            return False
+        if not hasattr(element, 'Shape') or element.Shape is None:
+            return False
+        if element.TypeId == 'App::DocumentObjectGroup' or element.TypeId == 'Assembly::AssemblyObject':
+            return False
+        name_lower = element.Name.lower() if hasattr(element, 'Name') else ''
+        label_lower = element.Label.lower() if hasattr(element, 'Label') else ''
+        
+        #TODO Nicht nach Label, sondern nach Typ filtern
+        if 'joint' in name_lower or 'joint' in label_lower:
+            return False
+        if 'bom' in name_lower or 'bom' in label_lower:
+            return False
+        return True
+
+    def _get_selected_source_element(self):
+        selection = Gui.Selection.getSelection()
+        if len(selection) != 1:
+            return None
+        source_element = selection[0]
+        return source_element if self._is_valid_source_element(source_element) else None
 
     def create_pattern(self):
         """Erstellt das Pattern mit den Dialog-Einstellungen."""
-        source_element = self.element_combo.currentData()
+        source_element = self._get_selected_source_element()
         count = self.count_spinbox.value()
         distance = self.distance_spinbox.value()
         direction = self.direction_combo.currentText()
 
         if not source_element:
-            QtWidgets.QMessageBox.warning(self, "Fehler", "Bitte wähle ein Quell-Element!")
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Fehler",
+                "Bitte wähle ein gültiges Quell-Element im Dokument genau einmal aus."
+            )
+            self.selected_label.setText(self._get_selected_label_text())
             return
 
         try:
@@ -199,7 +206,7 @@ class AssemblyPatternDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.information(
                 self,
                 "Erfolg",
-                f"Pattern mit {count} Kopien erfolgreich erstellt!"
+                f"FCProject Assembly Pattern v1.1: Pattern mit {count} Kopien erfolgreich erstellt!"
             )
             self.accept()
         except Exception as e:

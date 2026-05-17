@@ -15,6 +15,27 @@
     ],
     
    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
-   "python.terminal.activateEnvInSelectedTerminal": true
+   "python.terminal.activateEnvInSelectedTerminal": true,
+
+    "editor.foldingImportsByDefault": false,
+    "editor.foldingMaximumRegions": 5000,
+    "editor.foldingStrategy": "auto",
+
+    "todo-tree.general.tags": [
+    "TODO",
+    "FIXME",
+    "BUG",
+    "HACK",
+    "NOTE"
+    ],
+    "todo-tree.filtering.excludeGlobs": [
+        "**/node_modules/**",
+        "**/.venv/**",
+        "**/dist/**",
+        "**/build/**"
+    ]
+
+
+
 }
 
