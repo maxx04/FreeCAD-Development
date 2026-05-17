@@ -12,7 +12,7 @@ class AssemblyPatternCreator:
         self.pattern_group = None
         self._validate_assembly()
 
-    def create_pattern(self, source_element, count=3, distance=600.0, direction="X"):
+    def create_pattern(self, source_element, count=3, distance=600.0, direction="X-Achse"):
         """
         Erstellt ein Array-Pattern eines Elements über Joints.
         
@@ -35,7 +35,8 @@ class AssemblyPatternCreator:
         if distance <= 0:
             raise ValueError("Abstand muss > 0 sein!")
         
-        # 1. Richtungsvektor ermitteln
+        # 1. Richtungsvektor ermitteln (normalisiere Kurzformen wie 'X', 'Y', 'Z')
+        direction = self._normalize_direction(direction)
         direction_vector = self._get_direction_vector(direction)
         
         App.Console.PrintMessage(f"FCProject: Starte Pattern-Erstellung mit {count} Kopien auf {direction}.\n")
@@ -54,7 +55,9 @@ class AssemblyPatternCreator:
         for i in range(count):
             try:
                 # Berechne neue Position
-                offset_vector = direction_vector.multiply(distance * i)
+                #HACK direction_vector wird abgenullt durch Multiple.
+                # offset_vector = tmp_vector.multiply(distance * i)
+                offset_vector = direction_vector * (distance * i)
                 
                 # Kopiere das Element
                 new_element = self._duplicate_element(source_element, f"{source_element.Label}_Copy_{i+1}")
@@ -84,6 +87,13 @@ class AssemblyPatternCreator:
                 
                 # Füge zur Pattern-Gruppe hinzu
                 self.pattern_group.addObject(new_element)
+                # Versuche, das neue Element auch in der Assembly einzuhängen (falls möglich)
+                try:
+                    if hasattr(self.assembly, 'addObject'):
+                        self.assembly.addObject(new_element)
+                except Exception:
+                    # Nicht kritisch, nur loggen
+                    App.Console.PrintWarning(f"FCProject: Konnte {new_element.Label} nicht zur Assembly hinzufügen (nicht kritisch).\n")
                 copied_elements.append(new_element)
                 
             except Exception as e:
@@ -126,6 +136,23 @@ class AssemblyPatternCreator:
         }
         return direction_map.get(direction, Vector(1, 0, 0))
 
+    def _normalize_direction(self, direction):
+        """Normalisiert kurze Formen ('X','Y','Z') auf die erwarteten Strings.
+
+        Akzeptiert bereits gültige Strings unverändert.
+        """
+        if direction is None:
+            return 'X-Achse'
+        if isinstance(direction, str):
+            s = direction.strip()
+            mapping = {
+                'X': 'X-Achse', 'Y': 'Y-Achse', 'Z': 'Z-Achse',
+                'X-Achse': 'X-Achse', 'Y-Achse': 'Y-Achse', 'Z-Achse': 'Z-Achse',
+                'x': 'X-Achse', 'y': 'Y-Achse', 'z': 'Z-Achse'
+            }
+            return mapping.get(s, s)
+        return 'X-Achse'
+
     def _safe_getattr(self, obj, name, default=None):
         try:
             return getattr(obj, name, default)
@@ -150,12 +177,19 @@ class AssemblyPatternCreator:
                 except Exception as copy_err:
                     App.Console.PrintWarning(f"FCProject: doc.copyObject fehlgeschlagen: {str(copy_err)}\n")
 
-            shape = self._safe_getattr(source_element, 'Shape', None)
-            if shape is not None:
-                App.Console.PrintMessage(f"FCProject: Kopiere Shape-Objekt.\n")
-                new_obj = self.doc.addObject(source_element.TypeId, f"obj_{new_label}")
-                new_obj.Shape = shape
-                new_obj.Label = new_label
+                shape = self._safe_getattr(source_element, 'Shape', None)
+                if shape is not None:
+                    App.Console.PrintMessage(f"FCProject: Kopiere Shape-Objekt.\n")
+                    new_obj = self.doc.addObject(source_element.TypeId, f"obj_{new_label}")
+                    new_obj.Shape = shape
+                    new_obj.Label = new_label
+
+                # Versuche, Placement-Eigenschaft zu übernehmen, damit Kopien an gleicher Stelle starten
+                try:
+                    if hasattr(source_element, 'Placement') and hasattr(new_obj, 'Placement'):
+                        new_obj.Placement = source_element.Placement
+                except Exception:
+                    pass
 
                 if hasattr(source_element, 'Material'):
                     try:
@@ -410,9 +444,9 @@ class AssemblyPatternCreator:
             return None
 
         direction_map = {
-            'X-Achse': ['.Origin', '.XZ_Plane', '.YZ_Plane', '.X_Axis.', '.Y_Axis.', '.Z_Axis.'],
-            'Y-Achse': ['.Origin', '.YZ_Plane', '.XZ_Plane', '.Y_Axis.', '.Z_Axis.', '.X_Axis.'],
-            'Z-Achse': ['.Origin', '.XY_Plane', '.XZ_Plane', '.Z_Axis.', '.X_Axis.', '.Y_Axis.'],
+            'X-Achse': ['.Origin', '.YZ_Plane'],
+            'Y-Achse': ['.Origin', '.XZ_Plane'],
+            'Z-Achse': ['.Origin', '.XY_Plane'],
         }
         priorities = direction_map.get(direction, ['.Origin', '.X_Axis.', '.Y_Axis.', '.Z_Axis.'])
 
@@ -461,6 +495,7 @@ class AssemblyPatternCreator:
         linked = self._safe_getattr(element, 'LinkedObject', None)
         root = linked if linked is not None else element
 
+        #HACK Verstehe nicht wie es funktioniert
         if preferred_sub_name:
             ref = [element, [preferred_sub_name, ""]]
             if UtilsAssembly and hasattr(UtilsAssembly, 'addTipNameToSub'):
@@ -476,6 +511,20 @@ class AssemblyPatternCreator:
                 App.Console.PrintWarning(
                     f"FCProject: Bevorzugte LCS-Referenz '{preferred_sub_name}' für {element.Label} ist ungültig: {str(e)}\n"
                 )
+
+            # Fallback: versuche dieselbe Sub-Referenz aber am Root-Objekt
+            try:
+                root_ref = [root, [preferred_sub_name, ""]]
+                if UtilsAssembly and hasattr(UtilsAssembly, 'addTipNameToSub'):
+                    tip_sub = UtilsAssembly.addTipNameToSub(root_ref)
+                    if tip_sub:
+                        root_ref = [root, [tip_sub, ""]]
+                plc = UtilsAssembly.findPlacement(root_ref, False) if UtilsAssembly else None
+                if plc is not None:
+                    App.Console.PrintMessage(f"FCProject: LCS-Referenz (root) für {element.Label}: {root_ref}\n")
+                    return root_ref
+            except Exception:
+                App.Console.PrintWarning(f"FCProject: Bevorzugte LCS-Referenz am Root für {element.Label} ungültig.\n")
 
         lcs_name = self._find_coordinate_system_name(root)
         if lcs_name:
@@ -493,6 +542,20 @@ class AssemblyPatternCreator:
                 App.Console.PrintWarning(
                     f"FCProject: LCS-Referenz '{lcs_name}' für {element.Label} ist ungültig: {str(e)}\n"
                 )
+
+            # Fallback: versuche LCS-Referenz am Root-Objekt
+            try:
+                root_ref = [root, [lcs_name, ""]]
+                if UtilsAssembly and hasattr(UtilsAssembly, 'addTipNameToSub'):
+                    tip_sub = UtilsAssembly.addTipNameToSub(root_ref)
+                    if tip_sub:
+                        root_ref = [root, [tip_sub, ""]]
+                plc = UtilsAssembly.findPlacement(root_ref, False) if UtilsAssembly else None
+                if plc is not None:
+                    App.Console.PrintMessage(f"FCProject: LCS-Referenz (root) für {element.Label}: {root_ref}\n")
+                    return root_ref
+            except Exception:
+                App.Console.PrintWarning(f"FCProject: LCS-Referenz am Root für {element.Label} ungültig.\n")
 
         App.Console.PrintWarning(
             f"FCProject: Keine LCS-Referenz für Element '{element.Label}' gefunden. Joint wird ohne Referenz übersprungen.\n"
@@ -516,7 +579,20 @@ class AssemblyPatternCreator:
 
             # Offset2 muss so gesetzt werden, dass der globale JCS von Reference2
             # mit dem globalen JCS von Reference1 übereinstimmt.
-            offset2 = global2.inverse().multiply(global1)
+            try:
+                offset2 = global2.inverse().multiply(global1)
+            except Exception as e:
+                App.Console.PrintWarning(f"FCProject: Fehler beim Multiplizieren von globalen JCS: {str(e)}\n")
+                return None
+
+            # Debug-Logging der Werte (kann komplexe Objekte sein)
+            try:
+                App.Console.PrintMessage(f"FCProject: plc1={str(plc1)}, plc2={str(plc2)}\n")
+                App.Console.PrintMessage(f"FCProject: global1={str(global1)}, global2={str(global2)}\n")
+                App.Console.PrintMessage(f"FCProject: berechnetes offset2={str(offset2)}\n")
+            except Exception:
+                pass
+
             return offset2
         except Exception as e:
             App.Console.PrintWarning(f"FCProject: Berechnung des Joint-Offsets fehlgeschlagen: {str(e)}\n")
