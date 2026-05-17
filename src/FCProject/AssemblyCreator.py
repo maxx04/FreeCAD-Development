@@ -22,19 +22,12 @@ class AssemblyCreator:
         pure_id = str(properties.get("__PureArticleID__", trailing_name)).strip()
  
         # 2. Neues separates Dokument für die Baugruppe (A) anlegen und im RAM aktivieren
-        # Vermeide Namenskonflikte im laufenden FreeCAD: hänge Suffix an, falls Name existiert
-        doc_name = trailing_name
-        idx = 1
-        while App.getDocument(doc_name) if hasattr(App, "getDocument") else (doc_name in App.listDocuments()):
-            idx += 1
-            doc_name = f"{trailing_name}_{idx}"
-        new_doc = App.newDocument(doc_name)
+        new_doc = App.newDocument(trailing_name)
         App.setActiveDocument(new_doc.Name)
          
         # Erzeugen des nativen C++ AssemblyObjects für FreeCAD 1.1
         # config.get("FreeCADType") zieht hier "Assembly::AssemblyObject" aus deiner JSON
         core_obj = new_doc.addObject(config.get("FreeCADType", "Assembly::AssemblyObject"), base_name)
-        core_obj.Label = trailing_name
  
         # 3. FESTES MATERIAL-BINDING (Als strukturierter Fallback)
         try:
@@ -57,6 +50,19 @@ class AssemblyCreator:
             # Recompute vor dem Speichern, damit Zustand konsistent ist
             new_doc.recompute()
             new_doc.saveAs(file_path)
+            
+            # WICHTIG: Nach saveAs() kann FreeCAD den Dokument-Namen aktualisieren
+            # oder das Dokument aus der Liste entfernen. Prüfe und re-registriere falls nötig
+            current_doc_name = new_doc.Name
+            if App.getDocument(current_doc_name) is None:
+                # Dokument ist nicht mehr registriert - versuche es neu zu öffnen
+                App.openDocument(file_path)
+                App.Console.PrintMessage(
+                    f"FCProject: Baugruppe-Dokument wurde re-registriert nach saveAs().\n"
+                )
+            
             App.Console.PrintMessage(f"FCProject: Native PDM-Baugruppe '{trailing_name}' erfolgreich generiert.\n")
         except Exception as save_err:
             App.Console.PrintError(f"FCProject: Fehler beim Speichern der Baugruppe '{file_path}': {save_err}\n")
+            import traceback
+            App.Console.PrintError(traceback.format_exc())

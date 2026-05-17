@@ -1,8 +1,12 @@
-# Macro Version: 1.1.0 - FCProject: AssemblyPatternCommand für Array-Erstellung über Joints
 import FreeCAD as App
 import FreeCADGui as Gui
-from PySide6 import QtWidgets, __version__
+from PySide6 import QtWidgets
 from PySide6.QtCore import Qt
+try:
+    from .version import __version__
+except ImportError:
+    from version import __version__
+
 from AssemblyPatternCreator import AssemblyPatternCreator
 
 class AssemblyPatternCommand:
@@ -13,8 +17,8 @@ class AssemblyPatternCommand:
         icon_path = os.path.join(os.path.dirname(__file__), 'resources', 'icons', 'assembly_pattern.svg')
         return {
             'Pixmap': icon_path,
-            'MenuText': 'FCProject: Assembly Pattern v1.1 (LCS active) via Joints',
-            'ToolTip': 'Erstellt ein Array-Pattern v1.1 mit richtungsabhängiger LCS-Referenz'
+            'MenuText': f'FCProject: Assembly Pattern (LCS active) via Joints ',
+            'ToolTip': f'Erstellt ein Array-Pattern mit richtungsabhängiger LCS-Referenz'
         }
 
     def Activated(self):
@@ -86,7 +90,7 @@ class AssemblyPatternDialog(QtWidgets.QDialog):
             raise
 
     def init_ui(self):
-        self.setWindowTitle("FCProject: Assembly Pattern v1.1 erstellen")
+        self.setWindowTitle(f"FCProject: Assembly Pattern V{__version__} erstellen")
         self.setGeometry(100, 100, 500, 420)
 
         layout = QtWidgets.QVBoxLayout()
@@ -124,7 +128,7 @@ class AssemblyPatternDialog(QtWidgets.QDialog):
         self.direction_combo.addItems(["X-Achse", "Y-Achse", "Z-Achse"])
         layout.addWidget(self.direction_combo)
 
-        version_label = QtWidgets.QLabel(f"<b>FCProject Assembly Pattern {__version__} aktiv (LCS direction mode)</b>")
+        version_label = QtWidgets.QLabel(f"<b>FCProject Assembly Pattern V{__version__} aktiv (LCS direction mode)</b>")
         version_label.setStyleSheet("color: #555555; font-size: 12px;")
         version_label.setTextFormat(Qt.RichText)
         layout.addWidget(version_label)

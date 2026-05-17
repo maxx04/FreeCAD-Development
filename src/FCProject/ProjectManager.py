@@ -156,9 +156,18 @@ class ProjectManagerCommand:
         # 7. Leere Stamm-CAD-Datei anlegen oder öffnen
         if not os.path.exists(fc_file_path):
             new_doc = App.newDocument(project_name)
-            new_doc.saveAs(fc_file_path)
+            if new_doc is None:
+                raise RuntimeError(f"FCProject: Fehler beim Erstellen des Projekt-Dokuments '{project_name}' - newDocument() gab None zurück.")
+            try:
+                new_doc.saveAs(fc_file_path)
+            except Exception as e:
+                App.Console.PrintError(f"FCProject: Fehler beim Speichern: {str(e)}\n")
+                raise
             new_doc.recompute()
-            Gui.setActiveDocument(new_doc.Name)
+            try:
+                Gui.setActiveDocument(new_doc.Name)
+            except Exception as e:
+                App.Console.PrintWarning(f"FCProject: setActiveDocument() fehlgeschlagen: {str(e)}, fahre fort.\n")
         else:
             App.openDocument(fc_file_path)
             Gui.setActiveDocument(project_name)

@@ -101,9 +101,3 @@ class EntityCreator:
         creator.create(new_file_path, pdm_base_name, filename_with_trailing, entity_config, user_properties)
         
         return filename_with_trailing
-
-
-        # 3. Den spezialisierten Creator ausführen
-        creator.create(new_file_path, pdm_base_name, filename_with_trailing, entity_config, user_properties)
-        
-        return filename_with_trailing
