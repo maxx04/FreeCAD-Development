@@ -26,8 +26,23 @@ class AssemblyPatternCreator:
         # Validierungen
         if not source_element:
             raise ValueError("Quell-Element ist None oder ungültig!")
-        if not hasattr(source_element, 'Shape') or source_element.Shape is None:
-            raise ValueError("Quell-Element muss eine gültige Shape besitzen!")
+        
+        # Prüfe, ob das Element gültig ist (Part, Body, Assembly, Link, etc.)
+        # Nicht alle haben eine Shape — das ist OK (z.B. Assemblies)
+        is_valid = False
+        if hasattr(source_element, 'Shape') and source_element.Shape is not None:
+            is_valid = True  # Hat Shape
+        elif source_element.isDerivedFrom('Assembly::AssemblyObject'):
+            is_valid = True  # Assembly
+        elif source_element.isDerivedFrom('App::Part'):
+            is_valid = True  # Part
+        elif source_element.isDerivedFrom('PartDesign::Body'):
+            is_valid = True  # Body
+        elif source_element.isDerivedFrom('App::Link'):
+            is_valid = True  # Link
+        
+        if not is_valid:
+            raise ValueError(f"Quell-Element '{source_element.Label}' (Typ: {source_element.TypeId}) ist nicht gültig! Unterstützt: Part, Body, Assembly, Link, oder Elemente mit Shape.")
         
         if count < 1:
             raise ValueError("Anzahl muss mindestens 1 sein!")
@@ -168,23 +183,35 @@ class AssemblyPatternCreator:
         App.Console.PrintMessage(f"FCProject: Dupliziere Element '{source_element.Label}' (TypeId: {source_element.TypeId}).\n")
         
         try:
+            new_obj = None
+            
+            # 1. Versuche doc.copyObject (funktioniert für die meisten Typen)
             if hasattr(self.doc, 'copyObject'):
                 try:
                     App.Console.PrintMessage(f"FCProject: Versuche doc.copyObject für '{source_element.Label}'.\n")
                     new_obj = self.doc.copyObject(source_element, False)
-                    new_obj.Label = new_label
-                    return new_obj
+                    if new_obj is not None:
+                        new_obj.Label = new_label
+                        App.Console.PrintMessage(f"FCProject: copyObject erfolgreich.\n")
+                        # Versuche trotzdem, zusätzliche Eigenschaften zu kopieren
+                        try:
+                            if hasattr(source_element, 'Placement') and hasattr(new_obj, 'Placement'):
+                                new_obj.Placement = source_element.Placement
+                        except Exception:
+                            pass
+                        return new_obj
                 except Exception as copy_err:
                     App.Console.PrintWarning(f"FCProject: doc.copyObject fehlgeschlagen: {str(copy_err)}\n")
 
-                shape = self._safe_getattr(source_element, 'Shape', None)
-                if shape is not None:
-                    App.Console.PrintMessage(f"FCProject: Kopiere Shape-Objekt.\n")
-                    new_obj = self.doc.addObject(source_element.TypeId, f"obj_{new_label}")
-                    new_obj.Shape = shape
-                    new_obj.Label = new_label
+            # 2. Fallback: Shape-Kopie (für Part/Body)
+            shape = self._safe_getattr(source_element, 'Shape', None)
+            if shape is not None:
+                App.Console.PrintMessage(f"FCProject: Kopiere Shape-Objekt.\n")
+                new_obj = self.doc.addObject(source_element.TypeId, f"obj_{new_label}")
+                new_obj.Shape = shape
+                new_obj.Label = new_label
 
-                # Versuche, Placement-Eigenschaft zu übernehmen, damit Kopien an gleicher Stelle starten
+                # Versuche, Placement-Eigenschaft zu übernehmen
                 try:
                     if hasattr(source_element, 'Placement') and hasattr(new_obj, 'Placement'):
                         new_obj.Placement = source_element.Placement
@@ -205,6 +232,7 @@ class AssemblyPatternCreator:
 
                 return new_obj
 
+            # 3. Link-Fallback
             linked = self._safe_getattr(source_element, 'LinkedObject', None)
             if linked is not None:
                 App.Console.PrintMessage(f"FCProject: Erstelle Link-Kopie eines referenzierten Objekts.\n")

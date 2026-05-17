@@ -7,7 +7,7 @@ try:
 except ImportError:
     from version import __version__
 
-import AssemblyPatternCreator
+from AssemblyPatternCreator import AssemblyPatternCreator
 
 class AssemblyPatternCommand:
     """Command zum Erstellen eines Pattern (Array) von Elementen über Joints in einer Assembly."""
@@ -162,13 +162,31 @@ class AssemblyPatternDialog(QtWidgets.QDialog):
     def _is_valid_source_element(self, element):
         if element is None:
             return False
-        if not hasattr(element, 'Shape') or element.Shape is None:
+        
+        # Prüfe, ob das Element gültig ist (Part, Body, Assembly, Link, oder mit Shape)
+        is_valid = False
+        if hasattr(element, 'Shape') and element.Shape is not None:
+            is_valid = True  # Hat Shape
+        elif element.isDerivedFrom('Assembly::AssemblyObject'):
+            is_valid = True  # Assembly
+        elif element.isDerivedFrom('App::Part'):
+            is_valid = True  # Part
+        elif element.isDerivedFrom('PartDesign::Body'):
+            is_valid = True  # Body
+        elif element.isDerivedFrom('App::Link'):
+            is_valid = True  # Link
+        
+        if not is_valid:
             return False
-        if element.TypeId == 'App::DocumentObjectGroup' or element.TypeId == 'Assembly::AssemblyObject':
+        
+        # Lehne Gruppen und spezielle Objekte ab
+        if element.TypeId == 'App::DocumentObjectGroup':
             return False
+        
         name_lower = element.Name.lower() if hasattr(element, 'Name') else ''
         label_lower = element.Label.lower() if hasattr(element, 'Label') else ''
         
+        # Lehne Joint und BOM Objekte ab
         #TODO Nicht nach Label, sondern nach Typ filtern
         if 'joint' in name_lower or 'joint' in label_lower:
             return False
