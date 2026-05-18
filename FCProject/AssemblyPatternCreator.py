@@ -20,7 +20,7 @@ class AssemblyPatternCreator:
             source_element: Das zu kopierende Element
             count: Anzahl der Kopien
             distance: Abstand zwischen den Elementen (mm)
-            direction: Richtungsvektor ("X-Achse", "Y-Achse", "Z-Achse")
+            direction: Richtungsvektor ("X-Achse", "Y-Achse", "Z-Achse" des LCS kopierten Objektes)
         """
         
         # Validierungen
@@ -67,7 +67,7 @@ class AssemblyPatternCreator:
         
         # 3. Kopiere das Original-Element count mal und positioniere es
         copied_elements = []
-        for i in range(count):
+        for i in range(1, count+1):
             try:
                 # Berechne neue Position
                 #HACK direction_vector wird abgenullt durch Multiple.
@@ -75,7 +75,7 @@ class AssemblyPatternCreator:
                 offset_vector = direction_vector * (distance * i)
                 
                 # Kopiere das Element
-                new_element = self._duplicate_element(source_element, f"{source_element.Label}_Copy_{i+1}")
+                new_element = self._duplicate_element(source_element, f"{source_element.Label}_Copy_{i}")
                 
                 if not new_element:
                     App.Console.PrintWarning(f"FCProject: Element {i+1} konnte nicht erstellt werden (None returned).\n")
@@ -112,7 +112,7 @@ class AssemblyPatternCreator:
                 copied_elements.append(new_element)
                 
             except Exception as e:
-                App.Console.PrintError(f"FCProject: Fehler bei Element {i+1}/{count}: {str(e)}\n")
+                App.Console.PrintError(f"FCProject: Fehler bei Element {i}/{count}: {str(e)}\n")
                 import traceback
                 App.Console.PrintError(traceback.format_exc())
                 # Fahre mit nächstem Element fort
@@ -124,11 +124,12 @@ class AssemblyPatternCreator:
         App.Console.PrintMessage(f"FCProject: {len(copied_elements)} Elemente erfolgreich erstellt.\n")
         
         # 4. Erstelle Joints zwischen den Elementen (wenn Joints-Workbench verfügbar)
+        # Erste Joint wird zwischen original und erstem Kopie erstellt, dann zwischen den Kopien
         try:
             self._create_joints_between_elements(source_element, copied_elements, direction)
         except Exception as e:
             App.Console.PrintWarning(f"FCProject: Joints konnten nicht erstellt werden: {str(e)}\n")
-        
+
         # 5. Recompute
         self.doc.recompute()
         
@@ -270,6 +271,7 @@ class AssemblyPatternCreator:
     def _create_joints_between_elements(self, source_element, elements, direction):
         """
         Erstellt Joints zwischen den Elementen für Assembly-Verbindungen.
+        Erste Joint wird zwischen original und erstem Kopie erstellt, dann zwischen den Kopien
         Benötigt eine kompatible Assembly Workbench (FreeCAD 1.1+).
         """
         JointObject, UtilsAssembly = self._import_assembly_api()
@@ -277,7 +279,7 @@ class AssemblyPatternCreator:
             App.Console.PrintWarning("FCProject: Assembly Workbench API nicht verfügbar - Joints können nicht erstellt werden.\n")
             return
 
-        if len(elements) < 2:
+        if len(elements) < 1:
             return
 
         joint_group = UtilsAssembly.getJointGroup(self.assembly)
@@ -286,6 +288,9 @@ class AssemblyPatternCreator:
             return
 
         preferred_sub_name = self._get_basis_reference_name(source_element, UtilsAssembly, direction)
+
+        # einfüge source_element am Anfang der Liste, damit zuerst ein Joint zwischen Original und erstem Element erstellt wird
+        elements.insert(0, source_element)
 
         for i in range(len(elements) - 1):
             elem1 = elements[i]
@@ -523,7 +528,7 @@ class AssemblyPatternCreator:
         linked = self._safe_getattr(element, 'LinkedObject', None)
         root = linked if linked is not None else element
 
-        #HACK Verstehe nicht wie es funktioniert
+            #HACK Verstehe nicht wie es funktioniert
         if preferred_sub_name:
             ref = [element, [preferred_sub_name, ""]]
             if UtilsAssembly and hasattr(UtilsAssembly, 'addTipNameToSub'):
@@ -589,9 +594,8 @@ class AssemblyPatternCreator:
             f"FCProject: Keine LCS-Referenz für Element '{element.Label}' gefunden. Joint wird ohne Referenz übersprungen.\n"
         )
         return None
-    #TODO: Implementiere eine robustere Methode zur Bestimmung von Joint-Offsets, 
-    # um die aktuelle Position der Elemente beizubehalten, auch wenn die Assembly-API dies nicht automatisch unterstützt.
-    #FIXME: was ist mit direction?
+
+    #FIXME: was ist mit direction, die wird nicht benutzt?
     def _compute_fixed_joint_offset(self, elem1, elem2, ref1, ref2, UtilsAssembly, direction):
         """Berechnet den Offset für ein fixiertes Joint, damit die aktuelle Position erhalten bleibt."""
         try:
