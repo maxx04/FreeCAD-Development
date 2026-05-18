@@ -30,11 +30,11 @@ class EntityCreator:
         """Scannt den Ordner nach Mustern wie 'PROJ_XXXX_*' und gibt die nächste Nummer zurück."""
         highest_num = 0
         if not self.project_dir or not os.path.exists(self.project_dir): 
-            return "0001"
+            return "001"
 
         # KORREKTUR: Escapesicherer Schutz, falls project_name ungültige Zeichen enthält
         clean_proj_name = str(self.project_name)
-        pattern = re.compile(rf"^{re.escape(clean_proj_name)}_(\d{{4}})_[APRGB]")
+        pattern = re.compile(rf"^{re.escape(clean_proj_name)}_(\d{{3}})_[APRGB]")
         
         try:
             for filename in os.listdir(self.project_dir):
@@ -47,12 +47,10 @@ class EntityCreator:
             import FreeCAD as App
             App.Console.PrintWarning(f"FCProject: Fehler beim Ordner-Scan für Auto-Nummer: {str(e)}\n")
                     
-        return f"{highest_num + 1:04d}"
-
+        return f"{highest_num + 1:03d}"
 
     def create_pdm_document(self, comp_type, comp_num, user_properties):
         """Generiert den Basisnamen und delegiert die Erstellung an die Ziel-Klasse."""
-                # In deiner EntityCreator.py -> Methode create_pdm_document:
         
         # 1. Die REINE PDM-ID ohne jeglichen Text berechnen (Der Kern für die BOM!)
         base_pdm_id = f"{self.project_name}_{comp_num}_{comp_type}_"
@@ -77,7 +75,7 @@ class EntityCreator:
 
         entity_config = self.config_data.get("Entities", {}).get(comp_type, {})
         
-        # 3. Modernes match-case für die Delegation (wie von dir eingerichtet)
+        # 3. Match-case für die Delegation an die spezifischen Creator-Klassen
         match comp_type:
             case "P":
                 from PartCreator import PartCreator

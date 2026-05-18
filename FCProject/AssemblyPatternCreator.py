@@ -1,4 +1,4 @@
-# Macro Version: 1.0.0 - FCProject: AssemblyPatternCreator - Kern-Logik für Pattern via Joints
+#FCProject: AssemblyPatternCreator - Kern-Logik für Pattern via Joints
 import FreeCAD as App
 from FreeCAD import Vector, Placement, Rotation
 import copy

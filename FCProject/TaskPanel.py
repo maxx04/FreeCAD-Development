@@ -34,7 +34,7 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         self.main_layout.addWidget(self.type_combo)
         
         # 2. Teilnummer
-        suggested_num = "0001"
+        suggested_num = "001"
         if self.proj_name and self.proj_dir:
             checker = EntityCreator(self.proj_name, self.proj_dir)
             suggested_num = checker.get_next_available_number()

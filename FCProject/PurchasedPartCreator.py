@@ -1,9 +1,13 @@
-# Macro Version: 3.2.0 - FCProject: Spezialisierter PurchasedPartCreator (Typ B)
+
 import os
 import FreeCAD as App
 
 class PurchasedPartCreator:
-    """PDM-Logik für Kaufteile (Typ B). Integriert CAD-Imports als Basis-Komponente."""
+    """
+    FCProject: Spezialisierter PurchasedPartCreator für Kaufteile (Typ B) 
+    PDM-Logik für Kaufteile (Typ B). Integriert CAD-Imports als Basis-Komponente
+    mit CAD-Import als Basis. Integriert Material-Expressions und PDM-Metadaten.
+    """
 
     def create(self, file_path, base_name, trailing_name, config, properties):
         bezeichnung_val = properties.get("Bezeichnung", "Kaufteil")
@@ -45,22 +49,24 @@ class PurchasedPartCreator:
         except Exception as mat_err:
             App.Console.PrintWarning(f"FCProject: Fehler bei Material-Kopplung im Kaufteil: {str(mat_err)}\n")
 
-        # Metadaten spritzen
-        # In deiner PurchasedPartCreator.py -> Ganz unten beim Metadaten-Spritzen:
-
         # Wir holen uns die reine, saubere PDM-ID aus dem Fabrik-Paket
         pure_id = properties.get("__PureArticleID__", trailing_name)
 
         if not hasattr(core_obj, "ArticleID"):
             core_obj.addProperty("App::PropertyString", "ArticleID", "FCProject", "Eindeutige ID")
-        
-        # KORREKTUR: Jetzt schreiben wir auch hier NUR die reine ID (z.B. U20_0001_B_) rein!
         core_obj.ArticleID = pure_id
         
         if not hasattr(core_obj, "Bezeichnung"):
             core_obj.addProperty("App::PropertyString", "Bezeichnung", "FCProject_PDM", "Logische Benennung")
         core_obj.Bezeichnung = bezeichnung_val
 
+        if not hasattr(core_obj, "Hersteller"):
+            core_obj.addProperty("App::PropertyString", "Hersteller", "FCProject_PDM", "Herstellerbezeichnung")
+        core_obj.Hersteller = hersteller_val
+
+        if not hasattr(core_obj, "Bestellnummer"):
+            core_obj.addProperty("App::PropertyString", "Bestellnummer", "FCProject_PDM", "Bestellnummer")
+        core_obj.Bestellnummer = bestell_val
 
         new_doc.saveAs(file_path)
         new_doc.recompute()

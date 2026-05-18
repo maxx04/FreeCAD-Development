@@ -1,4 +1,3 @@
-# Macro Version: 3.2.1 - FCProject: Spezialisierter RAWCreator mit reiner ID-Speicherung
 import os
 import FreeCAD as App
 
@@ -15,15 +14,14 @@ class RAWCreator:
         pure_id = properties.get("__PureArticleID__", trailing_name)
 
         # 2. Absoluten Pfad zur Master-Skizzen-Vorlage ermitteln
-        #TODO Profilesverzeichniss anlegen und mit Standardprofilen füllen (z.B. U-Profil, I-Profil, Rechteckrohr, etc.)
         #TODO Kaufteile Verzeichnis mit passenden Vorlagen für z.B. Schrauben, Muttern, etc. anlegen
-        addon_dir = os.path.dirname(__file__)
-        template_file_path = os.path.join(addon_dir, "Profiles", f"{profile_template}.FCStd")
+        common_dir = os.path.join(os.path.dirname(file_path), "..", "_Common_Resources")
+        template_file_path = os.path.join(common_dir, "Profiles", f"{profile_template}.FCStd")
 
         if not os.path.exists(template_file_path):
             raise FileNotFoundError(
                 f"Die Profilvorlage '{profile_template}.FCStd' wurde nicht gefunden!\n"
-                f"Bitte lege die Datei im Ordner: '{os.path.join(addon_dir, 'Profiles')}' ab."
+                f"Bitte lege die Datei im Ordner: '{os.path.join(common_dir, 'Profiles')}' ab."
             )
 
         # 3. Neues separates Dokument anlegen und im RAM aktivieren

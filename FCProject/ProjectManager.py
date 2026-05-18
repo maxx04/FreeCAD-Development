@@ -1,4 +1,4 @@
-# Macro Version: 1.0.3 - FCProject: ProjectManager mit Inline-JSON und fixer Versionsprüfung
+
 import os
 import json
 from datetime import datetime
@@ -7,7 +7,7 @@ import FreeCADGui as Gui
 from PySide6 import QtWidgets
 
 class ProjectManagerCommand:
-    # SCRIPT_VERSION: Die Version, die dieses Python-Script maximal versteht
+    """ProjectManager mit Inline-JSON und fixer Versionsprüfung"""
     SCRIPT_VERSION = "1.0"
 
     def GetResources(self):
