@@ -7,9 +7,9 @@ class AssemblyPatternCreator:
     """Erstellt Array-Pattern von Elementen in einer Assembly über Joints."""
     
     def __init__(self, doc, assembly):
-        self.doc = doc
-        self.assembly = assembly
-        self.pattern_group = None
+        self.doc: App.Document = doc
+        self.assembly: App.DocumentObject = assembly
+        self.pattern_group: App.DocumentObjectGroup = None
         self._validate_assembly()
 
     def create_pattern(self, source_element, count=3, distance=600.0, direction="X-Achse"):
@@ -23,56 +23,34 @@ class AssemblyPatternCreator:
             direction: Richtungsvektor ("X-Achse", "Y-Achse", "Z-Achse" des LCS kopierten Objektes)
         """
         
-        # Validierungen
-        if not source_element:
-            raise ValueError("Quell-Element ist None oder ungültig!")
-        
-        # Prüfe, ob das Element gültig ist (Part, Body, Assembly, Link, etc.)
-        # Nicht alle haben eine Shape — das ist OK (z.B. Assemblies)
-        is_valid = False
-        if hasattr(source_element, 'Shape') and source_element.Shape is not None:
-            is_valid = True  # Hat Shape
-        elif source_element.isDerivedFrom('Assembly::AssemblyObject'):
-            is_valid = True  # Assembly
-        elif source_element.isDerivedFrom('App::Part'):
-            is_valid = True  # Part
-        elif source_element.isDerivedFrom('PartDesign::Body'):
-            is_valid = True  # Body
-        elif source_element.isDerivedFrom('App::Link'):
-            is_valid = True  # Link
-        
-        if not is_valid:
-            raise ValueError(f"Quell-Element '{source_element.Label}' (Typ: {source_element.TypeId}) ist nicht gültig! Unterstützt: Part, Body, Assembly, Link, oder Elemente mit Shape.")
-        
-        if count < 1:
-            raise ValueError("Anzahl muss mindestens 1 sein!")
-        
-        if distance <= 0:
-            raise ValueError("Abstand muss > 0 sein!")
-        
-        # 1. Richtungsvektor ermitteln (normalisiere Kurzformen wie 'X', 'Y', 'Z')
-        direction = self._normalize_direction(direction)
-        direction_vector = self._get_direction_vector(direction)
-        
-        App.Console.PrintMessage(f"FCProject: Starte Pattern-Erstellung mit {count} Kopien auf {direction}.\n")
+        # 1. Validierungen für kopierbares Element
+        self._validate_source_element(source_element)
         
         # 2. Erstelle eine Pattern-Gruppe für Übersicht
-        try:
-            self.pattern_group = self.doc.addObject("App::DocumentObjectGroup", f"Pattern_{source_element.Label}")
-            self.pattern_group.Label = f"Pattern: {source_element.Label}"
-            self.assembly.addObject(self.pattern_group)
-        except Exception as e:
-            App.Console.PrintError(f"FCProject: Fehler beim Erstellen der Pattern-Gruppe: {str(e)}\n")
-            raise
+        self._create_patterngroup(source_element)
         
         # 3. Kopiere das Original-Element count mal und positioniere es
+        copied_elements = self._copy_and_place_element(source_element, count, distance, direction)
+        
+        # 4. Erstelle Joints zwischen den Elementen (wenn Joints-Workbench verfügbar)
+        # Erste Joint wird zwischen original und erstem Kopie erstellt, dann zwischen den Kopien
+        try:
+            self._create_joints_between_elements(source_element, copied_elements, direction)
+        except Exception as e:
+            App.Console.PrintWarning(f"FCProject: Joints konnten nicht erstellt werden: {str(e)}\n")
+
+        # 5. Recompute
+        self.doc.recompute()
+        
+        App.Console.PrintMessage(f"FCProject: Pattern '{self.pattern_group.Label}' mit {count} Elementen erfolgreich erstellt!\n")
+
+    def _copy_and_place_element(self, source_element, count, distance, direction):
         copied_elements = []
         for i in range(1, count+1):
             try:
                 # Berechne neue Position
-                #HACK direction_vector wird abgenullt durch Multiple.
-                # offset_vector = tmp_vector.multiply(distance * i)
-                offset_vector = direction_vector * (distance * i)
+                #TODO Da kann man verschiedene Varianten von Berechnung einbauen, z.B. auch mit Rotation oder entlang von LCS-Achsen
+                offset_vector = self._calculate_offset_vector(distance, direction, i)
                 
                 # Kopiere das Element
                 new_element = self._duplicate_element(source_element, f"{source_element.Label}_Copy_{i}")
@@ -109,6 +87,7 @@ class AssemblyPatternCreator:
                 except Exception:
                     # Nicht kritisch, nur loggen
                     App.Console.PrintWarning(f"FCProject: Konnte {new_element.Label} nicht zur Assembly hinzufügen (nicht kritisch).\n")
+
                 copied_elements.append(new_element)
                 
             except Exception as e:
@@ -117,30 +96,62 @@ class AssemblyPatternCreator:
                 App.Console.PrintError(traceback.format_exc())
                 # Fahre mit nächstem Element fort
                 continue
+            
         
         if not copied_elements:
             raise RuntimeError("Keine Elemente konnten kopiert werden!")
         
         App.Console.PrintMessage(f"FCProject: {len(copied_elements)} Elemente erfolgreich erstellt.\n")
-        
-        # 4. Erstelle Joints zwischen den Elementen (wenn Joints-Workbench verfügbar)
-        # Erste Joint wird zwischen original und erstem Kopie erstellt, dann zwischen den Kopien
-        try:
-            self._create_joints_between_elements(source_element, copied_elements, direction)
-        except Exception as e:
-            App.Console.PrintWarning(f"FCProject: Joints konnten nicht erstellt werden: {str(e)}\n")
+        return copied_elements
 
-        # 5. Recompute
-        self.doc.recompute()
+    def _calculate_offset_vector(self, distance, direction, i):
+        direction_vector = self._get_direction_vector(direction)
+        offset_vector = direction_vector * (distance * i)
+        return offset_vector
+
+    def _create_patterngroup(self, source_element):
+        try:
+            self.pattern_group = self.doc.addObject("App::DocumentObjectGroup", f"Pattern_{source_element.Label}")
+            self.pattern_group.Label = f"Pattern: {source_element.Label}"
+            self.assembly.addObject(self.pattern_group)
+        except Exception as e:
+            App.Console.PrintError(f"FCProject: Fehler beim Erstellen der Pattern-Gruppe: {str(e)}\n")
+            raise
+
+    def _validate_source_element(self, element):
+        """Validiert das Quell-Element für die Pattern-Erstellung."""
+
+        if element is None:
+            raise ValueError("Quell-Element ist None!")
         
-        App.Console.PrintMessage(f"FCProject: Pattern '{self.pattern_group.Label}' mit {count} Elementen erfolgreich erstellt!\n")
+        # Überprüfe, ob das Element ein gültiger Typ ist (Part, Body, Assembly, Link, oder hat Shape)
+        is_valid = False
+        if hasattr(element, 'Shape') and element.Shape is not None:
+            is_valid = True  # Hat Shape
+        elif element.isDerivedFrom('Assembly::AssemblyObject'):
+            is_valid = True  # Assembly
+        elif element.isDerivedFrom('App::Part'):
+            is_valid = True  # Part
+        elif element.isDerivedFrom('PartDesign::Body'):
+            is_valid = True  # Body
+        elif element.isDerivedFrom('App::Link'):
+            is_valid = True  # Link
+        
+        if not is_valid:
+            raise ValueError(f"Quell-Element '{element.Label}' (Typ: {element.TypeId}) ist nicht gültig! \
+                             Unterstützt: Part, Body, Assembly, Link, oder Elemente mit Shape.")
+        
+        App.Console.PrintMessage(f"FCProject: Quell-Element '{element.Label}' validiert.\n")
 
     def _validate_assembly(self):
         """Validiert dass die Assembly FreeCAD 1.1 kompatibel ist."""
+
         if not self.assembly:
             raise ValueError("Assembly-Objekt ist None!")
+        
         if self.assembly.TypeId != "Assembly::AssemblyObject":
             raise ValueError(f"Objekt ist keine Assembly, sondern: {self.assembly.TypeId}")
+        
         App.Console.PrintMessage(f"FCProject: Assembly '{self.assembly.Label}' validiert.\n")
 
     def _get_direction_vector(self, direction):
@@ -194,18 +205,20 @@ class AssemblyPatternCreator:
                     if new_obj is not None:
                         new_obj.Label = new_label
                         App.Console.PrintMessage(f"FCProject: copyObject erfolgreich.\n")
-                        # Versuche trotzdem, zusätzliche Eigenschaften zu kopieren
+                        # Versuche zusätzliche Eigenschaften zu kopieren
                         try:
                             if hasattr(source_element, 'Placement') and hasattr(new_obj, 'Placement'):
                                 new_obj.Placement = source_element.Placement
                         except Exception:
                             pass
                         return new_obj
+                    
                 except Exception as copy_err:
                     App.Console.PrintWarning(f"FCProject: doc.copyObject fehlgeschlagen: {str(copy_err)}\n")
 
             # 2. Fallback: Shape-Kopie (für Part/Body)
             shape = self._safe_getattr(source_element, 'Shape', None)
+
             if shape is not None:
                 App.Console.PrintMessage(f"FCProject: Kopiere Shape-Objekt.\n")
                 new_obj = self.doc.addObject(source_element.TypeId, f"obj_{new_label}")

@@ -56,3 +56,16 @@ C++ Material Object Factory (App.createMaterial): Die Eigenschaft .ShapeMaterial
 
 String Argument Validation Guard: Beim Arbeiten mit dynamischen Systempfaden (os.getcwd()) oder asynchron geladenen CAD-Dokumenten dürfen String-Verarbeitungsmethoden (wie re.compile()) niemals Variablen erhalten, die den Zustand None annehmen können. Jede Kontext-Abfrage erfordert eine Kaskaden-Validierung mit einem harten Text-Fallback (return "PROJ"), um kritische GUI-Abbrüche (TypeError) im PDM-Einstiegsfenster abzufangen.
 
+```mermaid
+flowchart LR
+  Sleep[Sleep] --> Wake{Awake?}
+  Wake -->|No| Sleep
+  Wake -->|Hungry| Snack[Get treat]
+  Wake -->|Not in Sun?| Move[Move to sun
+  test
+  How it is?]
+  Wake -->|Human is typing| Keyboard[Sleep on keyboard]
+  Snack --> Sleep
+  Move --> Sleep
+  Keyboard --> Sleep
+```

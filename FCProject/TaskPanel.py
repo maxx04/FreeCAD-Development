@@ -16,7 +16,7 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         self.main_layout = QtWidgets.QVBoxLayout(self)
         self.main_layout.addWidget(QtWidgets.QLabel("<h3>FCProject: PDM-Creator</h3>"))
         
-        # KORREKTUR: Kontext direkt aus dem verifizierten System-Arbeitsverzeichnis laden!
+        # Kontext direkt aus dem verifizierten System-Arbeitsverzeichnis laden!
         self.proj_name, self.proj_dir = self._get_project_context()
         self.config_data = self._load_config()
         
@@ -86,7 +86,6 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         self.bom_btn.clicked.connect(self.on_export_bom_clicked)
         self.main_layout.addWidget(self.bom_btn)
 
-
     def rebuild_dynamic_fields(self):
         """Baut die dynamischen Felder auf. Erzeugt bei Typ R ein Dropdown für die Profile."""
         while self.dynamic_layout.count():
@@ -139,7 +138,6 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
                 input_field = QtWidgets.QLineEdit(default_val)
                 self.dynamic_layout.addWidget(input_field)
                 self.inputs_map[prop_name] = input_field
-
 
     def open_material_gui_via_dummy_object(self):
         active_doc = App.ActiveDocument
@@ -263,7 +261,6 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
             self.number_input.setText(creator.get_next_available_number())
         except Exception as e:
             QtWidgets.QMessageBox.critical(None, "FCProject", f"Fehler: {str(e)}")
-
 
     def on_export_bom_clicked(self):
         """Triggert den PDM Stücklisten-Export."""

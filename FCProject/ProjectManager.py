@@ -82,7 +82,7 @@ class ProjectManagerCommand:
     def Activated(self):
         main_window = Gui.getMainWindow()
         
-        # 1. PRE-FLIGHT CHECK: Prüfen, ob im aktuellen Verzeichnis bereits ein Projekt aktiv ist
+        # 1. Prüfen, ob im aktuellen Verzeichnis bereits ein Projekt aktiv ist
         current_dir = os.getcwd()
         folder_name = os.path.basename(current_dir)
         
@@ -118,14 +118,26 @@ class ProjectManagerCommand:
         base_dir = QtWidgets.QFileDialog.getExistingDirectory(main_window, "Wähle deinen zentralen CAD-Arbeitsordner")
         if not base_dir: return
 
-        # 3. Ressourcen-Verzeichnisse absichern
+        #2.1. Prüfen ob die Arbeitsverzeichnis schon ein Projekt enthält
+        folder_name = os.path.basename(base_dir)
+        if folder_name.startswith("PROJ_"):
+            json_filename = f"{folder_name}.json"
+            json_path = os.path.join(base_dir, json_filename)
+            
+            if os.path.exists(json_path):
+                QtWidgets.QMessageBox.critical(main_window, "FCProject: Fehler!", "Das ausgewählte Arbeitsverzeichnis enthält bereits ein Projekt! Bitte wähle einen leeren Ordner oder entferne die bestehenden PROJ_-Verzeichnisse.")
+                return
+
+        # 3. Projektnamen abfragen (z.B. U17)
+        project_name, ok = QtWidgets.QInputDialog.getText(main_window, "FCProject: Neues Projekt", "Bitte gib den Projektnamen ein (z.B. U17):")
+        if not ok or not project_name: return
+        
+        # 4. Ressourcen-Verzeichnisse absichern
         common_dir = os.path.join(base_dir, "_Common_Resources")
         os.makedirs(os.path.join(common_dir, "Profiles"), exist_ok=True)
         os.makedirs(os.path.join(common_dir, "PurchasedComponents"), exist_ok=True)
 
-        # 4. Projektnamen abfragen (z.B. U17)
-        project_name, ok = QtWidgets.QInputDialog.getText(main_window, "FCProject: Neues Projekt", "Bitte gib den Projektnamen ein (z.B. U17):")
-        if not ok or not project_name: return
+
 
         # 5. Projektordner anlegen (z.B. PROJ_U17)
         project_folder_name = f"PROJ_{project_name}"

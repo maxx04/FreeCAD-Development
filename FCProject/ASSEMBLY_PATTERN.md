@@ -25,7 +25,7 @@ creator.create_pattern(
 )
 ```
 
-### 2. Zirkuläres Pattern (Alternativ)
+### 1. Zirkuläres Pattern (Alternativ)
 - **Verwendung**: Kopiert ein Element mehrfach im Kreis
 - **Parameter**:
   - `source_element`: Das zu kopierende Element
