@@ -156,7 +156,8 @@ class AssemblyPatternDialog(QtWidgets.QDialog):
 
         source_element = selection[0]
         if not self._is_valid_source_element(source_element):
-            return f"Ausgewähltes Objekt '{source_element.Label}' ist nicht gültig."
+            return f"Ausgewähltes Objekt '{source_element.Label}' ist nicht gültig.\n\
+            Unterstützt: Part, Body, Assembly, Link, oder Elemente mit Shape."
         return f"Ausgewählt: {source_element.Label} ({source_element.Name})"
 
     def _is_valid_source_element(self, element):

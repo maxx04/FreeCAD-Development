@@ -201,15 +201,28 @@ class AssemblyPatternCreator:
             if hasattr(self.doc, 'copyObject'):
                 try:
                     App.Console.PrintMessage(f"FCProject: Versuche doc.copyObject für '{source_element.Label}'.\n")
+                    #HACK: In blick behalten zweie Argument. Wenn TRUE dann werden alle Abgeleiteten Objekte mitkopiert. 
+                    # Das führt bei manchen Typen zu Fehlern, z.B. wenn das Objekt schon in einer Assembly ist. 
+                    # Daher erstmal mit False testen, damit nur das Objekt selbst kopiert wird.
                     new_obj = self.doc.copyObject(source_element, False)
                     if new_obj is not None:
                         new_obj.Label = new_label
                         App.Console.PrintMessage(f"FCProject: copyObject erfolgreich.\n")
                         # Versuche zusätzliche Eigenschaften zu kopieren
+                        #HACK: Bei manchen Typen (z.B. Part::Feature) werden durch copyObject nicht alle Eigenschaften korrekt kopiert, 
+                        # ??? Wieso genau das passiert ist unklar, könnte aber mit der internen Struktur von FreeCAD-Objekten zusammenhängen, 
+                        # die in Assemblies eingebunden sind. Insbesondere können Eigenschaften wie Placement oder Material verloren gehen, 
+                        # wenn das Objekt bereits Teil einer Assembly ist oder wenn es sich um ein Link-Objekt handelt. 
+                        # Es scheint, dass copyObject in diesen Fällen nur eine flache Kopie des Objekts erstellt, 
+                        # ohne die komplexeren Verbindungen und Eigenschaften zu berücksichtigen, die in Assemblies relevant sind. 
+                        # Daher müssen wir hier manuell versuchen, diese wichtigen Eigenschaften zu übernehmen, um sicherzustellen, 
+                        # dass die kopierten Elemente korrekt positioniert und dargestellt werden.
+                        # z.B. Material oder ViewObject-Eigenschaften. Daher hier versuchen, diese manuell zu kopieren.
                         try:
                             if hasattr(source_element, 'Placement') and hasattr(new_obj, 'Placement'):
                                 new_obj.Placement = source_element.Placement
                         except Exception:
+                            App.Console.PrintWarning(f"FCProject: Placement-Kopierfehler: {str(copy_err)}\n")
                             pass
                         return new_obj
                     
@@ -422,7 +435,7 @@ class AssemblyPatternCreator:
 
         return None, None
 
-    def _get_basis_reference_name(self, source_element, UtilsAssembly=None, direction=None):
+    def _get_basis_reference_name(self, source_element, UtilsAssembly, direction=None):
         """Bestimmt die bevorzugte Basisreferenz (nur LCS) vom ausgewählten Quellteil."""
         if source_element is None:
             return None
