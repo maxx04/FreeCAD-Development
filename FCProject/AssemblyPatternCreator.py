@@ -325,7 +325,7 @@ class AssemblyPatternCreator:
                 if hasattr(JointObject, "ViewProviderJoint"):
                     JointObject.ViewProviderJoint(joint.ViewObject)
 
-                offset2 = self._compute_fixed_joint_offset(elem1, elem2, ref1, ref2, UtilsAssembly, direction)
+                offset2 = self._compute_fixed_joint_offset(elem1, elem2, ref1, ref2, UtilsAssembly)
                 if offset2 is not None:
                     joint.Offset2 = offset2
 
@@ -608,8 +608,7 @@ class AssemblyPatternCreator:
         )
         return None
 
-    #FIXME: was ist mit direction, die wird nicht benutzt?
-    def _compute_fixed_joint_offset(self, elem1, elem2, ref1, ref2, UtilsAssembly, direction):
+    def _compute_fixed_joint_offset(self, elem1, elem2, ref1, ref2, UtilsAssembly):
         """Berechnet den Offset für ein fixiertes Joint, damit die aktuelle Position erhalten bleibt."""
         try:
             plc1 = UtilsAssembly.findPlacement(ref1, False)
