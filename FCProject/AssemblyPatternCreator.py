@@ -72,11 +72,11 @@ class AssemblyPatternCreator:
                             current_placement.Rotation
                         )
                         new_element.Placement = new_placement
-                        App.Console.PrintMessage(f"FCProject: Element {i+1}/{count} positioniert.\n")
+                        App.Console.PrintMessage(f"FCProject: Element {i}/{count} positioniert.\n")
                     else:
-                        App.Console.PrintWarning(f"FCProject: Element {i+1} hat keine Placement-Property.\n")
+                        App.Console.PrintWarning(f"FCProject: Element {i} hat keine Placement-Property.\n")
                 except Exception as pos_err:
-                    App.Console.PrintWarning(f"FCProject: Fehler beim Positionieren von Element {i+1}: {str(pos_err)}\n")
+                    App.Console.PrintWarning(f"FCProject: Fehler beim Positionieren von Element {i}: {str(pos_err)}\n")
                 
                 # Füge zur Pattern-Gruppe hinzu
                 self.pattern_group.addObject(new_element)
@@ -196,70 +196,8 @@ class AssemblyPatternCreator:
         
         try:
             new_obj = None
-            
-            # 1. Versuche doc.copyObject (funktioniert für die meisten Typen)
-            if hasattr(self.doc, 'copyObject'):
-                try:
-                    App.Console.PrintMessage(f"FCProject: Versuche doc.copyObject für '{source_element.Label}'.\n")
-                    #HACK: In blick behalten zweie Argument. Wenn TRUE dann werden alle Abgeleiteten Objekte mitkopiert. 
-                    # Das führt bei manchen Typen zu Fehlern, z.B. wenn das Objekt schon in einer Assembly ist. 
-                    # Daher erstmal mit False testen, damit nur das Objekt selbst kopiert wird.
-                    new_obj = self.doc.copyObject(source_element, False)
-                    if new_obj is not None:
-                        new_obj.Label = new_label
-                        App.Console.PrintMessage(f"FCProject: copyObject erfolgreich.\n")
-                        # Versuche zusätzliche Eigenschaften zu kopieren
-                        #HACK: Bei manchen Typen (z.B. Part::Feature) werden durch copyObject nicht alle Eigenschaften korrekt kopiert, 
-                        # ??? Wieso genau das passiert ist unklar, könnte aber mit der internen Struktur von FreeCAD-Objekten zusammenhängen, 
-                        # die in Assemblies eingebunden sind. Insbesondere können Eigenschaften wie Placement oder Material verloren gehen, 
-                        # wenn das Objekt bereits Teil einer Assembly ist oder wenn es sich um ein Link-Objekt handelt. 
-                        # Es scheint, dass copyObject in diesen Fällen nur eine flache Kopie des Objekts erstellt, 
-                        # ohne die komplexeren Verbindungen und Eigenschaften zu berücksichtigen, die in Assemblies relevant sind. 
-                        # Daher müssen wir hier manuell versuchen, diese wichtigen Eigenschaften zu übernehmen, um sicherzustellen, 
-                        # dass die kopierten Elemente korrekt positioniert und dargestellt werden.
-                        # z.B. Material oder ViewObject-Eigenschaften. Daher hier versuchen, diese manuell zu kopieren.
-                        try:
-                            if hasattr(source_element, 'Placement') and hasattr(new_obj, 'Placement'):
-                                new_obj.Placement = source_element.Placement
-                        except Exception:
-                            App.Console.PrintWarning(f"FCProject: Placement-Kopierfehler: {str(copy_err)}\n")
-                            pass
-                        return new_obj
-                    
-                except Exception as copy_err:
-                    App.Console.PrintWarning(f"FCProject: doc.copyObject fehlgeschlagen: {str(copy_err)}\n")
 
-            # 2. Fallback: Shape-Kopie (für Part/Body)
-            shape = self._safe_getattr(source_element, 'Shape', None)
-
-            if shape is not None:
-                App.Console.PrintMessage(f"FCProject: Kopiere Shape-Objekt.\n")
-                new_obj = self.doc.addObject(source_element.TypeId, f"obj_{new_label}")
-                new_obj.Shape = shape
-                new_obj.Label = new_label
-
-                # Versuche, Placement-Eigenschaft zu übernehmen
-                try:
-                    if hasattr(source_element, 'Placement') and hasattr(new_obj, 'Placement'):
-                        new_obj.Placement = source_element.Placement
-                except Exception:
-                    pass
-
-                if hasattr(source_element, 'Material'):
-                    try:
-                        new_obj.Material = source_element.Material
-                    except Exception:
-                        pass
-
-                if hasattr(source_element, 'ViewObject') and source_element.ViewObject:
-                    if hasattr(source_element.ViewObject, 'ShapeColor'):
-                        new_obj.ViewObject.ShapeColor = source_element.ViewObject.ShapeColor
-                    if hasattr(source_element.ViewObject, 'Transparency'):
-                        new_obj.ViewObject.Transparency = source_element.ViewObject.Transparency
-
-                return new_obj
-
-            # 3. Link-Fallback
+            # 2. Link
             linked = self._safe_getattr(source_element, 'LinkedObject', None)
             if linked is not None:
                 App.Console.PrintMessage(f"FCProject: Erstelle Link-Kopie eines referenzierten Objekts.\n")
@@ -279,14 +217,57 @@ class AssemblyPatternCreator:
                 return new_obj
             except Exception as fallback_err:
                 App.Console.PrintWarning(f"FCProject: Link-Fallback fehlgeschlagen: {str(fallback_err)}\n")
+            
+            # 1. Fallback: Versuche doc.copyObject (funktioniert für die meisten Typen)
+            if hasattr(self.doc, 'copyObject'):
+                try:
+                    App.Console.PrintMessage(f"FCProject: Versuche doc.copyObject für '{source_element.Label}'.\n")
+                    #HACK: In blick behalten zweie Argument. Wenn TRUE dann werden alle Abgeleiteten Objekte mitkopiert. 
+                    # Das führt bei manchen Typen zu Fehlern, z.B. wenn das Objekt schon in einer Assembly ist. 
+                    # Daher erstmal mit False testen, damit nur das Objekt selbst kopiert wird.
 
-            try:
-                new_obj = self.doc.addObject("App::DocumentObjectGroup", f"obj_{new_label}")
-                new_obj.Label = new_label
-                return new_obj
-            except Exception as group_err:
-                App.Console.PrintError(f"FCProject: Ultimativer Fallback fehlgeschlagen: {str(group_err)}\n")
-                raise
+                    #HACK: Meldung "Object can only be in a single GeoFeatureGroup" abschalten,
+                    # andere entsprechend auch :-/
+                    try:
+                        new_obj = self.doc.copyObject(source_element, False)
+
+                    except Exception as copy_err:
+                        App.Console.PrintWarning(f"FCProject: Kopierfehler: {str(copy_err)}\n")
+                        pass
+
+                    if new_obj is not None:
+                        new_obj.Label = new_label
+                        App.Console.PrintMessage(f"FCProject: copyObject erfolgreich.\n")
+                        # Versuche zusätzliche Eigenschaften zu kopieren
+                        #HACK: Bei manchen Typen (z.B. Part::Feature) werden durch copyObject nicht alle Eigenschaften korrekt kopiert, 
+                        # ??? Wieso genau das passiert ist unklar, könnte aber mit der internen Struktur von FreeCAD-Objekten zusammenhängen, 
+                        # die in Assemblies eingebunden sind. Insbesondere können Eigenschaften wie Placement oder Material verloren gehen, 
+                        # wenn das Objekt bereits Teil einer Assembly ist oder wenn es sich um ein Link-Objekt handelt. 
+                        # Es scheint, dass copyObject in diesen Fällen nur eine flache Kopie des Objekts erstellt, 
+                        # ohne die komplexeren Verbindungen und Eigenschaften zu berücksichtigen, die in Assemblies relevant sind. 
+                        # Daher müssen wir hier manuell versuchen, diese wichtigen Eigenschaften zu übernehmen, um sicherzustellen, 
+                        # dass die kopierten Elemente korrekt positioniert und dargestellt werden.
+                        # z.B. Material oder ViewObject-Eigenschaften. Daher hier versuchen, diese manuell zu kopieren.
+                        try:
+                            if hasattr(source_element, 'Placement') and hasattr(new_obj, 'Placement'):
+                                new_obj.Placement = source_element.Placement
+                        except Exception as copy_err:
+                            App.Console.PrintWarning(f"FCProject: Placement-Kopierfehler: {str(copy_err)}\n")
+                            pass
+                        return new_obj
+                    
+                except Exception as copy_err:
+                    App.Console.PrintWarning(f"FCProject: doc.copyObject fehlgeschlagen: {str(copy_err)}\n")
+
+
+
+            # try:
+            #     new_obj = self.doc.addObject("App::DocumentObjectGroup", f"obj_{new_label}")
+            #     new_obj.Label = new_label
+            #     return new_obj
+            # except Exception as group_err:
+            #     App.Console.PrintError(f"FCProject: Ultimativer Fallback fehlgeschlagen: {str(group_err)}\n")
+            #     raise
 
         except Exception as e:
             App.Console.PrintError(f"FCProject: Fehler beim Duplizieren von '{source_element.Label}': {str(e)}\n")
@@ -313,7 +294,7 @@ class AssemblyPatternCreator:
             App.Console.PrintWarning("FCProject: Konnte keine Joint-Gruppe in der Assembly finden.\n")
             return
 
-        preferred_sub_name = self._get_basis_reference_name(source_element, UtilsAssembly, direction)
+        preferred_sub_name = self._get_basis_reference_name(source_element, UtilsAssembly)
 
         # einfüge source_element am Anfang der Liste, damit zuerst ein Joint zwischen Original und erstem Element erstellt wird
         elements.insert(0, source_element)
@@ -332,8 +313,8 @@ class AssemblyPatternCreator:
                     )
                     continue
 
-                joint = joint_group.newObject("App::FeaturePython", f"PatternJoint_{i+1}")
-                joint.Label = f"PatternJoint_{i+1}"
+                joint = joint_group.newObject("App::FeaturePython", f"PatternJoint_{i}")
+                joint.Label = f"PatternJoint_{i}"
                 JointObject.Joint(joint, 0)
                 if hasattr(JointObject, "ViewProviderJoint"):
                     JointObject.ViewProviderJoint(joint.ViewObject)
@@ -435,20 +416,22 @@ class AssemblyPatternCreator:
 
         return None, None
 
-    def _get_basis_reference_name(self, source_element, UtilsAssembly, direction=None):
+    def _get_basis_reference_name(self, source_element, UtilsAssembly):
         """Bestimmt die bevorzugte Basisreferenz (nur LCS) vom ausgewählten Quellteil."""
         if source_element is None:
             return None
 
+        #Es wird element selber genommen oder falls es ein Link ist, das referenzierte Objekt, 
+        # da die LCS-Referenzen meistens (und muessen) am Originalobjekt hängen. 
         linked = self._safe_getattr(source_element, 'LinkedObject', None)
         root = linked if linked is not None else source_element
 
-        names = self._get_coordinate_system_names(root)
+        names = self._get_coordinate_system_names(root) #werden erste genommen
         if not names:
             return None
-
-        chosen = self._select_lcs_name(names, direction)
-        App.Console.PrintMessage(f"FCProject: Gewählte LCS-Referenz für Richtung {direction}: {chosen}\n")
+        chosen = names[0]  # Standardmäßig die erste Referenz nehmen
+        #chosen = self._select_lcs_name(names)
+        App.Console.PrintMessage(f"FCProject: Gewählte LCS-Referenz: {chosen}\n")
         return chosen
 
     def _get_sub_name_for_child(self, child, root):
@@ -472,20 +455,24 @@ class AssemblyPatternCreator:
         return child.Name
 
     def _get_coordinate_system_names(self, element):
-        """Gibt alle LCS-/Datum-Referenznamen im Element zurück."""
+        """Gibt erste LCS-/Datum-Referenznamen im Element zurück."""
         if element is None:
             return []
 
         candidates = []
-        if hasattr(element, 'OutListRecursive'):
-            candidates = list(element.OutListRecursive)
-        elif hasattr(element, 'OutList'):
-            candidates = list(element.OutList)
+        if hasattr(element, 'OutList'): #if hasattr(element, 'OutListRecursive'):
+            candidates = list(element.OutList) #list(element.OutListRecursive)
+        else:
+            raise ValueError(f"Element '{element.Label}' hat keine LCS-Referenzen (OutList)!\n") 
+            return []
+
+        #elif hasattr(element, 'OutList'):
+            #candidates = list(element.OutList)
 
         names = []
         for child in candidates:
             if child is None:
-                continue
+                App.Console.PrintUserError(f"FCProject: Keine Kinder für element '{element.Label}' gefunden.\n")
             if getattr(child, 'TypeId', '') == 'App::LocalCoordinateSystem' or child.isDerivedFrom('App::LocalCoordinateSystem'):
                 sub_name = self._get_sub_name_for_child(child, element)
                 if sub_name:
@@ -497,24 +484,24 @@ class AssemblyPatternCreator:
 
         return names
 
-    def _select_lcs_name(self, names, direction=None):
-        """Wählt eine LCS-Referenz entsprechend der Pattern-Richtung aus."""
-        if not names:
-            return None
+    # def _select_lcs_name(self, names, direction=None):
+    #     """Wählt eine LCS-Referenz entsprechend der Pattern-Richtung aus."""
+    #     if not names:
+    #         return None
 
-        direction_map = {
-            'X-Achse': ['.Origin', '.YZ_Plane'],
-            'Y-Achse': ['.Origin', '.XZ_Plane'],
-            'Z-Achse': ['.Origin', '.XY_Plane'],
-        }
-        priorities = direction_map.get(direction, ['.Origin', '.X_Axis.', '.Y_Axis.', '.Z_Axis.'])
+    #     direction_map = {
+    #         'X-Achse': ['.Origin', '.YZ_Plane'],
+    #         'Y-Achse': ['.Origin', '.XZ_Plane'],
+    #         'Z-Achse': ['.Origin', '.XY_Plane'],
+    #     }
+    #     priorities = direction_map.get(direction, ['.Origin', '.X_Axis.', '.Y_Axis.', '.Z_Axis.'])
 
-        for token in priorities:
-            for name in names:
-                if token in name or name.endswith(token.strip('.')):
-                    return name
+    #     for token in priorities:
+    #         for name in names:
+    #             if token in name or name.endswith(token.strip('.')):
+    #                 return name
 
-        return names[0]
+    #     return names[0]
 
     def _find_coordinate_system_name(self, element):
         """Sucht eine lokale Koordinatensystem-Referenz im Objekt."""
@@ -712,7 +699,7 @@ class AssemblyPatternCreator:
             y = radius * math.sin(angle_rad)
             
             # Kopiere Element
-            new_element = self._duplicate_element(source_element, f"{source_element.Label}_Circular_{i+1}")
+            new_element = self._duplicate_element(source_element, f"{source_element.Label}_Circular_{i}")
             
             # Positioniere auf dem Kreis
             current_placement = new_element.Placement
@@ -725,7 +712,7 @@ class AssemblyPatternCreator:
             # Füge zur Gruppe hinzu
             self.pattern_group.addObject(new_element)
             
-            App.Console.PrintMessage(f"FCProject: Circular-Element {i+1}/{count} erstellt.\n")
+            App.Console.PrintMessage(f"FCProject: Circular-Element {i}/{count} erstellt.\n")
         
         self.doc.recompute()
         App.Console.PrintMessage(f"FCProject: Circular Pattern '{self.pattern_group.Label}' erfolgreich erstellt!\n")
