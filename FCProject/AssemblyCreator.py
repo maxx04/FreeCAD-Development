@@ -1,18 +1,19 @@
 # Macro Version: 3.2.0 - FCProject: Spezialisierter AssemblyCreator mit reiner ID-Speicherung
 import os
 import FreeCAD as App
+import Utils
 
 class AssemblyCreator:
     """Zentrale PDM-Logik für das Erstellen von Baugruppen (Typ A) nach FreeCAD 1.1 Standard."""
 
-    def _ensure_property(self, obj, prop_type, name, group, desc, default=None):
-        try:
-            if not hasattr(obj, name):
-                obj.addProperty(prop_type, name, group, desc)
-            if default is not None:
-                setattr(obj, name, default)
-        except Exception as e:
-            App.Console.PrintWarning(f"FCProject: Fehler beim Anlegen/Setzen Property '{name}': {e}\n")
+    # def _ensure_property(self, obj, prop_type, name, group, desc, default=None):
+    #     try:
+    #         if not hasattr(obj, name):
+    #             obj.addProperty(prop_type, name, group, desc)
+    #         if default is not None:
+    #             setattr(obj, name, default)
+    #     except Exception as e:
+    #         App.Console.PrintWarning(f"FCProject: Fehler beim Anlegen/Setzen Property '{name}': {e}\n")
 
     def create(self, file_path, base_name, trailing_name, config, properties):
         # 1. Parameter aus dem Datenpaket extrahieren
@@ -20,6 +21,12 @@ class AssemblyCreator:
         
         # Die reine, isolierte PDM-ID für das ERP-System holen (z.B. U20_0010_A_)
         pure_id = str(properties.get("__PureArticleID__", trailing_name)).strip()
+
+        try:
+            price_val = float(properties.get("Preis", 0.0))
+        except (ValueError, TypeError):
+            App.Console.PrintWarning("FCProject: Ungültiger Preis-Wert. Verwende Standardwert 0.0.\n")
+            price_val = 0.0
  
         # 2. Neues separates Dokument für die Baugruppe (A) anlegen und im RAM aktivieren
         new_doc = App.newDocument(trailing_name)
@@ -34,13 +41,14 @@ class AssemblyCreator:
             if hasattr(core_obj, "ShapeMaterial"):
                 # Baugruppen haben keine eigene feste Geometrie, bekommen aber
                 # die PDM-Texteigenschaft für die BOM-Synchronisation
-                self._ensure_property(core_obj, "App::PropertyString", "MaterialName", "FCProject_PDM", "Material-Textbezeichnung", "-")
+                Utils._ensure_property(App, core_obj, "App::PropertyString", "MaterialName", "FCProject_PDM", "Material-Textbezeichnung", "-")
         except Exception as mat_err:
             App.Console.PrintWarning(f"FCProject: Fehler bei Material-Initialisierung in Baugruppe: {str(mat_err)}\n")
  
         # 4. REINE PDM-METADATEN AM BAUGRUPPEN-CONTAINER SPEICHERN
-        self._ensure_property(core_obj, "App::PropertyString", "ArticleID", "FCProject", "Eindeutige ID", pure_id)
-        self._ensure_property(core_obj, "App::PropertyString", "Bezeichnung", "FCProject_PDM", "Logische Bauteilbenennung", bezeichnung_val)
+        Utils._ensure_property(App, core_obj, "App::PropertyString", "ArticleID", "FCProject", "Eindeutige ID", pure_id)
+        Utils._ensure_property(App, core_obj, "App::PropertyString", "Bezeichnung", "FCProject_PDM", "Logische Bauteilbenennung", bezeichnung_val)
+        Utils._ensure_property(App, core_obj, "App::PropertyFloat", "Preis", "FCProject_PDM", "Preis für das Halbzeug", price_val)
  
         # 5. Datei final auf der Festplatte sichern und berechnen
         try:
@@ -62,6 +70,7 @@ class AssemblyCreator:
                 )
             
             App.Console.PrintMessage(f"FCProject: Native PDM-Baugruppe '{trailing_name}' erfolgreich generiert.\n")
+
         except Exception as save_err:
             App.Console.PrintError(f"FCProject: Fehler beim Speichern der Baugruppe '{file_path}': {save_err}\n")
             import traceback

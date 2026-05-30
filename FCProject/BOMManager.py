@@ -1,10 +1,10 @@
-# Macro Version: 4.2.6 - FCProject: BOMManager mit strikter LinkedObject-Erzwingung für die ID
+#FCProject: BOMManager mit strikter LinkedObject-Erzwingung für die ID
 import os
 import csv
 import FreeCAD as App
 
 class BOMManager:
-    """Struktur-BOM Engine, die Metadaten radikal und exklusiv aus dem verlinkten Kernobjekt liest."""
+    """Struktur-BOM Engine, die Metadaten aus dem verlinkten Kernobjekt liest."""
 
     def __init__(self, active_doc=None):
         self.doc = active_doc if active_doc else App.ActiveDocument

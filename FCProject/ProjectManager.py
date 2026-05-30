@@ -8,7 +8,7 @@ from PySide6 import QtWidgets
 
 class ProjectManagerCommand:
     """ProjectManager mit Inline-JSON und fixer Versionsprüfung"""
-    SCRIPT_VERSION = "1.0"
+    
 
     def GetResources(self):
         import os
@@ -18,6 +18,9 @@ class ProjectManagerCommand:
             'MenuText': 'FCProject: Projekt initialisieren',
             'ToolTip': 'Erstellt eine strukturierte PDM-Umgebung und setzt das Arbeitsverzeichnis'
         }
+    
+
+    SCRIPT_VERSION = "1.1"  #HACK: Diese Version muss mit der "Version" in der JSON-Vorlage übereinstimmen!
 
     def get_default_project_data(self, project_name):
         """ZENTRALE STEUERUNG (INLINE INCLUDE): Die Master-Vorlage für deine PROJ_.json."""
@@ -40,7 +43,8 @@ class ProjectManagerCommand:
                     "FreeCADType": "PartDesign::Body", 
                     "Prefix": "BODY", 
                     "Properties": {
-                        "Bezeichnung": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "Latte"}
+                        "Bezeichnung": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "Einzelteil"},
+                        "Preis": {"Type": "App::PropertyFloat", "Category": "FCProject_PDM", "Default": 0.0}
                     }
                 },
                 "A": {
@@ -48,7 +52,8 @@ class ProjectManagerCommand:
                     "FreeCADType": "Assembly::AssemblyObject", 
                     "Prefix": "ASM", 
                     "Properties": {
-                        "Bezeichnung": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "Unterbaugruppe"}
+                        "Bezeichnung": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "Baugruppe"},
+                        "Preis": {"Type": "App::PropertyFloat", "Category": "FCProject_PDM", "Default": 0.0}
                     }
                 },
                 "R": {
@@ -57,7 +62,8 @@ class ProjectManagerCommand:
                     "Prefix": "RAW", 
                     "Properties": {
                         "Length": {"Type": "App::PropertyLength", "Category": "FCProject_PDM", "Default": 500.0}, 
-                        "ProfilTyp": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "60x40"}
+                        "ProfilTyp": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "L-Profil-60x40"},
+                        "Preis": {"Type": "App::PropertyFloat", "Category": "FCProject_PDM", "Default": 0.0}
                     }
                 },
                 "G": {
@@ -73,7 +79,8 @@ class ProjectManagerCommand:
                     "Properties": {
                         "Bezeichnung": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "Kaufteil"},
                         "Hersteller": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "TraceParts"},
-                        "Bestellnummer": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "000-000"}
+                        "Bestellnummer": {"Type": "App::PropertyString", "Category": "FCProject_PDM", "Default": "000-000"},
+                        "Preis": {"Type": "App::PropertyFloat", "Category": "FCProject_PDM", "Default": 0.0}
                     }
                 }
             }
