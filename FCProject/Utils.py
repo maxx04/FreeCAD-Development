@@ -1,7 +1,6 @@
 import FreeCAD as App
 import FreeCADGui as Gui
 
-
 def _ensure_property(App, obj, prop_type, name, group, desc, default=None):
         try:
             if not hasattr(obj, name):
@@ -10,46 +9,6 @@ def _ensure_property(App, obj, prop_type, name, group, desc, default=None):
                 setattr(obj, name, default)
         except Exception as e:
             App.Console.PrintWarning(f"FCProject: Fehler beim Anlegen/Setzen Property '{name}': {e}\n")
-
-def walk_assembly(root_object):
-    """
-    Durchläuft rekursiv eine FreeCAD 1.1 Baugruppenstruktur.
-    Gibt in jedem Schritt ein Tupel (Objekt, Tiefe) zurück.
-    Am Ende wird (None, 0) zurückgegeben.
-    """
-    def _traverse(obj, current_depth):
-        # Das aktuelle Objekt und seine Tiefe zurückgeben
-        yield obj, current_depth
-        
-        children = []
-        
-        # Fall 1: Das Objekt ist ein Container (z.B. Assembly, Part, Group)
-        if hasattr(obj, "Group") and obj.Group:
-            children = obj.Group
-            
-        # Fall 2: Das Objekt ist ein Link (App::Link) auf eine Unterbaugruppe/Part
-        elif hasattr(obj, "LinkedObject") and obj.LinkedObject:
-            #Assambly selber wird nicht berücksichtigt, sondern direkt der Inhalt des Links
-            linked = obj.LinkedObject
-            if hasattr(linked, "Group") and linked.Group:
-                children = linked.Group
-        
-        # Rekursiver Aufruf für alle gefundenen Kinder
-        for child in children:
-            yield from _traverse(child, current_depth + 1)
-
-    # Falls überhaupt kein Objekt übergeben wurde
-    if root_object is None:
-        yield None, 0
-        return
-
-    # Starte die Rekursion beim Wurzelobjekt
-    yield from _traverse(root_object, 0)
-    
-    # Am Ende der Struktur wird None als Signal ausgegeben
-    yield None, 0
-
-
 
 def walk_ultimate_everything(root_object):
 
@@ -113,9 +72,6 @@ def walk_ultimate_everything(root_object):
     
     # Das finale Signal für das Ende der Struktur
     yield None, 0
-
-    import FreeCAD as App
-import FreeCADGui as Gui
 
 def walk_assembly_iterative(root_object):
     """
@@ -185,8 +141,6 @@ def walk_assembly_iterative(root_object):
     # Wenn der Stack komplett leer ist, sind wir am Ende angekommen
     yield None, 0
 
-    import FreeCAD as App
-import FreeCADGui as Gui
 
 def walk_assembly_complete_instances(root_object):
     """
@@ -253,104 +207,8 @@ def walk_assembly_complete_instances(root_object):
     # Ende-Signal
     yield None, 0
 
-    import FreeCAD as App
-import FreeCADGui as Gui
-
-def walk_assembly_perfect_tree(root_object):
-    """
-    Durchläuft die FreeCAD-Struktur iterativ und bildet den Modellbaum
-    EXAKT so ab wie die visuelle Baumansicht (ohne doppelte Einträge).
-    """
-    if root_object is None:
-        yield None, 0
-        return
-
-    def get_clean_children(source_obj):
-        """Hilfsfunktion: Sammelt Kinder und filtert visuelle Duplikate."""
-        items = []
-        # 1. Ursprung immer zuerst anzeigen
-        if hasattr(source_obj, "Origin") and source_obj.Origin:
-            items.append(source_obj.Origin)
-        
-        raw_group = list(source_obj.Group) if hasattr(source_obj, "Group") and source_obj.Group else []
-        raw_features = list(source_obj.Features) if hasattr(source_obj, "Features") and source_obj.Features else []
-        
-        # Filter: Welche Objekte stecken in Unterordnern (Patterns, Joints)?
-        hidden_in_subfolders = set()
-        for c in raw_group:
-            if c and c.TypeId in ["App::DocumentObjectGroup", "Assembly::JointGroup"]:
-                if hasattr(c, "Group") and c.Group:
-                    for sub_c in c.Group:
-                        if sub_c: hidden_in_subfolders.add(sub_c)
-        
-        # 2. Normale Gruppen-Objekte (nur wenn sie nicht im Unterordner versteckt sind)
-        for c in raw_group:
-            if c and c not in hidden_in_subfolders and c not in items:
-                items.append(c)
-                
-        # 3. Features (Skizzen, Pads etc.)
-        for c in raw_features:
-            if c and c not in items:
-                items.append(c)
-                
-        return items
-
-    # Stack-Initialisierung: (Objekt, Tiefe, Pfad-Historie)
-    stack = [(root_object, 0, ())]
-
-    while stack:
-        obj, depth, path = stack.pop()
-
-        if obj in path:
-            continue
-        current_path = path + (obj,)
-
-        # Aktuelles Element ausgeben
-        yield obj, depth
-
-        # Kinder vom aktuellen Objekt holen
-        children = get_clean_children(obj)
-        
-        # Falls es ein Link ist, auch die Kinder des Original-Objekts beifügen
-        if hasattr(obj, "LinkedObject") and obj.LinkedObject:
-            target = obj.LinkedObject
-            for child in get_clean_children(target):
-                if child not in children:
-                    children.append(child)
-
-        # Kinder in umgekehrter Reihenfolge auf den Stack legen
-        for child in reversed(children):
-            stack.append((child, depth + 1, current_path))
-
-    yield None, 0
 
 
-    import FreeCAD as App
-import FreeCADGui as Gui
-
-def get_dynamic_artikel_id(obj):
-    """
-    Sucht vollautomatisch und flexibel nach einer Artikel-ID oder 
-    Artikel-Nummer in den Eigenschaften des Objekts oder dessen Link-Ziel.
-    """
-    if not obj:
-        return "-"
-        
-    # Liste der potenziellen Objekte (Objekt selbst und evtl. das Link-Ziel)
-    targets = [obj]
-    if hasattr(obj, "LinkedObject") and obj.LinkedObject:
-        targets.append(obj.LinkedObject)
-        
-    for t in targets:
-        # Durchsuche alle existierenden Eigenschaften des Objekts
-        for prop_name in t.PropertiesList:
-            prop_lower = prop_name.lower()
-            # Such-Trigger: Wenn "artikel" oder "id" im Namen steckt
-            if "artikel" in prop_lower or "id" in prop_lower:
-                val = t.getPropertyByName(prop_name)
-                if val:
-                    return str(val)
-    return "-"
 
 def get_clean_children(source_obj):
     """Sammelt Kinder ohne visuelle Duplikate aus Unterordnern."""
@@ -379,6 +237,29 @@ def get_clean_children(source_obj):
             
     return items
 
+
+def get_artikel_id(element):
+    """
+    Folgt einer Kette von Links (unendlich tief), bis die ArtikelID 
+    gefunden wird oder das Ende der Verknüpfungen erreicht ist.
+    """
+    # 1. Sicherheitscheck: Wenn das Element selbst die ID hat
+    if hasattr(element, "ArticleID") and element.ArticleID:
+        return str(element.ArticleID)
+        
+    # 2. Die Link-Kette (Link-on-Link) komplett auflösen
+    current = element
+    while hasattr(current, "LinkedObject") and current.LinkedObject:
+        # Wir springen eine Ebene tiefer im Link-Netzwerk
+        current = current.LinkedObject
+        
+        # Prüfen, ob das getroffene Zielobjekt die ID besitzt
+        if hasattr(current, "ArticleID") and current.ArticleID:
+            return str(current.ArticleID)
+            
+    # Falls es eine Gruppe (App::DocumentObjectGroup) oder ohne ID ist
+    return "None"
+            
 def print_perfect_assembly_tree(root_object):
     """Iteriert durch die Baugruppe und gibt einen wunderschönen Unicode-Baum aus."""
     if root_object is None:
@@ -401,7 +282,7 @@ def print_perfect_assembly_tree(root_object):
         current_path = path + (obj,)
 
         # --- ARTIKEL ID UND TEXT ERSTELLEN ---
-        artikel_id = get_dynamic_author_id = get_dynamic_artikel_id(obj)
+        artikel_id = get_dynamic_author_id = get_artikel_id(obj)
         info_str = f"{obj.Label} [ID: {artikel_id}] ({obj.TypeId})"
 
         # --- GRAPHISCHE BAUM-LINIEN GENERIEREN ---
@@ -435,4 +316,4 @@ auswahl = Gui.Selection.getSelection()
 if not auswahl:
     print("!! Bitte markiere zuerst die Hauptbaugruppe im Modellbaum !!")
 else:
-    print_perfect_assembly_tree(auswahl[0])
+    print_perfect_assembly_tree(auswahl[0])    

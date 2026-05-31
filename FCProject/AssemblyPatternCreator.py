@@ -53,6 +53,7 @@ class AssemblyPatternCreator:
                 offset_vector = self._calculate_offset_vector(distance, direction, i)
                 
                 # Kopiere das Element
+                #TODO: Neues element als XLink erstellen, damit es immer die Geometrie des Originals hat, aber trotzdem individuell positionierbar ist.
                 new_element = self._duplicate_element(source_element, f"{source_element.Label}_Copy_{i}")
                 
                 if not new_element:
@@ -209,55 +210,56 @@ class AssemblyPatternCreator:
                 except Exception as link_err:
                     App.Console.PrintWarning(f"FCProject: Link-Erstellung fehlgeschlagen: {str(link_err)}\n")
 
-            App.Console.PrintMessage(f"FCProject: Erstelle Link-Fallback für '{source_element.Label}'.\n")
-            try:
-                new_obj = self.doc.addObject("App::Link", f"link_{new_label}")
-                new_obj.LinkedObject = source_element
-                new_obj.Label = new_label
-                return new_obj
-            except Exception as fallback_err:
-                App.Console.PrintWarning(f"FCProject: Link-Fallback fehlgeschlagen: {str(fallback_err)}\n")
+            #App.Console.PrintMessage(f"FCProject: Erstelle Link-Fallback für '{source_element.Label}'.\n")
+
+            # try:
+            #     new_obj = self.doc.addObject("App::Link", f"link_{new_label}")
+            #     new_obj.LinkedObject = source_element
+            #     new_obj.Label = new_label
+            #     return new_obj
+            # except Exception as fallback_err:
+            #     App.Console.PrintWarning(f"FCProject: Link-Fallback fehlgeschlagen: {str(fallback_err)}\n")
             
             # 1. Fallback: Versuche doc.copyObject (funktioniert für die meisten Typen)
-            if hasattr(self.doc, 'copyObject'):
-                try:
-                    App.Console.PrintMessage(f"FCProject: Versuche doc.copyObject für '{source_element.Label}'.\n")
-                    #HACK: In blick behalten zweie Argument. Wenn TRUE dann werden alle Abgeleiteten Objekte mitkopiert. 
-                    # Das führt bei manchen Typen zu Fehlern, z.B. wenn das Objekt schon in einer Assembly ist. 
-                    # Daher erstmal mit False testen, damit nur das Objekt selbst kopiert wird.
+            # if hasattr(self.doc, 'copyObject'):
+            #     try:
+            #         App.Console.PrintMessage(f"FCProject: Versuche doc.copyObject für '{source_element.Label}'.\n")
+            #         #HACK: In blick behalten zweie Argument. Wenn TRUE dann werden alle Abgeleiteten Objekte mitkopiert. 
+            #         # Das führt bei manchen Typen zu Fehlern, z.B. wenn das Objekt schon in einer Assembly ist. 
+            #         # Daher erstmal mit False testen, damit nur das Objekt selbst kopiert wird.
 
-                    #HACK: Meldung "Object can only be in a single GeoFeatureGroup" abschalten,
-                    # andere entsprechend auch :-/
-                    try:
-                        new_obj = self.doc.copyObject(source_element, False)
+            #         #HACK: Meldung "Object can only be in a single GeoFeatureGroup" abschalten,
+            #         # andere entsprechend auch :-/
+            #         try:
+            #             new_obj = self.doc.copyObject(source_element, False)
 
-                    except Exception as copy_err:
-                        App.Console.PrintWarning(f"FCProject: Kopierfehler: {str(copy_err)}\n")
-                        pass
+            #         except Exception as copy_err:
+            #             App.Console.PrintWarning(f"FCProject: Kopierfehler: {str(copy_err)}\n")
+            #             pass
 
-                    if new_obj is not None:
-                        new_obj.Label = new_label
-                        App.Console.PrintMessage(f"FCProject: copyObject erfolgreich.\n")
-                        # Versuche zusätzliche Eigenschaften zu kopieren
-                        #HACK: Bei manchen Typen (z.B. Part::Feature) werden durch copyObject nicht alle Eigenschaften korrekt kopiert, 
-                        # ??? Wieso genau das passiert ist unklar, könnte aber mit der internen Struktur von FreeCAD-Objekten zusammenhängen, 
-                        # die in Assemblies eingebunden sind. Insbesondere können Eigenschaften wie Placement oder Material verloren gehen, 
-                        # wenn das Objekt bereits Teil einer Assembly ist oder wenn es sich um ein Link-Objekt handelt. 
-                        # Es scheint, dass copyObject in diesen Fällen nur eine flache Kopie des Objekts erstellt, 
-                        # ohne die komplexeren Verbindungen und Eigenschaften zu berücksichtigen, die in Assemblies relevant sind. 
-                        # Daher müssen wir hier manuell versuchen, diese wichtigen Eigenschaften zu übernehmen, um sicherzustellen, 
-                        # dass die kopierten Elemente korrekt positioniert und dargestellt werden.
-                        # z.B. Material oder ViewObject-Eigenschaften. Daher hier versuchen, diese manuell zu kopieren.
-                        try:
-                            if hasattr(source_element, 'Placement') and hasattr(new_obj, 'Placement'):
-                                new_obj.Placement = source_element.Placement
-                        except Exception as copy_err:
-                            App.Console.PrintWarning(f"FCProject: Placement-Kopierfehler: {str(copy_err)}\n")
-                            pass
-                        return new_obj
+            #         if new_obj is not None:
+            #             new_obj.Label = new_label
+            #             App.Console.PrintMessage(f"FCProject: copyObject erfolgreich.\n")
+            #             # Versuche zusätzliche Eigenschaften zu kopieren
+            #             #HACK: Bei manchen Typen (z.B. Part::Feature) werden durch copyObject nicht alle Eigenschaften korrekt kopiert, 
+            #             # ??? Wieso genau das passiert ist unklar, könnte aber mit der internen Struktur von FreeCAD-Objekten zusammenhängen, 
+            #             # die in Assemblies eingebunden sind. Insbesondere können Eigenschaften wie Placement oder Material verloren gehen, 
+            #             # wenn das Objekt bereits Teil einer Assembly ist oder wenn es sich um ein Link-Objekt handelt. 
+            #             # Es scheint, dass copyObject in diesen Fällen nur eine flache Kopie des Objekts erstellt, 
+            #             # ohne die komplexeren Verbindungen und Eigenschaften zu berücksichtigen, die in Assemblies relevant sind. 
+            #             # Daher müssen wir hier manuell versuchen, diese wichtigen Eigenschaften zu übernehmen, um sicherzustellen, 
+            #             # dass die kopierten Elemente korrekt positioniert und dargestellt werden.
+            #             # z.B. Material oder ViewObject-Eigenschaften. Daher hier versuchen, diese manuell zu kopieren.
+            #             try:
+            #                 if hasattr(source_element, 'Placement') and hasattr(new_obj, 'Placement'):
+            #                     new_obj.Placement = source_element.Placement
+            #             except Exception as copy_err:
+            #                 App.Console.PrintWarning(f"FCProject: Placement-Kopierfehler: {str(copy_err)}\n")
+            #                 pass
+            #             return new_obj
                     
-                except Exception as copy_err:
-                    App.Console.PrintWarning(f"FCProject: doc.copyObject fehlgeschlagen: {str(copy_err)}\n")
+            #     except Exception as copy_err:
+            #         App.Console.PrintWarning(f"FCProject: doc.copyObject fehlgeschlagen: {str(copy_err)}\n")
 
 
 

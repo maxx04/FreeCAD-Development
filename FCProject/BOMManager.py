@@ -34,21 +34,20 @@ class BOMManager:
 
             # Beispiel-Logik für dein Skript:
 
-            artikel_id = "-"
-            prop_name = "ArticleID" # <- HIER KLASSISCHEN PROPERTY-NAMEN EINTRAGEN (z.B. "Artikel_ID")
+            # artikel_id = "-"
+            # prop_name = "ArticleID" # <- HIER KLASSISCHEN PROPERTY-NAMEN EINTRAGEN (z.B. "Artikel_ID")
         
-            if hasattr(element, prop_name) and getattr(element, prop_name):
-                artikel_id = str(getattr(element, prop_name))
-            elif hasattr(element, "LinkedObject") and element.LinkedObject:
-                target = element.LinkedObject
-                if hasattr(target, prop_name) and getattr(target, prop_name):
-                    artikel_id = str(getattr(target, prop_name))
+            # if hasattr(element, prop_name) and getattr(element, prop_name):
+            #     artikel_id = str(getattr(element, prop_name))
+            # elif hasattr(element, "LinkedObject") and element.LinkedObject:
+            #     target = element.LinkedObject
+            #     if hasattr(target, prop_name) and getattr(target, prop_name):
+            #         artikel_id = str(getattr(target, prop_name))
+
+            artikel_id = Utils.get_artikel_id(element)
 
             App.Console.PrintMessage(f"{einrueckung}- {element.Label} (Artikel ID: {artikel_id},Typ: {element.TypeId}, Tiefe: {tiefe}) \n")
             #App.Console.PrintMessage(f"{einrueckung}- {element.Label} (Typ: {element.TypeId}, Tiefe: {tiefe}) \n")
-
-
-
 
     def _resolve_pdm_value(self, obj, prop_name):
         """Sucht eine PDM-Eigenschaft. Löst Links sofort auf, um die echten C++ .Value-Daten zu holen."""
