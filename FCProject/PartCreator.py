@@ -19,7 +19,7 @@ class PartCreator:
         # Der absolute Pfad zur gewählten Halbzeug-Datei (wird nur gesetzt, wenn im Dialog 'Ja' geklickt wurde)
         profile_path = properties.get("__LinkedRawProfilePath__", None)
 
-        import PartDesign  # type: ignore
+        import PartDesign # type: ignore
         
         # 1. Neues separates Dokument für das Einzelteil (P) anlegen
         new_doc = App.newDocument(trailing_name)
@@ -43,13 +43,13 @@ class PartCreator:
                         break
                         
                 if source_body:
-                    # KLON 1: Reiner Stücklisten-Klon (Vollständig autark, unsichtbar im Container)
-                    bom_clone = new_doc.copyObject(source_body, True)
-                    bom_clone.Label = f"BOM-Ref: {os.path.basename(profile_path)}"
-                    part_container.addObject(bom_clone)
+                    # # KLON 1: Reiner Stücklisten-Klon (Vollständig autark, unsichtbar im Container)
+                    # bom_clone = new_doc.copyObject(source_body, True)
+                    # bom_clone.Label = f"BOM-Ref: {os.path.basename(profile_path)}"
+                    # part_container.addObject(bom_clone)
                     
-                    if hasattr(bom_clone, "ViewObject") and bom_clone.ViewObject:
-                        bom_clone.ViewObject.Visibility = False
+                    # if hasattr(bom_clone, "ViewObject") and bom_clone.ViewObject:
+                    #     bom_clone.ViewObject.Visibility = False
                     
                     # KLON 2: Der Bearbeitungs-Klon (Vollständig autark zum Weiterkonstruieren)
                     core_obj = new_doc.copyObject(source_body, True)
@@ -67,7 +67,7 @@ class PartCreator:
             except Exception as e:
                 App.Console.PrintWarning(f"FCProject: Fehler beim Profil-Klonen: {str(e)}\n")
 
-        # 4. DAS IST DIE KORREKTUR: Wenn KEIN Halbzeug ausgewählt wurde (Klassischer, leerer Body)
+        # 4. Wenn KEIN Halbzeug ausgewählt wurde (Klassischer, leerer Body)
         if not core_obj:
             # Wir erzeugen einen komplett leeren, nativen PartDesign::Body im Container
             core_obj = new_doc.addObject("PartDesign::Body", f"Body_{base_name}")
