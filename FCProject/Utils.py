@@ -141,7 +141,6 @@ def walk_assembly_iterative(root_object):
     # Wenn der Stack komplett leer ist, sind wir am Ende angekommen
     yield None, 0
 
-
 def walk_assembly_complete_instances(root_object):
     """
     Durchläuft die FreeCAD-Struktur iterativ. 
@@ -207,9 +206,6 @@ def walk_assembly_complete_instances(root_object):
     # Ende-Signal
     yield None, 0
 
-
-
-
 def get_clean_children(source_obj):
     """Sammelt Kinder ohne visuelle Duplikate aus Unterordnern."""
     items = []
@@ -236,7 +232,6 @@ def get_clean_children(source_obj):
             items.append(c)
             
     return items
-
 
 def get_artikel_id(element):
     """
@@ -311,9 +306,67 @@ def print_perfect_assembly_tree(root_object):
 
     print("🏁 --- ANALYSE ERFOLGREICH BEENDET ---")
 
-# --- STARTER ---
-auswahl = Gui.Selection.getSelection()
-if not auswahl:
-    print("!! Bitte markiere zuerst die Hauptbaugruppe im Modellbaum !!")
-else:
-    print_perfect_assembly_tree(auswahl[0])    
+def get_assembly_tree(root_object) -> list:
+    """Gibt eine Liste aller Elemente in der Baugruppe zurück, inklusive Tiefe und ArtikelID."""
+    """Iteriert durch die Baugruppe und drückt einen Baum aus."""
+
+    assambly_tree = []
+
+    if root_object is None:
+        print("Kein Objekt übergeben.")
+        return assambly_tree
+
+    print(f"\n⚡ --- START DER PERFEKTEN BAUGRUPPEN-ANALYSE ---")
+    
+    # Der Stack speichert: (Objekt, Tiefe, Pfad-Historie, Liste_von_IsLast_Flags)
+
+    stack = [(root_object, 0, (), [])]
+    visited_paths = set()
+
+    while stack:
+        obj, depth, path, flags = stack.pop()
+
+        # Zyklen-Schutz
+        if obj in path:
+            continue
+        current_path = path + (obj,)
+
+        # --- ARTIKEL ID UND TEXT ERSTELLEN ---
+        artikel_id = get_dynamic_author_id = get_artikel_id(obj)
+        info_str = f"{obj.Label} [ID: {artikel_id}] ({obj.TypeId})"
+        # Hier wird die Baumstruktur in eine Liste gepackt, anstatt sie zu drucken
+        assambly_tree.append((obj, depth, artikel_id))
+
+        # --- GRAPHISCHE BAUM-LINIEN GENERIEREN ---
+        prefix = ""
+        for is_last in flags[:-1]:
+            prefix += "    " if is_last else "│   "
+        if flags:
+            prefix += "└── " if flags[-1] else "├── "
+            
+        # Ausgabe in die Konsole
+        print(f"{prefix}{info_str}")
+
+        # --- KINDER VERARBEITEN ---
+        children = get_clean_children(obj)
+        if hasattr(obj, "LinkedObject") and obj.LinkedObject:
+            for child in get_clean_children(obj.LinkedObject):
+                if child not in children:
+                    children.append(child)
+
+        # Kinder rückwärts auf den Stack legen (wegen LIFO)
+        # i == 0 entspricht in der 'reversed'-Schleife dem echten LETZTEN Element
+        for i, child in enumerate(reversed(children)):
+            child_is_last = (i == 0)
+            next_flags = flags + [child_is_last]
+            stack.append((child, depth + 1, current_path, next_flags))
+
+    print("🏁 --- ANALYSE ERFOLGREICH BEENDET ---")
+    return assambly_tree
+
+# # --- STARTER ---
+# auswahl = Gui.Selection.getSelection()
+# if not auswahl:
+#     print("!! Bitte markiere zuerst die Hauptbaugruppe im Modellbaum !!")
+# else:
+#     print_perfect_assembly_tree(auswahl[0])    

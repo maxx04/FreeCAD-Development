@@ -10,44 +10,8 @@ class BOMManager:
     def __init__(self, active_doc=None):
         self.doc = active_doc if active_doc else App.ActiveDocument
 
-        # Das aktuell ausgewählte Objekt im Baum als Startpunkt nehmen (z.B. die Hauptbaugruppe)
-        auswahl = App.Gui.Selection.getSelection()
 
-        if not auswahl:
-            App.Console.PrintError("Fehler: Bitte klicke zuerst die Hauptbaugruppe im Baum an!")
-            return
-        else:
-            # Nimm das erste Element, das der Nutzer angeklickt hat
-            root_assembly = auswahl[0]
-
-        App.Console.PrintMessage("--- Start der Baugruppen-Traversierung ---\n")
-
-        # Iteration über den Generator
-        for element, tiefe in Utils.print_perfect_assembly_tree(root_assembly):
-
-            if element is None:
-                App.Console.PrintMessage("-> Alles durchlaufen! (None erhalten)\n")
-                break
-                
-            # Optische Einrückung basierend auf der Baumtiefe
-            einrueckung = "  " * tiefe
-
-            # Beispiel-Logik für dein Skript:
-
-            # artikel_id = "-"
-            # prop_name = "ArticleID" # <- HIER KLASSISCHEN PROPERTY-NAMEN EINTRAGEN (z.B. "Artikel_ID")
         
-            # if hasattr(element, prop_name) and getattr(element, prop_name):
-            #     artikel_id = str(getattr(element, prop_name))
-            # elif hasattr(element, "LinkedObject") and element.LinkedObject:
-            #     target = element.LinkedObject
-            #     if hasattr(target, prop_name) and getattr(target, prop_name):
-            #         artikel_id = str(getattr(target, prop_name))
-
-            artikel_id = Utils.get_artikel_id(element)
-
-            App.Console.PrintMessage(f"{einrueckung}- {element.Label} (Artikel ID: {artikel_id},Typ: {element.TypeId}, Tiefe: {tiefe}) \n")
-            #App.Console.PrintMessage(f"{einrueckung}- {element.Label} (Typ: {element.TypeId}, Tiefe: {tiefe}) \n")
 
     def _resolve_pdm_value(self, obj, prop_name):
         """Sucht eine PDM-Eigenschaft. Löst Links sofort auf, um die echten C++ .Value-Daten zu holen."""
@@ -73,7 +37,7 @@ class BOMManager:
         # Fallback-Suche in inneren Gruppen, falls es ein verschachtelter Container ist
         if hasattr(pdm_target, "Group"):
             for child in pdm_target.Group:
-                if not hasattr(child, "Artikel ID"): # Schnellentlastung für irrelevante Kinder
+                if not hasattr(child, "ArticleID"): # Schnellentlastung für irrelevante Kinder
                     continue
                 inner_child = child.LinkedObject if hasattr(child, "LinkedObject") and child.LinkedObject else child
                 if hasattr(inner_child, prop_name) and getattr(inner_child, prop_name):
@@ -175,44 +139,36 @@ class BOMManager:
                 self._scan_recursive(child, new_index, bom_list, visited_objects)
 
     def generate_structural_bom(self):
+        # Das aktuell ausgewählte Objekt im Baum als Startpunkt nehmen (z.B. die Hauptbaugruppe)
+        auswahl = App.Gui.Selection.getSelection()
+
+        if not auswahl:
+            App.Console.PrintError("Fehler: Bitte klicke zuerst die Hauptbaugruppe im Baum an!")
+            return
+        else:
+            # Nimm das erste Element, das der Nutzer angeklickt hat
+            root_assembly = auswahl[0]
+
+        list = Utils.get_assembly_tree(root_assembly)
+
         bom_list = []
-        if not self.doc:
-            return bom_list
 
-        root_assembly = None
-        for obj in self.doc.Objects:
-            if obj.isDerivedFrom("Assembly::AssemblyObject"):
-                is_child = False
-                for other in self.doc.Objects:
-                    if hasattr(other, "Group") and obj in other.Group:
-                        is_child = True
-                        break
-                if not is_child:
-                    root_assembly = obj
-                    break
+        for obj, depth, artikel_id in list:
+            indent = "  " * depth
+            if artikel_id not in ('None', None, "", "-"):
 
-        if not root_assembly:
-            for obj in self.doc.Objects:
-                if obj.isDerivedFrom("App::Part"): # and not obj.Label.startswith("BOM-Ref:")
-                    root_assembly = obj
-                    break
+                print(f"{indent}- {obj.Label} (Artikel-ID: {artikel_id}) - {self._resolve_pdm_value(obj, 'MaterialName')}")  
 
-        if not root_assembly:
-            return bom_list
+                pdm_info = self._extract_pdm_data(obj)
 
-        root_index = "1"
-        pdm_info = self._extract_pdm_data(root_assembly)
-        bom_list.append([
-            root_index,
-            pdm_info["ArticleID"],
-            pdm_info["Bezeichnung"],
-            pdm_info["Material"],
-            pdm_info["Rohling"],
-            "1"
-        ])
-
-        visited = set()
-        self._scan_recursive(root_assembly, root_index, bom_list, visited)
+                bom_list.append([
+                    depth,
+                    pdm_info["ArticleID"],
+                    pdm_info["Bezeichnung"],
+                    pdm_info["Material"],
+                    pdm_info["Rohling"],
+                    "1"
+               ])
 
         return bom_list
 
