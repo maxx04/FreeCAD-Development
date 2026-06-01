@@ -141,7 +141,6 @@ def walk_assembly_iterative(root_object):
     # Wenn der Stack komplett leer ist, sind wir am Ende angekommen
     yield None, 0
 
-
 def walk_assembly_complete_instances(root_object):
     """
     Durchläuft die FreeCAD-Struktur iterativ. 
@@ -207,9 +206,6 @@ def walk_assembly_complete_instances(root_object):
     # Ende-Signal
     yield None, 0
 
-
-
-
 def get_clean_children(source_obj):
     """Sammelt Kinder ohne visuelle Duplikate aus Unterordnern."""
     items = []
@@ -236,7 +232,6 @@ def get_clean_children(source_obj):
             items.append(c)
             
     return items
-
 
 def get_artikel_id(element):
     """
@@ -311,9 +306,203 @@ def print_perfect_assembly_tree(root_object):
 
     print("🏁 --- ANALYSE ERFOLGREICH BEENDET ---")
 
-# --- STARTER ---
-auswahl = Gui.Selection.getSelection()
-if not auswahl:
-    print("!! Bitte markiere zuerst die Hauptbaugruppe im Modellbaum !!")
-else:
-    print_perfect_assembly_tree(auswahl[0])    
+def get_assembly_tree(root_object) -> list:
+    """Gibt eine Liste aller Elemente in der Baugruppe zurück, inklusive Tiefe und ArtikelID."""
+    """Iteriert durch die Baugruppe und drückt einen Baum aus."""
+
+    assambly_tree = []
+
+    if root_object is None:
+        print("Kein Objekt übergeben.")
+        return assambly_tree
+
+    print(f"\n⚡ --- START DER PERFEKTEN BAUGRUPPEN-ANALYSE ---")
+    
+    # Der Stack speichert: (Objekt, Tiefe, Pfad-Historie, Liste_von_IsLast_Flags, Struktur-Index)
+
+    stack = [(root_object, 0, (), [], (1,))]
+    visited_paths = set()
+
+    while stack:
+        obj, depth, path, flags, index_path = stack.pop()
+
+        # Zyklen-Schutz
+        if obj in path:
+            continue
+        current_path = path + (obj,)
+
+        # --- ARTIKEL ID UND TEXT ERSTELLEN ---
+        artikel_id = get_dynamic_author_id = get_artikel_id(obj)
+        info_str = f"{obj.Label} [ID: {artikel_id}] ({obj.TypeId})"
+        # Hier wird die Baumstruktur in eine Liste gepackt, anstatt sie zu drucken
+        assambly_tree.append((obj, depth, artikel_id, index_path))
+
+        # --- GRAPHISCHE BAUM-LINIEN GENERIEREN ---
+        prefix = ""
+        for is_last in flags[:-1]:
+            prefix += "    " if is_last else "│   "
+        if flags:
+            prefix += "└── " if flags[-1] else "├── "
+            
+        # Ausgabe in die Konsole
+        print(f"{prefix}{info_str}")
+
+        # --- KINDER VERARBEITEN ---
+        children = get_clean_children(obj)
+        if hasattr(obj, "LinkedObject") and obj.LinkedObject:
+            for child in get_clean_children(obj.LinkedObject):
+                if child not in children:
+                    children.append(child)
+
+        # Kinder rückwärts auf den Stack legen (wegen LIFO)
+        # i == 0 entspricht in der 'reversed'-Schleife dem echten LETZTEN Element
+        for i, child in enumerate(reversed(children)):
+            child_is_last = (i == 0)
+            next_flags = flags + [child_is_last]
+            child_index_path = index_path + (len(children) - i,)
+            stack.append((child, depth + 1, current_path, next_flags, child_index_path))
+
+    print("🏁 --- ANALYSE ERFOLGREICH BEENDET ---")
+    return assambly_tree
+
+def _resolve_pdm_value(obj, prop_name):
+    """Sucht eine PDM-Eigenschaft. Löst Links sofort auf, um die echten C++ .Value-Daten zu holen."""
+    if not obj:
+        return None
+
+    pdm_target = obj    
+    # Wenn das Objekt ein Link ist, springen wir SOFORT zum echten Ursprungs-Bauteil!
+    if hasattr(obj, "LinkedObject") and obj.LinkedObject:
+        pdm_target = obj.LinkedObject
+
+    # Jetzt lesen wir die Eigenschaft direkt und sauber vom echten Bauteilkern aus
+    if hasattr(pdm_target, prop_name) and getattr(pdm_target, prop_name):
+        prop_obj = getattr(pdm_target, prop_name)
+        if hasattr(prop_obj, "Value"):
+            val = str(prop_obj.Value).strip()
+        else:
+            val = str(prop_obj).strip()
+            
+        if val and val != "-":
+            return val
+    
+    # Fallback-Suche in inneren Gruppen, falls es ein verschachtelter Container ist
+    if hasattr(pdm_target, "Group"):
+        for child in pdm_target.Group:
+            if not hasattr(child, "ArticleID"): # Schnellentlastung für irrelevante Kinder
+                continue
+            inner_child = child.LinkedObject if hasattr(child, "LinkedObject") and child.LinkedObject else child
+            if hasattr(inner_child, prop_name) and getattr(inner_child, prop_name):
+                prop_obj = getattr(inner_child, prop_name)
+                val = str(prop_obj.Value).strip() if hasattr(prop_obj, "Value") else str(prop_obj).strip()
+
+                if val and val != "-":
+                    return val
+    return None      
+
+def _extract_pdm_data(obj):
+    """Sammelt Metadaten aus den aufgelösten Kern-Properties."""
+    
+    article_id = _resolve_pdm_value(obj, "ArticleID")
+    
+    # Fallback über den echten C++ Namen des Ursprungsbauteils (z.B. Part001)
+    # if not article_id:
+    #     pdm_obj = obj.LinkedObject if hasattr(obj, "LinkedObject") and obj.LinkedObject else obj
+    #     article_id = pdm_obj.Name
+
+    # Bezeichnung auflösen
+    bezeichnung = _resolve_pdm_value(obj, "Bezeichnung")
+    if not bezeichnung:
+        profil_typ = _resolve_pdm_value(obj, "ProfilTyp")
+        if profil_typ:
+            bezeichnung = profil_typ
+        # else:
+        #     pdm_obj = obj.LinkedObject if hasattr(obj, "LinkedObject") and obj.LinkedObject else obj
+        #     bezeichnung = pdm_obj.Label.split('_')[-1].rstrip('_') if '_' in pdm_obj.Label else pdm_obj.Label
+
+    # Werkstoff auflösen
+    material = _resolve_pdm_value(obj, "MaterialName")
+    if not material:
+        pdm_obj = obj.LinkedObject if hasattr(obj, "LinkedObject") and obj.LinkedObject else obj
+        if hasattr(pdm_obj, "ShapeMaterial") and pdm_obj.ShapeMaterial:
+            material = getattr(pdm_obj.ShapeMaterial, "Name", "-")
+        else:
+            material = _resolve_pdm_value(obj, "ShapeMaterial")
+            if not material: material = "-"
+
+    # Preis auflösen
+    preis = _resolve_pdm_value(obj, "Preis")
+    if preis is None or preis == "":
+        preis = 0.0
+    else:
+        try:
+            preis = float(str(preis).replace(',', '.'))
+        except Exception:
+            preis = 0.0
+
+    # Rohling-Verknüpfung auflösen
+    rohteil = "-"
+    
+    # KORREKTUR: Wenn das aktuelle Hauptobjekt KEINE Baugruppe ist, lesen wir das Rohteil aus
+    pdm_obj = obj.LinkedObject if hasattr(obj, "LinkedObject") and obj.LinkedObject else obj
+    if not pdm_obj.isDerivedFrom("Assembly::AssemblyObject"):
+        if hasattr(pdm_obj, "BasiertAufHalbzeug") and pdm_obj.BasiertAufHalbzeug:
+            rohteil = str(pdm_obj.BasiertAufHalbzeug)
+    else:
+        # Baugruppen besitzen per Definition niemals einen Rohling-Zuschnitt
+        rohteil = "-"
+
+    return {
+        "ArticleID": article_id,
+        "Bezeichnung": bezeichnung,
+        "Material": material,
+        "Rohling": rohteil,
+        "Preis": preis
+    }
+
+def _scan_recursive(self, current_obj, current_index, bom_list, visited_objects):
+    """Rekursiver Scan, der strikt über LinkedObject die echten Bauteilkerne durchläuft und dabei Zyklen vermeidet."""
+
+    if current_obj in visited_objects:
+        return
+    visited_objects.add(current_obj)
+
+    scan_target = current_obj.LinkedObject if hasattr(current_obj, "LinkedObject") and current_obj.LinkedObject else current_obj
+    children = getattr(scan_target, "Group", [])
+
+    valid_children = []
+    for child in children:
+
+        # if child.Label.startswith("BOM-Ref:") or "Bill_of_Materials" in child.Label or "Bills_of_Materials" in child.Name:
+        #     continue
+        # if child.isDerivedFrom("App::Origin") or "Origin" in child.Name or "Joints" in child.Name:
+        #     continue
+            
+        has_id = _resolve_pdm_value(child, "ArticleID")
+        if has_id:
+            valid_children.append(child)
+
+    for sub_idx, child in enumerate(valid_children, start=1):
+        new_index = f"{sub_idx}" if current_index == "" else f"{current_index}-{sub_idx}"
+
+        pdm_info = _extract_pdm_data(child)
+        
+        bom_list.append([
+            new_index,
+            pdm_info["ArticleID"],
+            pdm_info["Bezeichnung"],
+            pdm_info["Material"],
+            pdm_info["Rohling"],
+            "1"
+        ])
+
+        target_child = child.LinkedObject if hasattr(child, "LinkedObject") and child.LinkedObject else child
+        if hasattr(target_child, "Group") and target_child.Group:
+            _scan_recursive(child, new_index, bom_list, visited_objects)
+
+# # --- STARTER ---
+# auswahl = Gui.Selection.getSelection()
+# if not auswahl:
+#     print("!! Bitte markiere zuerst die Hauptbaugruppe im Modellbaum !!")
+# else:
+#     print_perfect_assembly_tree(auswahl[0])    
