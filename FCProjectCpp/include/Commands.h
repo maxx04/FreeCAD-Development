@@ -1,18 +1,10 @@
-// Commands.h
-// C++ skeleton for FCProject/Commands.py
-
-#ifndef FCPROJECT_COMMANDS_H
-#define FCPROJECT_COMMANDS_H
+#pragma once
 
 namespace FCProject {
 
-class Commands {
+class PartCreatorCommand {
 public:
-    Commands();
-    ~Commands();
-    void run();
+    bool isActive() const;
 };
 
 } // namespace FCProject
-
-#endif // FCPROJECT_COMMANDS_H

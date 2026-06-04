@@ -1,18 +1,13 @@
-// PartCreator.h
-// C++ skeleton for FCProject/PartCreator.py
+#pragma once
 
-#ifndef FCPROJECT_PARTCREATOR_H
-#define FCPROJECT_PARTCREATOR_H
+#include <string>
+#include "FreeCADTypes.h"
 
 namespace FCProject {
 
-class Partcreator {
+class PartCreator {
 public:
-    Partcreator();
-    ~Partcreator();
-    void run();
+    bool create(const std::string& filePath, const std::string& baseName, const std::string& trailingName, const PropertyMap& config, const PropertyMap& properties);
 };
 
 } // namespace FCProject
-
-#endif // FCPROJECT_PARTCREATOR_H

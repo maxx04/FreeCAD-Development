@@ -1,17 +1,14 @@
-// AssemblyPatternCommand.cpp
-// C++ skeleton for FCProject/AssemblyPatternCommand.py
-
 #include "../include/AssemblyPatternCommand.h"
 #include <iostream>
 
 namespace FCProject {
 
-Assemblypatterncommand::Assemblypatterncommand() {}
+void AssemblyPatternCommand::activated() {
+    std::cout << "AssemblyPatternCommand activated placeholder" << std::endl;
+}
 
-Assemblypatterncommand::~Assemblypatterncommand() {}
-
-void Assemblypatterncommand::run() {
-    std::cout << "TODO: implement Assemblypatterncommand in C++" << std::endl;
+bool AssemblyPatternCommand::isActive() const {
+    return true;
 }
 
 } // namespace FCProject

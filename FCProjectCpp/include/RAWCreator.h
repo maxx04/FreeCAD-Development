@@ -1,18 +1,13 @@
-// RAWCreator.h
-// C++ skeleton for FCProject/RAWCreator.py
+#pragma once
 
-#ifndef FCPROJECT_RAWCREATOR_H
-#define FCPROJECT_RAWCREATOR_H
+#include <string>
+#include "FreeCADTypes.h"
 
 namespace FCProject {
 
-class Rawcreator {
+class RAWCreator {
 public:
-    Rawcreator();
-    ~Rawcreator();
-    void run();
+    bool create(const std::string& filePath, const std::string& baseName, const std::string& trailingName, const PropertyMap& config, const PropertyMap& properties);
 };
 
 } // namespace FCProject
-
-#endif // FCPROJECT_RAWCREATOR_H

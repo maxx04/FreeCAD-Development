@@ -1,17 +1,15 @@
-// InitGui.cpp
-// C++ skeleton for FCProject/InitGui.py
-
 #include "../include/InitGui.h"
-#include <iostream>
 
 namespace FCProject {
 
-Initgui::Initgui() {}
+void InitGui::initialize() {
+}
 
-Initgui::~Initgui() {}
+void InitGui::activated() {
+}
 
-void Initgui::run() {
-    std::cout << "TODO: implement Initgui in C++" << std::endl;
+std::string InitGui::getClassName() const {
+    return "Gui::PythonWorkbench";
 }
 
 } // namespace FCProject

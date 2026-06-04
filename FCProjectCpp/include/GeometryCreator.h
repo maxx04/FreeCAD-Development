@@ -1,18 +1,13 @@
-// GeometryCreator.h
-// C++ skeleton for FCProject/GeometryCreator.py
+#pragma once
 
-#ifndef FCPROJECT_GEOMETRYCREATOR_H
-#define FCPROJECT_GEOMETRYCREATOR_H
+#include <string>
+#include "FreeCADTypes.h"
 
 namespace FCProject {
 
-class Geometrycreator {
+class GeometryCreator {
 public:
-    Geometrycreator();
-    ~Geometrycreator();
-    void run();
+    bool create(const std::string& filePath, const std::string& baseName, const std::string& trailingName, const PropertyMap& config, const PropertyMap& properties);
 };
 
 } // namespace FCProject
-
-#endif // FCPROJECT_GEOMETRYCREATOR_H

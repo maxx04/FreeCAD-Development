@@ -1,18 +1,9 @@
-// version.h
-// C++ skeleton for FCProject/version.py
+#pragma once
 
-#ifndef FCPROJECT_VERSION_H
-#define FCPROJECT_VERSION_H
+#include <string>
 
 namespace FCProject {
 
-class Version {
-public:
-    Version();
-    ~Version();
-    void run();
-};
+extern const std::string Version;
 
 } // namespace FCProject
-
-#endif // FCPROJECT_VERSION_H

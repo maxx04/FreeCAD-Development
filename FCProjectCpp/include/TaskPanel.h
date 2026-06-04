@@ -1,18 +1,23 @@
-// TaskPanel.h
-// C++ skeleton for FCProject/TaskPanel.py
+#pragma once
 
-#ifndef FCPROJECT_TASKPANEL_H
-#define FCPROJECT_TASKPANEL_H
+#include <string>
+#include "EntityCreator.h"
 
 namespace FCProject {
 
-class Taskpanel {
+class TaskPanel {
 public:
-    Taskpanel();
-    ~Taskpanel();
-    void run();
+    TaskPanel();
+    void show();
+
+private:
+    std::string projectName;
+    std::string projectDir;
+    void buildUI();
+    void onCreateClicked();
+    void onExportBomClicked();
+    std::pair<std::string, std::string> getProjectContext() const;
+    bool loadConfig();
 };
 
 } // namespace FCProject
-
-#endif // FCPROJECT_TASKPANEL_H

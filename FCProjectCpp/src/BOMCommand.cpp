@@ -1,17 +1,15 @@
-// BOMCommand.cpp
-// C++ skeleton for FCProject/BOMCommand.py
-
 #include "../include/BOMCommand.h"
 #include <iostream>
 
 namespace FCProject {
 
-Bomcommand::Bomcommand() {}
+bool BOMExportCommand::activated() {
+    std::cout << "BOMExportCommand placeholder activated" << std::endl;
+    return true;
+}
 
-Bomcommand::~Bomcommand() {}
-
-void Bomcommand::run() {
-    std::cout << "TODO: implement Bomcommand in C++" << std::endl;
+bool BOMExportCommand::isActive() const {
+    return true;
 }
 
 } // namespace FCProject

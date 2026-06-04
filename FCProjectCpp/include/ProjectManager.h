@@ -1,18 +1,18 @@
-// ProjectManager.h
-// C++ skeleton for FCProject/ProjectManager.py
+#pragma once
 
-#ifndef FCPROJECT_PROJECTMANAGER_H
-#define FCPROJECT_PROJECTMANAGER_H
+#include <string>
 
 namespace FCProject {
 
-class Projectmanager {
+class ProjectManagerCommand {
 public:
-    Projectmanager();
-    ~Projectmanager();
-    void run();
+    ProjectManagerCommand();
+    std::string getDefaultProjectData(const std::string& projectName) const;
+    bool initializeProject(const std::string& baseDir, const std::string& projectName, std::string& outMessage);
+    bool isActive() const;
+
+private:
+    std::string scriptVersion;
 };
 
 } // namespace FCProject
-
-#endif // FCPROJECT_PROJECTMANAGER_H

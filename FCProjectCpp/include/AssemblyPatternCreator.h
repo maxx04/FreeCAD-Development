@@ -1,18 +1,23 @@
-// AssemblyPatternCreator.h
-// C++ skeleton for FCProject/AssemblyPatternCreator.py
+#pragma once
 
-#ifndef FCPROJECT_ASSEMBLYPATTERNCREATOR_H
-#define FCPROJECT_ASSEMBLYPATTERNCREATOR_H
+#include <string>
+#include <vector>
+#include "FreeCADTypes.h"
 
 namespace FCProject {
 
-class Assemblypatterncreator {
+class AssemblyPatternCreator {
 public:
-    Assemblypatterncreator();
-    ~Assemblypatterncreator();
-    void run();
+    AssemblyPatternCreator(Element* assembly);
+    void createPattern(Element* sourceElement, int count, double distance, const std::string& direction);
+
+private:
+    Element* assembly;
+    Element* patternGroup{nullptr};
+    void validateSourceElement(Element* element) const;
+    Vector3 calculateOffsetVector(double distance, const std::string& direction, int index) const;
+    Vector3 getDirectionVector(const std::string& direction) const;
+    Element* duplicateElement(Element* sourceElement, const std::string& newLabel) const;
 };
 
 } // namespace FCProject
-
-#endif // FCPROJECT_ASSEMBLYPATTERNCREATOR_H

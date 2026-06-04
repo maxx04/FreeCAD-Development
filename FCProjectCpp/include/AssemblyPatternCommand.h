@@ -1,18 +1,16 @@
-// AssemblyPatternCommand.h
-// C++ skeleton for FCProject/AssemblyPatternCommand.py
+#pragma once
 
-#ifndef FCPROJECT_ASSEMBLYPATTERNCOMMAND_H
-#define FCPROJECT_ASSEMBLYPATTERNCOMMAND_H
+#include <string>
+#include "AssemblyPatternCreator.h"
 
 namespace FCProject {
 
-class Assemblypatterncommand {
+class AssemblyPatternCommand {
 public:
-    Assemblypatterncommand();
-    ~Assemblypatterncommand();
-    void run();
+    void activated();
+    bool isActive() const;
+private:
+    AssemblyPatternCreator* creator{nullptr};
 };
 
 } // namespace FCProject
-
-#endif // FCPROJECT_ASSEMBLYPATTERNCOMMAND_H

@@ -1,17 +1,15 @@
-// AssemblyCreator.cpp
-// C++ skeleton for FCProject/AssemblyCreator.py
-
 #include "../include/AssemblyCreator.h"
+#include <fstream>
 #include <iostream>
 
 namespace FCProject {
 
-Assemblycreator::Assemblycreator() {}
-
-Assemblycreator::~Assemblycreator() {}
-
-void Assemblycreator::run() {
-    std::cout << "TODO: implement Assemblycreator in C++" << std::endl;
+bool AssemblyCreator::create(const std::string& filePath, const std::string& baseName, const std::string& trailingName, const PropertyMap& config, const PropertyMap& properties) {
+    std::ofstream out(filePath);
+    if (!out) return false;
+    out << "# FCProject AssemblyCreator placeholder for " << trailingName << "\n";
+    out << "ArticleID=" << properties.at("__PureArticleID__") << "\n";
+    return true;
 }
 
 } // namespace FCProject

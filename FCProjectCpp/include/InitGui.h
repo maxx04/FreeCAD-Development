@@ -1,18 +1,14 @@
-// InitGui.h
-// C++ skeleton for FCProject/InitGui.py
+#pragma once
 
-#ifndef FCPROJECT_INITGUI_H
-#define FCPROJECT_INITGUI_H
+#include <string>
 
 namespace FCProject {
 
-class Initgui {
+class InitGui {
 public:
-    Initgui();
-    ~Initgui();
-    void run();
+    void initialize();
+    void activated();
+    std::string getClassName() const;
 };
 
 } // namespace FCProject
-
-#endif // FCPROJECT_INITGUI_H

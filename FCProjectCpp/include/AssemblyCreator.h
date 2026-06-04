@@ -1,18 +1,13 @@
-// AssemblyCreator.h
-// C++ skeleton for FCProject/AssemblyCreator.py
+#pragma once
 
-#ifndef FCPROJECT_ASSEMBLYCREATOR_H
-#define FCPROJECT_ASSEMBLYCREATOR_H
+#include <string>
+#include "FreeCADTypes.h"
 
 namespace FCProject {
 
-class Assemblycreator {
+class AssemblyCreator {
 public:
-    Assemblycreator();
-    ~Assemblycreator();
-    void run();
+    bool create(const std::string& filePath, const std::string& baseName, const std::string& trailingName, const PropertyMap& config, const PropertyMap& properties);
 };
 
 } // namespace FCProject
-
-#endif // FCPROJECT_ASSEMBLYCREATOR_H

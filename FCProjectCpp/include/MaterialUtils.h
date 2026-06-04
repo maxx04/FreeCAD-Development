@@ -1,18 +1,9 @@
-// MaterialUtils.h
-// C++ skeleton for FCProject/MaterialUtils.py
+#pragma once
 
-#ifndef FCPROJECT_MATERIALUTILS_H
-#define FCPROJECT_MATERIALUTILS_H
+#include <string>
 
 namespace FCProject {
 
-class Materialutils {
-public:
-    Materialutils();
-    ~Materialutils();
-    void run();
-};
+std::string getNativeMaterialByName(const std::string& targetName);
 
 } // namespace FCProject
-
-#endif // FCPROJECT_MATERIALUTILS_H

@@ -1,18 +1,13 @@
-// BOMCommand.h
-// C++ skeleton for FCProject/BOMCommand.py
+#pragma once
 
-#ifndef FCPROJECT_BOMCOMMAND_H
-#define FCPROJECT_BOMCOMMAND_H
+#include <string>
 
 namespace FCProject {
 
-class Bomcommand {
+class BOMExportCommand {
 public:
-    Bomcommand();
-    ~Bomcommand();
-    void run();
+    bool activated();
+    bool isActive() const;
 };
 
 } // namespace FCProject
-
-#endif // FCPROJECT_BOMCOMMAND_H

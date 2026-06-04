@@ -1,18 +1,18 @@
-// BOMManager.h
-// C++ skeleton for FCProject/BOMManager.py
+#pragma once
 
-#ifndef FCPROJECT_BOMMANAGER_H
-#define FCPROJECT_BOMMANAGER_H
+#include <filesystem>
+#include <string>
+#include <vector>
+#include "FreeCADTypes.h"
 
 namespace FCProject {
 
-class Bommanager {
+class BOMManager {
 public:
-    Bommanager();
-    ~Bommanager();
-    void run();
+    BOMManager();
+    std::vector<std::vector<std::string>> generateStructuralBom(Element* rootAssembly);
+    std::filesystem::path exportToCsv(const std::filesystem::path& targetDir, Element* rootAssembly);
+    bool exportToSpreadsheet(const std::filesystem::path& targetDir, Element* rootAssembly);
 };
 
 } // namespace FCProject
-
-#endif // FCPROJECT_BOMMANAGER_H

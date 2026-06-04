@@ -1,18 +1,21 @@
-// EntityCreator.h
-// C++ skeleton for FCProject/EntityCreator.py
+#pragma once
 
-#ifndef FCPROJECT_ENTITYCREATOR_H
-#define FCPROJECT_ENTITYCREATOR_H
+#include <string>
+#include "FreeCADTypes.h"
 
 namespace FCProject {
 
-class Entitycreator {
+class EntityCreator {
 public:
-    Entitycreator();
-    ~Entitycreator();
-    void run();
+    EntityCreator(const std::string& projectName, const std::string& projectDir);
+    std::string getNextAvailableNumber() const;
+    std::string createPdmDocument(const std::string& compType, const std::string& compNum, PropertyMap& userProperties);
+
+private:
+    std::string projectName;
+    std::string projectDir;
+    PropertyMap configData;
+    PropertyMap loadConfig() const;
 };
 
 } // namespace FCProject
-
-#endif // FCPROJECT_ENTITYCREATOR_H

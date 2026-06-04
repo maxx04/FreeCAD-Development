@@ -1,17 +1,35 @@
-// TaskPanel.cpp
-// C++ skeleton for FCProject/TaskPanel.py
-
 #include "../include/TaskPanel.h"
+#include <filesystem>
 #include <iostream>
 
 namespace FCProject {
 
-Taskpanel::Taskpanel() {}
+TaskPanel::TaskPanel() {
+    auto [name, dir] = getProjectContext();
+    projectName = name;
+    projectDir = dir;
+}
 
-Taskpanel::~Taskpanel() {}
+void TaskPanel::show() {
+    buildUI();
+}
 
-void Taskpanel::run() {
-    std::cout << "TODO: implement Taskpanel in C++" << std::endl;
+void TaskPanel::buildUI() {
+    std::cout << "TaskPanel placeholder for project " << projectName << std::endl;
+}
+
+void TaskPanel::onCreateClicked() {
+}
+
+void TaskPanel::onExportBomClicked() {
+}
+
+std::pair<std::string, std::string> TaskPanel::getProjectContext() const {
+    return {projectName.empty() ? "PROJ" : projectName, projectDir.empty() ? std::filesystem::current_path().string() : projectDir};
+}
+
+bool TaskPanel::loadConfig() {
+    return false;
 }
 
 } // namespace FCProject
