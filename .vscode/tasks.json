@@ -2,12 +2,15 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Run in FreeCAD",
+            "label": "CMake: build FCProjectCpp",
             "type": "shell",
-            "command": "echo \"exec(open('${file}').read())\" | nc -q 0 localhost 9999",
+            "command": "cmake -S FCProjectCpp -B build && cmake --build build --target FCProjectCpp",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "group": {
                 "kind": "build",
-                "isDefault": true
+                "isDefault": false
             },
             "presentation": {
                 "reveal": "always",
@@ -16,4 +19,5 @@
             "problemMatcher": []
         }
     ]
+
 }
