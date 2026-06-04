@@ -1,5 +1,6 @@
-#include <Gui/Application.h>
 #include "../include/InitGui.h"
+#include <Gui/Application.h>
+
 
 namespace FCProject {
 
