@@ -322,10 +322,13 @@ class AssemblyPatternCreator:
                     JointObject.ViewProviderJoint(joint.ViewObject)
 
                 offset2 = self._compute_fixed_joint_offset(elem1, elem2, ref1, ref2, UtilsAssembly)
+                #offset2 = App.Placement(App.Vector(600.0, 0., 0.), App.Rotation())
+
                 if offset2 is not None:
                     joint.Offset2 = offset2
 
                 joint.Proxy.setJointConnectors(joint, [ref1, ref2])
+
                 App.Console.PrintMessage(f"FCProject: Joint zwischen {elem1.Label} und {elem2.Label} erstellt.\n")
             except Exception as e:
                 App.Console.PrintWarning(f"FCProject: Joint-Erstellung fehlgeschlagen: {str(e)}\n")
@@ -486,25 +489,6 @@ class AssemblyPatternCreator:
 
         return names
 
-    # def _select_lcs_name(self, names, direction=None):
-    #     """Wählt eine LCS-Referenz entsprechend der Pattern-Richtung aus."""
-    #     if not names:
-    #         return None
-
-    #     direction_map = {
-    #         'X-Achse': ['.Origin', '.YZ_Plane'],
-    #         'Y-Achse': ['.Origin', '.XZ_Plane'],
-    #         'Z-Achse': ['.Origin', '.XY_Plane'],
-    #     }
-    #     priorities = direction_map.get(direction, ['.Origin', '.X_Axis.', '.Y_Axis.', '.Z_Axis.'])
-
-    #     for token in priorities:
-    #         for name in names:
-    #             if token in name or name.endswith(token.strip('.')):
-    #                 return name
-
-    #     return names[0]
-
     def _find_coordinate_system_name(self, element):
         """Sucht eine lokale Koordinatensystem-Referenz im Objekt."""
         if element is None:
@@ -626,7 +610,8 @@ class AssemblyPatternCreator:
             # Offset2 muss so gesetzt werden, dass der globale JCS von Reference2
             # mit dem globalen JCS von Reference1 übereinstimmt.
             try:
-                offset2 = global2.inverse().multiply(global1)
+                #offset2 = global2.inverse().multiply(global1)
+                offset2 = global2 - global1
             except Exception as e:
                 App.Console.PrintWarning(f"FCProject: Fehler beim Multiplizieren von globalen JCS: {str(e)}\n")
                 return None
@@ -640,6 +625,7 @@ class AssemblyPatternCreator:
                 pass
 
             return offset2
+        
         except Exception as e:
             App.Console.PrintWarning(f"FCProject: Berechnung des Joint-Offsets fehlgeschlagen: {str(e)}\n")
             return None
