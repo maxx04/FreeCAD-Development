@@ -1,6 +1,7 @@
 
 import os
 import FreeCAD as App
+import Utils
 
 class PurchasedPartCreator:
     """
@@ -15,6 +16,11 @@ class PurchasedPartCreator:
         bestell_val = properties.get("Bestellnummer", "000-000")
         material_target = properties.get("__TargetMaterialName__", "Steel")
         profile_path = properties.get("__LinkedRawProfilePath__", None) # Optional gewählte Basis-Datei
+        try:
+            price_val = float(properties.get("Preis", 0.0))
+        except (ValueError, TypeError):
+            App.Console.PrintWarning("FCProject: Ungültiger Preis-Wert. Verwende Standardwert 0.0.\n")
+            price_val = 0.0
 
         new_doc = App.newDocument(trailing_name)
         App.setActiveDocument(new_doc.Name)
@@ -52,21 +58,11 @@ class PurchasedPartCreator:
         # Wir holen uns die reine, saubere PDM-ID aus dem Fabrik-Paket
         pure_id = properties.get("__PureArticleID__", trailing_name)
 
-        if not hasattr(core_obj, "ArticleID"):
-            core_obj.addProperty("App::PropertyString", "ArticleID", "FCProject", "Eindeutige ID")
-        core_obj.ArticleID = pure_id
-        
-        if not hasattr(core_obj, "Bezeichnung"):
-            core_obj.addProperty("App::PropertyString", "Bezeichnung", "FCProject_PDM", "Logische Benennung")
-        core_obj.Bezeichnung = bezeichnung_val
-
-        if not hasattr(core_obj, "Hersteller"):
-            core_obj.addProperty("App::PropertyString", "Hersteller", "FCProject_PDM", "Herstellerbezeichnung")
-        core_obj.Hersteller = hersteller_val
-
-        if not hasattr(core_obj, "Bestellnummer"):
-            core_obj.addProperty("App::PropertyString", "Bestellnummer", "FCProject_PDM", "Bestellnummer")
-        core_obj.Bestellnummer = bestell_val
+        Utils._ensure_property(App, core_obj, "App::PropertyString", "ArticleID", "FCProject", "Eindeutige ID", pure_id)
+        Utils._ensure_property(App, core_obj, "App::PropertyString", "Bezeichnung", "FCProject_PDM", "Logische Benennung", bezeichnung_val)
+        Utils._ensure_property(App, core_obj, "App::PropertyString", "Hersteller", "FCProject_PDM", "Herstellerbezeichnung", hersteller_val)
+        Utils._ensure_property(App, core_obj, "App::PropertyString", "Bestellnummer", "FCProject_PDM", "Bestellnummer", bestell_val)
+        Utils._ensure_property(App, core_obj, "App::PropertyFloat", "Preis", "FCProject_PDM", "Preis für das Halbzeug", price_val)
 
         new_doc.saveAs(file_path)
         new_doc.recompute()

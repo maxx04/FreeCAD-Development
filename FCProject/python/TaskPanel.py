@@ -21,7 +21,8 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         self.config_data = self._load_config()
         
         if not self.config_data:
-            QtWidgets.QMessageBox.critical(self, "FCProject", "Keine gültige Projekt-Konfiguration im aktiven Arbeitsverzeichnis gefunden!\nBitte nutze zuerst Button 1.")
+            QtWidgets.QMessageBox.critical(self, "FCProject", "Keine gültige Projekt-Konfiguration im aktiven Arbeitsverzeichnis gefunden!\n" \
+            "Bitte nutze zuerst Button 1.")
             QtCore.QTimer.singleShot(10, self.close)
             return
 
@@ -29,6 +30,8 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         self.main_layout.addWidget(QtWidgets.QLabel("<b>Komponenten-Typ:</b>"))
         self.type_combo = QtWidgets.QComboBox()
         entities = self.config_data.get("Entities", {})
+
+        # Einträge dynamisch aus der JSON laden (P, R, B, A) und die Labels anzeigen
         for key, entity_data in entities.items():
             self.type_combo.addItem(entity_data.get("Label", key), key)
         self.main_layout.addWidget(self.type_combo)
@@ -172,6 +175,7 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
             App.Console.PrintError(f"FCProject: Fehler beim Material-Dialog: {str(e)}\n")
 
     def _load_config(self):
+        """Lädt die Konfiguration aus der JSON, die exakt wie der Projektordner benannt ist (z.B. PROJ_U20.json)."""
         if self.proj_dir:
             # Sucht die JSON, die exakt wie der Projektordner benannt ist
             folder_name = os.path.basename(self.proj_dir)
@@ -211,6 +215,7 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         return None, None
 
     def on_create_clicked(self):
+        """Sammelt die Daten aus der GUI und triggert die Erstellung der PDM-Komponente und der zugehörigen CAD-Datei."""
         if not self.proj_dir: return
         
         comp_type = self.type_combo.currentData()
@@ -219,6 +224,7 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         # In deiner TaskPanel.py -> Innerhalb von on_create_clicked:
         # Werte aus der dynamischen GUI einsammeln (Unterstützt jetzt LineEdit und QComboBox)
         payload_properties = {}
+        #
         for prop_name, widget in self.inputs_map.items():
             if isinstance(widget, QtWidgets.QComboBox):
                 payload_properties[prop_name] = widget.currentData()

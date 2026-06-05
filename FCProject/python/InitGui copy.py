@@ -17,7 +17,7 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
     MenuText = "FCProject"
 
     # CRITICAL SECURITY GUARD: Muss exakt mit der Version des ProjectManagers übereinstimmen!
-    SUPPORTED_VERSION = "1.0"
+    SUPPORTED_VERSION = "1.1"
 
     def Initialize(self):
         import ProjectManager

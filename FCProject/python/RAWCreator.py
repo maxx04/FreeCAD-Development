@@ -1,5 +1,6 @@
 import os
 import FreeCAD as App
+import Utils
 
 class RAWCreator:
     """Zentrale PDM-Logik für das Erstellen von Halbzeugen (Profilen) aus Vorlagen."""
@@ -9,7 +10,13 @@ class RAWCreator:
         length_val = float(properties.get("Length", 500.0))
         profile_template = properties.get("ProfilTyp", "None")
         material_target = properties.get("__TargetMaterialName__", "Aluminum")
-        
+
+        try:
+            price_val = float(properties.get("Preis", 0.0))
+        except (ValueError, TypeError):
+            App.Console.PrintWarning("FCProject: Ungültiger Preis-Wert. Verwende Standardwert 0.0.\n")
+            price_val = 0.0
+
         # Die reine, isolierte PDM-ID für das ERP-System holen (z.B. U20_0005_R_)
         pure_id = properties.get("__PureArticleID__", trailing_name)
 
@@ -75,8 +82,12 @@ class RAWCreator:
         # KORREKTUR: Es wird NUR noch die saubere, textfreie ID eingepflegt (z.B. U20_0005_R_)!
         core_obj.ArticleID = pure_id
         
-        core_obj.addProperty("App::PropertyLength", "Length", "FCProject_PDM", "Zuschnittslänge").Length = length_val
-        core_obj.addProperty("App::PropertyString", "ProfilTyp", "FCProject_PDM", "Verwendetes Vorlagenprofil").ProfilTyp = profile_template
+        #core_obj.addProperty("App::PropertyLength", "Length", "FCProject_PDM", "Zuschnittslänge").Length = length_val
+        Utils._ensure_property(App, core_obj, "App::PropertyLength", "Length", "FCProject_PDM", "Zuschnittslänge", length_val)
+        #core_obj.addProperty("App::PropertyString", "ProfilTyp", "FCProject_PDM", "Verwendetes Vorlagenprofil").ProfilTyp = profile_template
+        Utils._ensure_property(App, core_obj, "App::PropertyString", "ProfilTyp", "FCProject_PDM", "Verwendetes Vorlagenprofil", profile_template)
+
+        Utils._ensure_property(App, core_obj, "App::PropertyFloat", "Preis", "FCProject_PDM", "Preis für das Halbzeug", price_val)
 
         # 8. Datei final auf der Festplatte sichern
         new_doc.saveAs(file_path)

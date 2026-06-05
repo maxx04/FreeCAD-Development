@@ -43,21 +43,19 @@
   "FCProject": {
     "addon_id": "FCProject",
     "description": "Projektmanagement und BOM-Strukturierung für Assemblies",
-    "version": "1.0.0",
+    "version": "0.1.0",
     "author": "maxx",
     "maintainer": "maxx",
     "license": "LGPL-2.1-or-later",
-    "url": "https://github.com",
-    "freecad_version": [1, 1, 0],
+    "url": "https://github.com/maxx04/FreeCAD-Development.git",
+    "freecad_version": [1, 1, 1],
+    "branch_display_name": "main",
     "tags": ["Assembly", "BOM", "Management", "Workflow"],
     "content": {
         "workbenches": [
             "FCProjectWorkbench"
         ],
-        "macros": [],
-        "commands": [
-            "FCProject_HelloWorld"
-        ]
+        "macros": []
     }
   }
 }

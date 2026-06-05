@@ -1,6 +1,8 @@
-# Macro Version: 3.7.2 - FCProject: PartCreator mit sauber getrenntem Standard-Fallback
+#FCProject: PartCreator mit sauber getrenntem Standard-Fallback
 import os
+import Utils
 import FreeCAD as App
+
 
 class PartCreator:
     """PDM-Logik für Einzelteile (Typ P). Unterstützt Klonierung und leere Standard-Erstellung."""
@@ -8,11 +10,16 @@ class PartCreator:
     def create(self, file_path, base_name, trailing_name, config, properties):
         bezeichnung_val = properties.get("Bezeichnung", "Standardteil")
         material_target = properties.get("__TargetMaterialName__", "Steel")
+        try:
+            price_val = float(properties.get("Preis", 0.0))
+        except (ValueError, TypeError):
+            App.Console.PrintWarning("FCProject: Ungültiger Preis-Wert. Verwende Standardwert 0.0.\n")
+            price_val = 0.0
         
         # Der absolute Pfad zur gewählten Halbzeug-Datei (wird nur gesetzt, wenn im Dialog 'Ja' geklickt wurde)
         profile_path = properties.get("__LinkedRawProfilePath__", None)
 
-        import PartDesign  # type: ignore
+        import PartDesign # type: ignore
         
         # 1. Neues separates Dokument für das Einzelteil (P) anlegen
         new_doc = App.newDocument(trailing_name)
@@ -36,13 +43,13 @@ class PartCreator:
                         break
                         
                 if source_body:
-                    # KLON 1: Reiner Stücklisten-Klon (Vollständig autark, unsichtbar im Container)
-                    bom_clone = new_doc.copyObject(source_body, True)
-                    bom_clone.Label = f"BOM-Ref: {os.path.basename(profile_path)}"
-                    part_container.addObject(bom_clone)
+                    # # KLON 1: Reiner Stücklisten-Klon (Vollständig autark, unsichtbar im Container)
+                    # bom_clone = new_doc.copyObject(source_body, True)
+                    # bom_clone.Label = f"BOM-Ref: {os.path.basename(profile_path)}"
+                    # part_container.addObject(bom_clone)
                     
-                    if hasattr(bom_clone, "ViewObject") and bom_clone.ViewObject:
-                        bom_clone.ViewObject.Visibility = False
+                    # if hasattr(bom_clone, "ViewObject") and bom_clone.ViewObject:
+                    #     bom_clone.ViewObject.Visibility = False
                     
                     # KLON 2: Der Bearbeitungs-Klon (Vollständig autark zum Weiterkonstruieren)
                     core_obj = new_doc.copyObject(source_body, True)
@@ -60,7 +67,7 @@ class PartCreator:
             except Exception as e:
                 App.Console.PrintWarning(f"FCProject: Fehler beim Profil-Klonen: {str(e)}\n")
 
-        # 4. DAS IST DIE KORREKTUR: Wenn KEIN Halbzeug ausgewählt wurde (Klassischer, leerer Body)
+        # 4. Wenn KEIN Halbzeug ausgewählt wurde (Klassischer, leerer Body)
         if not core_obj:
             # Wir erzeugen einen komplett leeren, nativen PartDesign::Body im Container
             core_obj = new_doc.addObject("PartDesign::Body", f"Body_{base_name}")
@@ -93,13 +100,9 @@ class PartCreator:
         # 6. PDM Metadaten am Hauptcontainer spritzen (Mit der reinen ArtikelID)
         pure_id = properties.get("__PureArticleID__", trailing_name)
         
-        if not hasattr(part_container, "ArticleID"):
-            part_container.addProperty("App::PropertyString", "ArticleID", "FCProject", "Eindeutige ID")
-        part_container.ArticleID = pure_id
-        
-        if not hasattr(part_container, "Bezeichnung"):
-            part_container.addProperty("App::PropertyString", "Bezeichnung", "FCProject_PDM", "Logische Bauteilbenennung")
-        part_container.Bezeichnung = bezeichnung_val
+        Utils._ensure_property(App, part_container, "App::PropertyString", "ArticleID", "FCProject", "Eindeutige ID", pure_id)
+        Utils._ensure_property(App, part_container, "App::PropertyString", "Bezeichnung", "FCProject_PDM", "Logische Bauteilbenennung", bezeichnung_val)
+        Utils._ensure_property(App, part_container, "App::PropertyFloat", "Preis", "FCProject_PDM", "Preis für das Halbzeug", price_val)
 
         # 7. Sichern und Berechnen
         new_doc.saveAs(file_path)

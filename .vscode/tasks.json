@@ -2,18 +2,22 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Run in FreeCAD",
+            "label": "Build & Install FCProjectCpp",
             "type": "shell",
-            "command": "echo \"exec(open('${file}').read())\" | nc -q 0 localhost 9999",
+            "command": "mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release && make -j$(nproc) && make install",
+            "problemMatcher": ["$gcc"],
             "group": {
                 "kind": "build",
                 "isDefault": true
             },
-            "presentation": {
-                "reveal": "always",
-                "panel": "new"
-            },
-            "problemMatcher": []
+            "detail": "Kompiliert das Modul und installiert es direkt in den Mod-Ordner"
+        },
+        {
+            "label": "Clean",
+            "type": "shell",
+            "command": "rm -rf build",
+            "problemMatcher": [],
+            "detail": "Löscht den Build-Ordner für einen sauberen Neuanfang"
         }
     ]
 }
