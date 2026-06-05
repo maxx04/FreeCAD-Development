@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(FCProjectCpp LANGUAGES CXX)
+project(FCProject LANGUAGES CXX, Python)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -32,7 +32,7 @@ include_directories("${FreeCAD_SOURCE_DIR}/src" "${FreeCAD_SOURCE_DIR}/src/App" 
 link_directories("/home/maxx/freecad/install/lib")
 
 # 3. Bibliothek definieren (nur einmal add_library!)
-add_library(FCProjectCpp SHARED 
+add_library(FCProjectCore SHARED 
     src/ProjectManager.cpp
     src/EntityCreator.cpp
     src/AssemblyCreator.cpp
@@ -50,19 +50,20 @@ add_library(FCProjectCpp SHARED
     src/TaskPanel.cpp
     src/Utils.cpp
     src/version.cpp
+    src/Module.cpp
 )
 
 # 4. Inklusionspfade & Features
 # FreeCAD_INCLUDE_DIRS wird durch find_package automatisch befüllt!
-target_include_directories(FCProjectCpp PUBLIC 
+target_include_directories(FCProjectCore PUBLIC 
     include 
     ${FreeCAD_INCLUDE_DIRS}
 )
-target_compile_features(FCProjectCpp PUBLIC cxx_std_20)
+target_compile_features(FCProjectCore PUBLIC cxx_std_20)
 
 # 5. Linken
 # Die Bibliotheken FreeCADApp und FreeCADGui sind Teil von FreeCAD_LIBRARIES
-target_link_libraries(FCProjectCpp 
+target_link_libraries(FCProjectCore 
     PUBLIC 
     ${FreeCAD_LIBRARIES}
     Qt6::Core Qt6::Gui Qt6::Widgets
@@ -74,28 +75,29 @@ find_package(pybind11 REQUIRED)
 
 # Füge Module.cpp zu deinen Quellen hinzu
 # Statt nur add_library(...)
-if(NOT TARGET FCProjectCpp)
-    add_library(FCProjectCpp SHARED 
+if(NOT TARGET FCProject)
+    add_library(FCProject SHARED 
         Init.py
         InitGui.py
     )
 endif()
 
-# Verbinde die Bibliothek mit PyBind11
-target_link_libraries(FCProjectCpp PRIVATE pybind11::module)
 
-# WICHTIG: Das lib-Präfix entfernen, damit Python die Datei als "FCProjectCpp" erkennt
-set_target_properties(FCProjectCpp PROPERTIES PREFIX "")
+# Verbinde die Bibliothek mit PyBind11
+target_link_libraries(FCProjectCore PRIVATE pybind11::module)
+
+# WICHTIG: Das lib-Präfix entfernen, damit Python die Datei als "FCProject" erkennt
+set_target_properties(FCProjectCore PROPERTIES PREFIX "")
 
 # 6. Installation
 # --- Modul-Installation ---
 # Wir installieren in deinen lokalen FreeCAD-Installationsordner
 # Das ist sauberer und benötigt kein sudo!
 # Installiere direkt in das neue User-Modul-Verzeichnis
-set(MY_MOD_DESTINATION "/home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProjectCpp")
+set(MY_MOD_DESTINATION "/home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject")
 
 # Installiere die kompilierte Bibliothek (.so)
-install(TARGETS FCProjectCpp
+install(TARGETS FCProjectCore
     LIBRARY DESTINATION "${MY_MOD_DESTINATION}"
     RUNTIME DESTINATION "${MY_MOD_DESTINATION}"
 )
@@ -107,3 +109,4 @@ install(FILES
     InitGui.py 
     DESTINATION "${MY_MOD_DESTINATION}"
 )
+

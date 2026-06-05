@@ -1,4 +1,4 @@
-# FCProjectCpp
+# FCProject
 
 Dies ist die C++-Portierung des `FCProject` Python-Moduls.
 

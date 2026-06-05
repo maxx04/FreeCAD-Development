@@ -3,6 +3,7 @@
         "~/.local/lib/python3.11/site-packages",
         "/home/maxx/Documents/FreeCAD-Resources/squashfs-root/usr/lib",
         "~/.local/share/FreeCAD/v1-1/Mod",
+        "/home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject",
         "${workspaceFolder}/.venv/lib/python3.11/site-packages",
         "${workspaceFolder}/.venv/lib/python3.12/site-packages"
     ],
@@ -23,7 +24,8 @@
         "venv_prof": {
             "path": "/usr/bin/bash",
  //           "args": ["--rcfile", "<(echo '. ~/.bashrc; source .venv/bin/activate')"]
-            "args": ["-c", "source .venv/bin/activate && exec bash -i"]
+ //           "args": ["-c", "source ../.venv/bin/activate && exec bash -i"]
+            "args": ["-l"]
         }
     },
     "terminal.integrated.defaultProfile.linux": "venv_prof",
@@ -44,7 +46,8 @@
         "**/.venv/**",
         "**/dist/**",
         "**/build/**"
-    ]
+    ],
+    "cmake.sourceDirectory": "/home/maxx/Documents/FreeCAD-Development/FCProject"
 
 
 
