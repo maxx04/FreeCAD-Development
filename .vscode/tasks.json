@@ -1,0 +1,23 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build & Install FCProjectCpp",
+            "type": "shell",
+            "command": "mkdir -p ${workspaceFolder}/build && cd ${workspaceFolder}/build && cmake -DCMAKE_BUILD_TYPE=Release -DPython_EXECUTABLE=/home/maxx/Documents/FreeCAD-Development/FCProject/.venv/bin/python . && make -j$(nproc) && make install",
+            "problemMatcher": ["$gcc"],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "detail": "Kompiliert das Modul und installiert es direkt in den Mod-Ordner"
+        },
+        {
+            "label": "Clean",
+            "type": "shell",
+            "command": "rm -rf build",
+            "problemMatcher": [],
+            "detail": "Löscht den Build-Ordner für einen sauberen Neuanfang"
+        }
+    ]
+}
