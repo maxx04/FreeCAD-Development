@@ -3,7 +3,7 @@ import os
 import FreeCAD as App
 import FreeCADGui as Gui
 from PySide6 import QtWidgets
-from BOMManager import BOMManager
+from FCProjectCore import BOMManager
 
 class BOMExportCommand:
     def GetResources(self):
@@ -37,8 +37,19 @@ class BOMExportCommand:
 
         try:
             # Stücklisten-Manager starten und Export triggern
-            manager = BOMManager(active_doc)
+
+            auswahl = App.Gui.Selection.getSelection()
+
+            if not auswahl:
+                App.Console.PrintError("Fehler: Bitte klicke zuerst die Hauptbaugruppe im Baum an!")
+                return
+                # Nimm das erste Element, das der Nutzer angeklickt hat
+            root_assembly = auswahl[0]
+
+            manager = BOMManager(root_assembly.Name)
+
             csv_result_path = manager.export_to_csv(target_dir)
+            
             spreadsheet_result = manager.export_to_spreadsheet(target_dir)
             
             if csv_result_path:

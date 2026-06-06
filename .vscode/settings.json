@@ -4,18 +4,18 @@
         "/home/maxx/Documents/FreeCAD-Resources/squashfs-root/usr/lib",
         "~/.local/share/FreeCAD/v1-1/Mod",
         "/home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject",
-        "${workspaceFolder}/.venv/lib/python3.11/site-packages",
-        "${workspaceFolder}/.venv/lib/python3.12/site-packages"
+        "${workspaceFolder}/../.venv/lib/python3.11/site-packages",
+        "${workspaceFolder}/../.venv/lib/python3.12/site-packages"
     ],
     "python.autoComplete.extraPaths": [
         "~/.local/lib/python3.11/site-packages",
         "/home/maxx/Documents/FreeCAD-Resources/squashfs-root/usr/lib",
         "~/.local/share/FreeCAD/v1-1/Mod",
-        "${workspaceFolder}/.venv/lib/python3.11/site-packages",
-        "${workspaceFolder}/.venv/lib/python3.12/site-packages"
+        "${workspaceFolder}/../.venv/lib/python3.11/site-packages",
+        "${workspaceFolder}/../.venv/lib/python3.12/site-packages"
     ],
     
-   "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+   "python.defaultInterpreterPath": "${workspaceFolder}/../.venv/bin/python",
    "python.terminal.activateEnvInSelectedTerminal": true,
    "python.terminal.activateEnvironment": true,
    
@@ -47,7 +47,8 @@
         "**/dist/**",
         "**/build/**"
     ],
-    "cmake.sourceDirectory": "/home/maxx/Documents/FreeCAD-Development/FCProject"
+    "cmake.sourceDirectory": "/home/maxx/Documents/FreeCAD-Development/FCProject",
+    "C_Cpp.errorSquiggles": "disabled"
 
 
 

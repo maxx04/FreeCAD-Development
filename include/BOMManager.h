@@ -3,16 +3,29 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include <App/DocumentObject.h>
 #include "FreeCADTypes.h"
 
 namespace FCProject {
 
 class BOMManager {
+
+private:
+    Element* rootAssembly{nullptr};
+
 public:
-    BOMManager();
-    std::vector<std::vector<std::string>> generateStructuralBom(Element* rootAssembly);
-    std::filesystem::path exportToCsv(const std::filesystem::path& targetDir, Element* rootAssembly);
-    bool exportToSpreadsheet(const std::filesystem::path& targetDir, Element* rootAssembly);
+    BOMManager() = default;
+    
+    BOMManager(const std::string& root_name);
+
+    auto generateStructuralBom() -> std::vector<std::vector<std::string>>;
+
+    auto exportToCsv(const std::string& targetDir) -> bool;
+
+    auto exportToSpreadsheet(const std::string& targetDir) -> bool;
+
+    auto convertToElement(App::DocumentObject* obj, std::map<App::DocumentObject*, Element*>& cache) -> Element*;
+
 };
 
 } // namespace FCProject

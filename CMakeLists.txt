@@ -4,6 +4,14 @@ project(FCProject)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 1. Compile Commands immer aktivieren
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)
+
+# 2. Debug als Standard-Build-Typ setzen, aber nur, wenn noch nichts definiert ist
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose the type of build" FORCE)
+endif()
+
 # --- Qt6 suchen ---
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 
@@ -16,6 +24,9 @@ include_directories(
     "${FC_SOURCE_DIR}/src/App"
     "${FC_SOURCE_DIR}/src/Gui"
     "${FC_SOURCE_DIR}/src/3rdParty/FastSignals/libfastsignals/include"
+    "/usr/include/pybind11"  # Pfad zu pybind11-Headern, falls nötig
+    # Pfad für PyCXX hinzufügen (ersetze den Pfad durch das, was 'find' dir ausgegeben hat)
+    "${FC_SOURCE_DIR}/src/3rdParty/PyCXX"
 )
 
 # WICHTIG: Das hier verhindert den 'slots' Fehler in FastSignals
