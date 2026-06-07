@@ -61,7 +61,7 @@ endif()
 
 add_library(FCProjectCore SHARED ${FCPROJECT_SOURCES})
     # Das erzwingt das Makro DEBUG auf C++ Ebene, wenn CONFIG auf Debug steht
-target_compile_definitions(FCProjectCore PRIVATE  $<$<CONFIG:Debug>:DEBUG> )
+target_compile_definitions(FCProjectCore PRIVATE  $<$<CONFIG:Debug>:DEBUG> $<$<CONFIG:Debug>:FC_DEBUG>)
 
 # 4. Inklusionspfade & Features
 # FreeCAD_INCLUDE_DIRS wird durch find_package automatisch befüllt!

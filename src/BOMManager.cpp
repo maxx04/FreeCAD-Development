@@ -34,6 +34,14 @@ BOMManager::BOMManager(const std::string& root_name)  {
         // Das ist die "Konvertierungsfunktion"
         std::map<App::DocumentObject*, Element*> cache;
         this->rootAssembly = convertToElement(obj, cache); 
+
+        auto myMap = getPropertiesAsStringMap(obj);
+
+        // Einzelnen Wert gezielt abfragen
+        std::string gruppe = myMap["Label"]["Group"];
+        std::string wert   = myMap["Label"]["Value"];
+
+        //getPropetiesAsStringMap(this->rootAssembly);
     }
 }
 
@@ -45,7 +53,7 @@ auto BOMManager::generateStructuralBom()
     auto tree = getAssemblyTree(rootAssembly);
 
     #ifdef DEBUG
-        printPerfectAssemblyTree(rootAssembly); // Optional: Ausgabe der Baumstruktur in der Konsole                     
+        printAssemblyTree(rootAssembly); // Optional: Ausgabe der Baumstruktur in der Konsole                     
     #endif
 
     std::vector<int> visibleIndexCounters;

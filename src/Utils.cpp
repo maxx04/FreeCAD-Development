@@ -1,10 +1,22 @@
-
-#include <Base/Console.h>
 #include "../include/Utils.h"
+
+
+//#include <Base/Writer.h>
+#include <App/DocumentObject.h>
+
+#include <App/DocumentObject.h>
+#include <App/Property.h>
+#include <App/ObjectIdentifier.h>
+#include <Base/Console.h>
+
+#include <string>
+#include <vector>
 #include <algorithm>
 #include <functional>
+#include <sstream>
 #include <iostream>
 #include <set>
+#include <map>
 
 FC_LOG_LEVEL_INIT("FCProject");
 
@@ -14,126 +26,16 @@ void ensureProperty(Element& obj, const std::string& name, const std::string& va
     obj.properties[name] = value;
 }
 
-std::vector<std::tuple<Element*, int>> walkUltimateEverything(Element* rootObject) {
-    std::vector<std::tuple<Element*, int>> result;
-    if (!rootObject) {
-        result.emplace_back(nullptr, 0);
-        return result;
-    }
+auto getCleanChildren(Element* sourceObj) -> std::vector<Element*> {
 
-    std::set<Element*> visited;
-    std::function<void(Element*, int)> traverse = [&](Element* obj, int depth) {
-        if (!obj || visited.count(obj)) return;
-        visited.insert(obj);
-        result.emplace_back(obj, depth);
-
-        std::vector<Element*> children;
-        if (!obj->group.empty()) {
-            children.insert(children.end(), obj->group.begin(), obj->group.end());
-        }
-        if (!obj->features.empty()) {
-            children.insert(children.end(), obj->features.begin(), obj->features.end());
-        }
-        if (obj->origin) children.push_back(obj->origin);
-        if (obj->linkedObject) {
-            Element* linked = obj->linkedObject;
-            if (!linked->group.empty()) children.insert(children.end(), linked->group.begin(), linked->group.end());
-            if (!linked->features.empty()) children.insert(children.end(), linked->features.begin(), linked->features.end());
-            if (linked->origin) children.push_back(linked->origin);
-        }
-
-        for (auto* child : children) {
-            traverse(child, depth + 1);
-        }
-    };
-
-    traverse(rootObject, 0);
-    result.emplace_back(nullptr, 0);
-    return result;
-}
-
-std::vector<std::tuple<Element*, int>> walkAssemblyIterative(Element* rootObject) {
-    std::vector<std::tuple<Element*, int>> result;
-    if (!rootObject) {
-        result.emplace_back(nullptr, 0);
-        return result;
-    }
-
-    std::vector<std::pair<Element*, int>> stack{{rootObject, 0}};
-    std::set<Element*> visited;
-
-    while (!stack.empty()) {
-        auto [obj, depth] = stack.back();
-        stack.pop_back();
-        if (!obj || visited.count(obj)) continue;
-        visited.insert(obj);
-        result.emplace_back(obj, depth);
-
-        std::vector<Element*> children;
-        if (!obj->group.empty()) children.insert(children.end(), obj->group.begin(), obj->group.end());
-        if (!obj->features.empty()) children.insert(children.end(), obj->features.begin(), obj->features.end());
-        if (obj->origin) children.push_back(obj->origin);
-        if (obj->linkedObject) {
-            Element* target = obj->linkedObject;
-            if (!target->group.empty()) children.insert(children.end(), target->group.begin(), target->group.end());
-            if (!target->features.empty()) children.insert(children.end(), target->features.begin(), target->features.end());
-            if (target->origin) children.push_back(target->origin);
-        }
-
-        for (auto it = children.rbegin(); it != children.rend(); ++it) {
-            stack.emplace_back(*it, depth + 1);
-        }
-    }
-
-    result.emplace_back(nullptr, 0);
-    return result;
-}
-
-std::vector<std::tuple<Element*, int>> walkAssemblyCompleteInstances(Element* rootObject) {
-    std::vector<std::tuple<Element*, int>> result;
-    if (!rootObject) {
-        result.emplace_back(nullptr, 0);
-        return result;
-    }
-
-    struct Item { Element* obj; int depth; std::vector<Element*> path; };
-    std::vector<Item> stack{{rootObject, 0, {}}};
-
-    while (!stack.empty()) {
-        auto item = stack.back();
-        stack.pop_back();
-        if (!item.obj) continue;
-        if (std::find(item.path.begin(), item.path.end(), item.obj) != item.path.end()) continue;
-        item.path.push_back(item.obj);
-        result.emplace_back(item.obj, item.depth);
-
-        std::vector<Element*> children;
-        if (item.obj->origin) children.push_back(item.obj->origin);
-        if (!item.obj->group.empty()) children.insert(children.end(), item.obj->group.begin(), item.obj->group.end());
-        if (!item.obj->features.empty()) children.insert(children.end(), item.obj->features.begin(), item.obj->features.end());
-        if (item.obj->linkedObject) {
-            Element* target = item.obj->linkedObject;
-            if (target->origin) children.push_back(target->origin);
-            if (!target->group.empty()) children.insert(children.end(), target->group.begin(), target->group.end());
-            if (!target->features.empty()) children.insert(children.end(), target->features.begin(), target->features.end());
-        }
-
-        for (auto it = children.rbegin(); it != children.rend(); ++it) {
-            stack.push_back({*it, item.depth + 1, item.path});
-        }
-    }
-
-    result.emplace_back(nullptr, 0);
-    return result;
-}
-
-std::vector<Element*> getCleanChildren(Element* sourceObj) {
     std::vector<Element*> items;
     if (!sourceObj) return items;
     if (sourceObj->origin) items.push_back(sourceObj->origin);
 
     std::vector<Element*> rawGroup = sourceObj->group;
+
     std::vector<Element*> rawFeatures = sourceObj->features;
+
     std::set<Element*> hiddenInSubfolders;
 
     for (auto* c : rawGroup) {
@@ -157,7 +59,7 @@ std::vector<Element*> getCleanChildren(Element* sourceObj) {
     return items;
 }
 
-std::string getArtikelId(Element* element) {
+auto getArtikelId(Element* element) -> std::string {
     if (!element) return "None";
     if (element->properties.count("ArticleID") && !element->properties.at("ArticleID").empty()) {
         return element->properties.at("ArticleID");
@@ -169,10 +71,11 @@ std::string getArtikelId(Element* element) {
             return current->properties.at("ArticleID");
         }
     }
+    
     return "None";
 }
 
-void printPerfectAssemblyTree(Element* rootObject) {
+auto printAssemblyTree(Element* rootObject) -> void {
     if (!rootObject) {
         std::cout << "Kein Objekt übergeben." << std::endl;
         return;
@@ -318,6 +221,7 @@ auto getAssemblyTree(Element* rootObject) -> std::vector<std::tuple<Element*, in
 }
 
 auto resolvePdmValue(Element* obj, const std::string& propName) -> std::string {
+    ///HACK: wie tief die Verlinkung kann sein.
 
     if (!obj) return {};
 
@@ -383,23 +287,83 @@ auto extractPdmData(Element* obj) -> std::map<std::string, std::string> {
     return result;
 }
 
-void scanRecursive(Element* currentObj, const std::string& currentIndex, std::vector<std::vector<std::string>>& bomList, std::vector<Element*>& visitedObjects) {
-    if (!currentObj || std::find(visitedObjects.begin(), visitedObjects.end(), currentObj) != visitedObjects.end()) {
-        return;
+/// @brief 
+/// @param obj 
+/// @return 
+auto getPropetiesAsStringMap(Element* obj) -> std::map<std::string, std::string> {
+    std::map<std::string, std::string> propertiesMap;
+
+    if (!obj) return propertiesMap;
+
+    for (const auto& prop : obj->properties) {
+        propertiesMap[prop.first] = prop.second;
+
+    #ifdef DEBUG
+        FC_LOG("obj:" << obj->name << ":Property: " << prop.first << " = " << prop.second);
+    #endif
+
     }
-    visitedObjects.push_back(currentObj);
-    Element* scanTarget = currentObj->linkedObject ? currentObj->linkedObject : currentObj;
-    for (auto* child : scanTarget->group) {
-        if (!child) continue;
-        if (resolvePdmValue(child, "ArticleID").empty()) continue;
-        std::string newIndex = currentIndex.empty() ? "1" : currentIndex + "-1";
-        auto pdmInfo = extractPdmData(child);
-        bomList.push_back({newIndex, pdmInfo["ArticleID"], pdmInfo["Bezeichnung"], pdmInfo["Material"], pdmInfo["Rohling"], "1"});
-        Element* targetChild = child->linkedObject ? child->linkedObject : child;
-        if (!targetChild->group.empty()) {
-            scanRecursive(child, newIndex, bomList, visitedObjects);
-        }
-    }
+    return propertiesMap;
 }
+
+
+
+auto getPropertiesAsStringMap(App::DocumentObject* obj) -> std::map<std::string, std::map<std::string, std::string>> {
+    std::map<std::string, std::map<std::string, std::string>> propertiesMap;
+
+    if (!obj) return propertiesMap;
+
+    std::vector<App::Property*> propList;
+    obj->getPropertyList(propList);
+
+    for (const auto* prop : propList) {
+        if (!prop) continue;
+
+        // Saubere Zuweisung über direkte Initialisierung
+        std::string propName{prop->getName()}; 
+        std::string propGroup = prop->getGroup() ? prop->getGroup() : "Base"; 
+        std::string propType{prop->getTypeId().getName()}; 
+        std::string propValue = "";         
+        
+        // --- REINES C++ TYP-CASTING ---
+        
+        // 1. Ist es ein Text?
+        if (prop->getTypeId() == App::PropertyString::getClassTypeId()) {
+            propValue = static_cast<const App::PropertyString*>(prop)->getValue();
+        }
+        // 2. Ist es eine Kommazahl?
+        else if (prop->getTypeId() == App::PropertyFloat::getClassTypeId()) {
+            propValue = std::to_string(static_cast<const App::PropertyFloat*>(prop)->getValue());
+        }
+        // 3. Ist es eine Ganzzahl?
+        else if (prop->getTypeId() == App::PropertyInteger::getClassTypeId()) {
+            propValue = std::to_string(static_cast<const App::PropertyInteger*>(prop)->getValue());
+        }
+        // 4. Ist es ein Bool (True/False)?
+        else if (prop->getTypeId() == App::PropertyBool::getClassTypeId()) {
+            propValue = static_cast<const App::PropertyBool*>(prop)->getValue() ? "True" : "False";
+        }
+        // 5. Für alles andere (Vektoren, Matrizen, Links, etc.):
+        else {
+            // Das FreeCAD Expression-System holt hier den reinen C++ Textwert (ohne XML-Tags!)
+            // Wichtig: Übergabe per Zeiger, so wie es die FreeCAD-API verlangt
+            propValue = "-"; //App::ObjectIdentifier::toString(prop); 
+        }
+
+        // Map befüllen
+        propertiesMap[propName]["Group"] = propGroup;
+        propertiesMap[propName]["Type"]  = propType;
+        propertiesMap[propName]["Value"] = propValue;
+
+    #ifdef FC_DEBUG
+        FC_LOG("obj:" << obj->getNameInDocument() << " | Gruppe: " << propGroup 
+                      << " | Name: " << propName << " (" << propType << ") = " << propValue);
+    #endif
+    }
+
+    return propertiesMap;
+}
+
+
 
 } // namespace FCProject
