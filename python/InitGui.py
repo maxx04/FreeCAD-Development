@@ -4,6 +4,7 @@ import sys
 import FreeCAD as App
 import FreeCADGui
 
+
 # Pfad-Injektion für Module
 user_mod_dir = os.path.join(App.getUserAppDataDir(), "Mod", "FCProject")
 if not os.path.exists(user_mod_dir):

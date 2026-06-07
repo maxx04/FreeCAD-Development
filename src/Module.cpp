@@ -15,7 +15,7 @@ PYBIND11_MODULE(FCProjectCore, m) {
        .def(py::init<std::string&>(), py::arg("root_name"))
        .def("generate_structural_bom", &BOMManager::generateStructuralBom)
        .def("export_to_csv", &BOMManager::exportToCsv)
-       .def("export_to_spreadsheet", &BOMManager::exportToSpreadsheet); // Hier ist das erste Semikolon!
+       .def("export_to_spreadsheet", &BOMManager::exportToSpreadsheet); 
 
     py::class_<Utils_HW>(m, "Utils_HW")
        .def(py::init<>())

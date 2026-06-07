@@ -10,7 +10,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)
 # 2. Debug als Standard-Build-Typ setzen, aber nur, wenn noch nichts definiert ist
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose the type of build" FORCE)
+
 endif()
+
+
+
 
 # --- Qt6 suchen ---
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
@@ -56,6 +60,8 @@ if(NOT FCPROJECT_SOURCES)
 endif()
 
 add_library(FCProjectCore SHARED ${FCPROJECT_SOURCES})
+    # Das erzwingt das Makro DEBUG auf C++ Ebene, wenn CONFIG auf Debug steht
+target_compile_definitions(FCProjectCore PRIVATE  $<$<CONFIG:Debug>:DEBUG> )
 
 # 4. Inklusionspfade & Features
 # FreeCAD_INCLUDE_DIRS wird durch find_package automatisch befüllt!

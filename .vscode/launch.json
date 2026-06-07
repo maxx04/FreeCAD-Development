@@ -6,7 +6,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "/home/maxx/freecad/freecad-source/bin/FreeCAD",
-            "args": [],
+            "args": ["-l"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [
@@ -22,8 +22,34 @@
                     "description": "Enable pretty-printing for gdb",
                     "text": "-enable-pretty-printing",
                     "ignoreFailures": true
+                },
+                {
+                    "description": "Ignoriere SIGPWR und SIGXCPU (beschleunigt Python-Debugging)",
+                    "text": "handle SIGPWR SIGXCPU nostop noprint pass",
+                    "ignoreFailures": true
                 }
             ]
+        },
+        {
+            "name": "Python: FreeCAD Attach",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5678
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "${workspaceFolder}"
+                }
+            ]
+        }
+    ],
+    "compounds": [
+        {
+            "name": "FreeCAD Komplett-Debug (C++ & Python)",
+            "configurations": ["(gdb) Launch FreeCAD", "Python: FreeCAD Attach"]
         }
     ]
 }

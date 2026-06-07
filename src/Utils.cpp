@@ -1,8 +1,12 @@
+
+#include <Base/Console.h>
 #include "../include/Utils.h"
 #include <algorithm>
 #include <functional>
 #include <iostream>
 #include <set>
+
+FC_LOG_LEVEL_INIT("FCProject");
 
 namespace FCProject {
 
@@ -173,16 +177,24 @@ void printPerfectAssemblyTree(Element* rootObject) {
         std::cout << "Kein Objekt übergeben." << std::endl;
         return;
     }
-    std::cout << "\n--- START DER PERFEKTEN BAUGRUPPEN-ANALYSE ---" << std::endl;
+
+    #ifdef DEBUG
+        FC_LOG("\n--- START DER BAUGRUPPEN-ANALYSE ---");
+    #endif  
 
     struct Item { Element* obj; int depth; std::vector<Element*> path; std::vector<bool> flags; };
     std::vector<Item> stack{{rootObject, 0, {}, {}}};
 
     while (!stack.empty()) {
+
         Item item = stack.back();
+
         stack.pop_back();
+
         if (!item.obj) continue;
+
         if (std::find(item.path.begin(), item.path.end(), item.obj) != item.path.end()) continue;
+
         item.path.push_back(item.obj);
 
         std::string prefix;
@@ -194,7 +206,10 @@ void printPerfectAssemblyTree(Element* rootObject) {
         }
 
         std::string artikelId = getArtikelId(item.obj);
-        std::cout << prefix << item.obj->label << " [ID: " << artikelId << "] (" << item.obj->typeId << ")" << std::endl;
+        
+        #ifdef DEBUG
+            FC_LOG(prefix << item.obj->label << " [ID: " << artikelId << "] (" << item.obj->typeId << ")");
+        #endif
 
         std::vector<Element*> children = getCleanChildren(item.obj);
         if (item.obj->linkedObject) {
@@ -206,73 +221,122 @@ void printPerfectAssemblyTree(Element* rootObject) {
         }
 
         for (int i = static_cast<int>(children.size()) - 1; i >= 0; --i) {
+
             bool childIsLast = (i == static_cast<int>(children.size()) - 1);
+
             auto nextFlags = item.flags;
+
             nextFlags.push_back(childIsLast);
+
             stack.push_back({children[i], item.depth + 1, item.path, nextFlags});
+
         }
     }
 
-    std::cout << "🏁 --- ANALYSE ERFOLGREICH BEENDET ---" << std::endl;
+    #ifdef DEBUG
+        FC_LOG("🏁 --- ANALYSE ERFOLGREICH BEENDET ---");
+    #endif
 }
 
-std::vector<std::tuple<Element*, int, std::string, std::vector<int>>> getAssemblyTree(Element* rootObject) {
-    std::vector<std::tuple<Element*, int, std::string, std::vector<int>>> assemblyTree;
+auto getAssemblyTree(Element* rootObject) -> std::vector<std::tuple<Element*, int, std::string, std::vector<int>>> {
+
+    std::vector<std::tuple<Element*, int, std::string, std::vector<int>>> assemblyTree; // Ergebnis-Container für den Assembly-Baum
+
     if (!rootObject) {
-        std::cout << "Kein Objekt übergeben." << std::endl;
-        return assemblyTree;
+        FC_LOG("Kein Objekt übergeben."); // Wenn kein Eingabeobjekt vorhanden ist, Log schreiben
+        return assemblyTree; // Leeres Ergebnis zurückgeben
     }
+    #ifdef DEBUG
+        FC_LOG("\n--- START DURCHLAUF ---"); // Debug-Ausgabe zum Beginn der Traversierung
+    #endif
 
-    std::cout << "\n--- START DER PERFEKTEN BAUGRUPPEN-ANALYSE ---" << std::endl;
+    struct Item { Element* obj; int depth; std::vector<Element*> path; std::vector<bool> flags; std::vector<int> indexPath; }; // Stack-Eintrag für Traversierung
 
-    struct Item { Element* obj; int depth; std::vector<Element*> path; std::vector<bool> flags; std::vector<int> indexPath; };
-    std::vector<Item> stack{{rootObject, 0, {}, {}, {1}}};
+    std::vector<Item> stack{{rootObject, 0, {}, {}, {1}}}; // Root-Objekt auf den Stack legen
 
     while (!stack.empty()) {
-        Item item = stack.back();
-        stack.pop_back();
-        if (!item.obj) continue;
-        if (std::find(item.path.begin(), item.path.end(), item.obj) != item.path.end()) continue;
-        item.path.push_back(item.obj);
 
-        std::string artikelId = getArtikelId(item.obj);
-        std::cout << item.obj->label << " [ID: " << artikelId << "] (" << item.obj->typeId << ")" << std::endl;
-        assemblyTree.emplace_back(item.obj, item.depth, artikelId, item.indexPath);
+        Item item = stack.back(); // Aktuellen Stack-Eintrag lesen
 
-        std::vector<Element*> children = getCleanChildren(item.obj);
+        stack.pop_back(); // Eintrag aus dem Stack entfernen
+
+        if (!item.obj) continue; // Falls das Objekt null ist, überspringen
+
+        if (std::find(item.path.begin(), item.path.end(), item.obj) != item.path.end()) continue; // Zyklus vermeiden
+
+        item.path.push_back(item.obj); // Objekt zum aktuellen Pfad hinzufügen
+
+        std::string artikelId = getArtikelId(item.obj); // Artikel-ID für das Objekt ermitteln
+
+        #ifdef DEBUG
+
+            FC_LOG(item.obj->label << " [ID: " << artikelId << "] (" << item.obj->typeId << ")"); // Debug-Ausgabe für den aktuellen Knoten
+
+        #endif
+
+        assemblyTree.emplace_back(item.obj, item.depth, artikelId, item.indexPath); // Knoten zum Ergebnis hinzufügen
+
+        std::vector<Element*> children{}; // Kinderliste für das aktuelle Objekt initialisieren
+
         if (item.obj->linkedObject) {
+
             for (auto* child : getCleanChildren(item.obj->linkedObject)) {
-                if (std::find(children.begin(), children.end(), child) == children.end()) {
-                    children.push_back(child);
+
+                if (std::find(children.begin(), children.end(), child) == children.end()) 
+                {
+                    children.push_back(child); // Einzigartige Kinder aus dem verlinkten Objekt hinzufügen
                 }
             }
         }
+        else
+            children = getCleanChildren(item.obj); // Direkte Kinder hinzufügen, falls kein verlinktes Objekt vorhanden ist
+        
+
 
         for (int i = static_cast<int>(children.size()) - 1; i >= 0; --i) {
-            bool childIsLast = (i == static_cast<int>(children.size()) - 1);
-            auto nextFlags = item.flags;
-            nextFlags.push_back(childIsLast);
-            auto childIndexPath = item.indexPath;
-            childIndexPath.push_back(static_cast<int>(children.size() - i));
-            stack.push_back({children[i], item.depth + 1, item.path, nextFlags, childIndexPath});
+
+            bool childIsLast = (i == static_cast<int>(children.size()) - 1); // Prüfen, ob aktuelles Kind das letzte ist
+
+            auto nextFlags = item.flags; // Flag-Liste kopieren
+
+            nextFlags.push_back(childIsLast); // Füge Flag für das Kind hinzu
+
+            auto childIndexPath = item.indexPath; // Indexpfad kopieren
+
+            childIndexPath.push_back(i + 1); // Kind-Index zum Pfad hinzufügen
+
+            stack.push_back({children[i], item.depth + 1, item.path, nextFlags, childIndexPath}); // Kind als neuen Stack-Eintrag hinzufügen
         }
     }
+    #ifdef DEBUG
+        FC_LOG("🏁 --- ANALYSE ERFOLGREICH BEENDET ---"); // Debug-Ausgabe nach Abschluss der Traversierung
+    #endif
 
-    std::cout << "🏁 --- ANALYSE ERFOLGREICH BEENDET ---" << std::endl;
-    return assemblyTree;
+
+
+    return assemblyTree; // Ergebnisliste zurückgeben
 }
 
-std::string resolvePdmValue(Element* obj, const std::string& propName) {
+auto resolvePdmValue(Element* obj, const std::string& propName) -> std::string {
+
     if (!obj) return {};
+
     Element* target = obj;
+
     if (obj->linkedObject) target = obj->linkedObject;
+
     if (target->properties.count(propName) && !target->properties.at(propName).empty()) {
         return target->properties.at(propName);
     }
+
     if (!target->group.empty()) {
+
         for (auto* child : target->group) {
+
             if (!child || !child->properties.count(propName)) continue;
-            if (!child->properties.at(propName).empty()) {
+
+            if (!child->properties.at(propName).empty()) 
+            {
                 return child->properties.at(propName);
             }
         }
@@ -280,30 +344,42 @@ std::string resolvePdmValue(Element* obj, const std::string& propName) {
     return {};
 }
 
-std::map<std::string, std::string> extractPdmData(Element* obj) {
+auto extractPdmData(Element* obj) -> std::map<std::string, std::string> {
+
     std::map<std::string, std::string> result;
+
     result["ArticleID"] = resolvePdmValue(obj, "ArticleID");
     result["Bezeichnung"] = resolvePdmValue(obj, "Bezeichnung");
+
     if (result["Bezeichnung"].empty()) {
         result["Bezeichnung"] = resolvePdmValue(obj, "ProfilTyp");
     }
+
     result["Material"] = resolvePdmValue(obj, "MaterialName");
+
     if (result["Material"].empty() && obj->linkedObject && !obj->linkedObject->properties["ShapeMaterial"].empty()) {
         result["Material"] = obj->linkedObject->properties["ShapeMaterial"];
     }
+
     if (result["Material"].empty()) result["Material"] = "-";
 
     std::string preis = resolvePdmValue(obj, "Preis");
+
     result["Preis"] = preis.empty() ? "0.0" : preis;
 
     std::string rohling = "-";
+
     Element* pdmObj = obj->linkedObject ? obj->linkedObject : obj;
+
     if (pdmObj->typeId != "Assembly::AssemblyObject") {
-        if (pdmObj->properties.count("BasiertAufHalbzeug") && !pdmObj->properties.at("BasiertAufHalbzeug").empty()) {
+
+        if (pdmObj->properties.count("BasiertAufHalbzeug") && !pdmObj->properties.at("BasiertAufHalbzeug").empty()) 
+        {
             rohling = pdmObj->properties.at("BasiertAufHalbzeug");
         }
     }
     result["Rohling"] = rohling;
+
     return result;
 }
 
