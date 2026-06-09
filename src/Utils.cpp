@@ -8,6 +8,10 @@
 #include <App/Property.h>
 #include <App/ObjectIdentifier.h>
 #include <Base/Console.h>
+#include <App/Link.h> // WICHTIG: Enthält die Definition für Link-Objekte
+#include <App/DocumentObject.h>
+#include <App/PropertyLinks.h> // Wichtig für den Zugriff auf PropertyLink
+
 
 #include <string>
 #include <vector>
@@ -17,6 +21,7 @@
 #include <iostream>
 #include <set>
 #include <map>
+#include "Utils.h"
 
 FC_LOG_LEVEL_INIT("FCProject");
 
@@ -308,55 +313,68 @@ auto getPropetiesAsStringMap(Element* obj) -> std::map<std::string, std::string>
 
 
 
-auto getPropertiesAsStringMap(App::DocumentObject* obj) -> std::map<std::string, std::map<std::string, std::string>> {
+auto getPropertiesAsStringMap(App::DocumentObject* in_obj) -> std::map<std::string, std::map<std::string, std::string>> {
     std::map<std::string, std::map<std::string, std::string>> propertiesMap;
 
-    if (!obj) return propertiesMap;
+    if (!in_obj) return propertiesMap;
 
+
+    App::DocumentObject *originalObj = GetOriginalObject(in_obj);
+    // ---------------------------------------------
+
+    // Ab hier läuft dein Code exakt wie gewohnt weiter, 
+    // arbeitet nun aber mit dem echten Zielobjekt!
     std::vector<App::Property*> propList;
-    obj->getPropertyList(propList);
+
+    originalObj->getPropertyList(propList);
 
     for (const auto* prop : propList) {
         if (!prop) continue;
 
-        // Saubere Zuweisung über direkte Initialisierung
         std::string propName{prop->getName()}; 
         std::string propGroup = prop->getGroup() ? prop->getGroup() : "Base"; 
         std::string propType{prop->getTypeId().getName()}; 
         std::string propValue = "";         
         
         // --- REINES C++ TYP-CASTING ---
-        
-        // 1. Ist es ein Text?
         if (prop->getTypeId() == App::PropertyString::getClassTypeId()) {
             propValue = static_cast<const App::PropertyString*>(prop)->getValue();
         }
-        // 2. Ist es eine Kommazahl?
         else if (prop->getTypeId() == App::PropertyFloat::getClassTypeId()) {
             propValue = std::to_string(static_cast<const App::PropertyFloat*>(prop)->getValue());
         }
-        // 3. Ist es eine Ganzzahl?
         else if (prop->getTypeId() == App::PropertyInteger::getClassTypeId()) {
             propValue = std::to_string(static_cast<const App::PropertyInteger*>(prop)->getValue());
         }
-        // 4. Ist es ein Bool (True/False)?
         else if (prop->getTypeId() == App::PropertyBool::getClassTypeId()) {
             propValue = static_cast<const App::PropertyBool*>(prop)->getValue() ? "True" : "False";
         }
-        // 5. Für alles andere (Vektoren, Matrizen, Links, etc.):
+        else if (prop->getTypeId() == App::PropertyLink::getClassTypeId()) {
+            const auto* linkProp = static_cast<const App::PropertyLink*>(prop);
+            if (const App::DocumentObject* linkedObj = linkProp->getValue()) {
+                propValue = linkedObj->getNameInDocument();
+            } else {
+                propValue = "None";
+            }
+        }
+        else if (prop->getTypeId() == App::PropertyXLink::getClassTypeId()) {
+            const auto* xlinkProp = static_cast<const App::PropertyXLink*>(prop);
+            if (const App::DocumentObject* linkedObj = xlinkProp->getValue()) {
+                propValue = linkedObj->getNameInDocument();
+            } else {
+                propValue = "None";
+            }
+        }
         else {
-            // Das FreeCAD Expression-System holt hier den reinen C++ Textwert (ohne XML-Tags!)
-            // Wichtig: Übergabe per Zeiger, so wie es die FreeCAD-API verlangt
-            propValue = "-"; //App::ObjectIdentifier::toString(prop); 
+            propValue = "-"; 
         }
 
-        // Map befüllen
         propertiesMap[propName]["Group"] = propGroup;
         propertiesMap[propName]["Type"]  = propType;
         propertiesMap[propName]["Value"] = propValue;
 
     #ifdef FC_DEBUG
-        FC_LOG("obj:" << obj->getNameInDocument() << " | Gruppe: " << propGroup 
+        FC_LOG("obj:" << originalObj->getNameInDocument() << " | Gruppe: " << propGroup 
                       << " | Name: " << propName << " (" << propType << ") = " << propValue);
     #endif
     }
@@ -365,5 +383,43 @@ auto getPropertiesAsStringMap(App::DocumentObject* obj) -> std::map<std::string,
 }
 
 
+
+
+auto GetOriginalObject(App::DocumentObject *obj) -> App::DocumentObject*
+{
+    if (!obj) return nullptr;
+
+    while (obj)
+    {
+        // 1. Suche nach der C++ Eigenschaft "LinkedObject", die jeder Link besitzt
+        auto *prop = obj->getPropertyByName("LinkedObject");
+        
+        if (prop)
+        {
+            // 2. REINER STRING-VERGLEICH: Verhindert den "BadType"-Laufzeitfehler komplett!
+            // getTypeId().getName() liefert direkt den Text "App::PropertyLink"
+            std::string typeName{prop->getTypeId().getName()};
+
+            if (typeName == "App::PropertyLink" || typeName == "App::PropertyXLink")
+            {
+                // 3. Wenn der Typname als Text matcht, dürfen wir sicher casten
+                auto *linkProp = static_cast<const App::PropertyLink*>(prop);
+                App::DocumentObject *target = linkProp->getValue();
+
+                // 4. Wenn ein echtes, neues Ziel existiert, folgen wir ihm weiter
+                if (target && target != obj)
+                {
+                    obj = target;
+                    continue; // Nächste Runde, falls Links verschachtelt sind
+                }
+            }
+        }
+
+        // Wenn es kein Link mehr ist oder das Ziel leer ist, abbrechen
+        break;
+    }
+
+    return obj; // Liefert das finale, echte Geometrie-Objekt
+}
 
 } // namespace FCProject

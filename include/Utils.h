@@ -17,6 +17,8 @@ auto getAssemblyTree(Element* rootObject) -> std::vector<std::tuple<Element*, in
 auto resolvePdmValue(Element* obj, const std::string& propName) -> std::string;
 auto extractPdmData(Element* obj) -> std::map<std::string, std::string>;
 auto getPropetiesAsStringMap(Element* obj) -> std::map<std::string, std::string>;
-auto getPropertiesAsStringMap(App::DocumentObject* obj) -> std::map<std::string, std::map<std::string, std::string>> ;
+auto getPropertiesAsStringMap(App::DocumentObject *obj) -> std::map<std::string, std::map<std::string, std::string>>;
+
+auto GetOriginalObject(App::DocumentObject *obj) -> App::DocumentObject*;
 
 } // namespace FCProject
