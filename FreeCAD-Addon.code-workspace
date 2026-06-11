@@ -1,0 +1,12 @@
+{
+    "folders": [
+        {
+            "name": "Addon-Source",
+            "path": "src"
+        }
+    ],
+    "settings": {
+        "cmake.sourceDirectory": "${workspaceFolder:Addon-Source}",
+        "cmake.useCMakePresets": "always"
+    }
+}

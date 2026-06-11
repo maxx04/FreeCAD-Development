@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "(gdb) Launch FreeCAD",
+            "name": "(gdb) Launch FreeCAD 1.2dev",
             "type": "cppdbg",
             "request": "launch",
             "program": "/home/maxx/freecad/freecad-source/bin/FreeCAD",
@@ -14,6 +14,37 @@
                 { "name": "PYTHONPATH", "value": "/home/maxx/Documents/FreeCAD-Development/.venv/lib/python3.12/site-packages" },
                 { "name": "PYTHONNOUSERSITE", "value": "1" },
                 { "name": "QT_PLUGIN_PATH", "value": "/home/maxx/Documents/FreeCAD-Development/.venv/lib/python3.12/site-packages/PySide6/Qt/plugins" }
+            ],
+            "externalConsole": true,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Ignoriere SIGPWR und SIGXCPU (beschleunigt Python-Debugging)",
+                    "text": "handle SIGPWR SIGXCPU nostop noprint pass",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) Launch FreeCAD 1.1.1",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/home/maxx/freecad/FreeCAD_1.1.1-Linux-x86_64-py311.AppImage",
+            "args": ["-l"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                // Erzwingt, dass das AppImage absolut KEINE Pfade aus deinem .venv oder System-Qt erbt
+                { "name": "LD_LIBRARY_PATH", "value": "" },
+                { "name": "PYTHONPATH", "value": "" },
+                { "name": "QT_PLUGIN_PATH", "value": "" },
+                { "name": "QT_QPA_PLATFORM_PLUGIN_PATH", "value": "" },
+                { "name": "PYTHONNOUSERSITE", "value": "1" }
             ],
             "externalConsole": false,
             "MIMode": "gdb",
@@ -48,8 +79,8 @@
     ],
     "compounds": [
         {
-            "name": "FreeCAD Komplett-Debug (C++ & Python)",
-            "configurations": ["(gdb) Launch FreeCAD", "Python: FreeCAD Attach"]
+            "name": "FreeCAD 1.2 Komplett-Debug (C++ & Python)",
+            "configurations": ["(gdb) Launch FreeCAD 1.2dev", "Python: FreeCAD Attach"]
         }
     ]
 }

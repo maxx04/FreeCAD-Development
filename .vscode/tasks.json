@@ -3,21 +3,30 @@
     "tasks": [
         {
             "label": "Build & Install FCProjectCpp",
-            "type": "shell",
-            "command": "mkdir -p ${workspaceFolder}/build && cd ${workspaceFolder}/build && cmake .. && make -j$(nproc) && make install",
+            "type": "cmake",
+            "command": "build",
+            "targets": ["install"],
             "problemMatcher": ["$gcc"],
             "group": {
                 "kind": "build",
                 "isDefault": true
             },
-            "detail": "Kompiliert das Modul und installiert es direkt in den Mod-Ordner"
+            "detail": "Kompiliert das aktive Preset (Kopieren passiert automatisch via POST_BUILD)"
+        },
+        {
+            "label": "CMake Install Explicit",
+            "type": "cmake",
+            "command": "build",
+            "targets": ["install"],
+            "problemMatcher": ["$gcc"],
+            "detail": "Führt das offizielle CMake-Install-Target für das aktive Preset aus"
         },
         {
             "label": "Clean",
-            "type": "shell",
-            "command": "rm -rf build",
+            "type": "cmake",
+            "command": "clean",
             "problemMatcher": [],
-            "detail": "Löscht den Build-Ordner für einen sauberen Neuanfang"
+            "detail": "Löscht den Cache des aktuell ausgewählten Presets"
         }
     ]
 }

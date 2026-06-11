@@ -47,8 +47,12 @@
         "**/dist/**",
         "**/build/**"
     ],
-    "cmake.sourceDirectory": "/home/maxx/Documents/FreeCAD-Development/FCProject",
-    "C_Cpp.errorSquiggles": "disabled"
+
+    "C_Cpp.errorSquiggles": "disabled",
+    "cmake.ignoreKitEnv": true,
+    "cmake.options.statusBarVisibility": "visible",
+    "cmake.useCMakePresets": "always"
+
 
 
 

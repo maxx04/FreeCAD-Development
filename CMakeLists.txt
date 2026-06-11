@@ -66,6 +66,7 @@ target_compile_definitions(FCProjectCore PRIVATE  $<$<CONFIG:Debug>:DEBUG> $<$<C
 # 4. Inklusionspfade & Features
 # FreeCAD_INCLUDE_DIRS wird durch find_package automatisch befüllt!
 find_package(pybind11 REQUIRED)
+find_package(fmt REQUIRED) # für um beide Versionen benutzen 1.1.1 und 1.2
 
 target_include_directories(FCProjectCore PUBLIC
     include
@@ -76,6 +77,8 @@ target_compile_features(FCProjectCore PUBLIC cxx_std_20)
 # 5. Linken
 # Die Bibliotheken FreeCADApp und FreeCADGui sind Teil von FreeCAD_LIBRARIES
 target_link_libraries(FCProjectCore
+    PRIVATE
+    fmt::fmt    # Bindet die fmt-Bibliothek direkt an dein Addon
     PUBLIC
     ${FreeCAD_LIBRARIES}
     Qt6::Core Qt6::Gui Qt6::Widgets
@@ -90,19 +93,21 @@ target_link_libraries(FCProjectCore
 # WICHTIG: Das lib-Präfix entfernen, damit Python die Datei als "FCProject" erkennt
 set_target_properties(FCProjectCore PROPERTIES PREFIX "")
 
-# 6. Installation
-# --- Modul-Installation ---
-# Wir installieren in deinen lokalen FreeCAD-Installationsordner
-# Das ist sauberer und benötigt kein sudo!
-# Installiere direkt in das neue User-Modul-Verzeichnis
-set(MY_MOD_DESTINATION "/home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject")
+# Prüft direkt, ob der Pfad der Python-Ausführungsdatei das Wort "venv311" enthält
+if(CMAKE_PRES_11)
+    set(FC_MOD_DIR "/home/maxx/.local/share/FreeCAD/v1-1/Mod/FCProject")
+    message(STATUS "Post-Build: Target für FreeCAD 1.1.1 (Python 3.11) erkannt.")
+else()
+    set(FC_MOD_DIR "/home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject")
+    message(STATUS "Post-Build: Target für FreeCAD 1.2dev (Python 3.12) erkannt.")
+endif()
 
+# 6. Installation
 # Installiere die kompilierte Bibliothek (.so)
 install(TARGETS FCProjectCore
-    LIBRARY DESTINATION "${MY_MOD_DESTINATION}"
-    RUNTIME DESTINATION "${MY_MOD_DESTINATION}"
+    LIBRARY DESTINATION "${FC_MOD_DIR}"
+    RUNTIME DESTINATION "${FC_MOD_DIR}"
 )
-
 
 # Kopiere die Python-Dateien mit in das Installationsverzeichnis
 
@@ -110,11 +115,13 @@ install(TARGETS FCProjectCore
 # ~/.local/share/FreeCAD/v1-2/Mod/FCProject/resources/
 
 install(DIRECTORY resources/icons/ 
-        DESTINATION "${MY_MOD_DESTINATION}/resources/icons"
+            DESTINATION "${FC_MOD_DIR}/resources/icons"
+
 )
 
 install(DIRECTORY python/ 
-        DESTINATION "${MY_MOD_DESTINATION}"
+        DESTINATION "${FC_MOD_DIR}"
+
 )
 
 
