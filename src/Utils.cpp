@@ -298,34 +298,36 @@ auto getAssemblyTree(App::DocumentObject* rootObject) -> std::vector<std::tuple<
 }
 
 auto resolvePdmValue(App::DocumentObject* obj, const std::string& propName) -> std::string {
-    ///HACK: wie tief die Verlinkung kann sein.
-    ///TODO:
+    if (!obj) return {};
 
-    // if (!obj) return {};
+    // Prüft, ob ein Wert aus der Properties-Map sinnvoll gefüllt ist
+    auto isUsable = [](const std::string& value) {
+        return !value.empty() && value != "-" && value != "None";
+    };
 
-    // App::DocumentObject* target = obj;
+    // 1. Verlinkte Objekte auflösen (z. B. App::Link -> echtes Geometrie-Objekt)
+    App::DocumentObject* target = GetOriginalObject(obj);
+    if (!target) target = obj;
 
-    // if (obj->linkedObject) target = obj->linkedObject;
+    auto props = getPropertiesAsStringMapbyGroup(target);
+    auto it = props.find(propName);
+    if (it != props.end() && isUsable(it->second["Value"])) {
+        return it->second["Value"];
+    }
 
-    // if (target->properties.count(propName) && !target->properties.at(propName).empty()) {
-    //     return target->properties.at(propName);
-    // }
+    // 2. Falls am Objekt selbst nicht vorhanden, in den direkten Kindern (Group) suchen
+    for (auto* child : getObjectsFromLinkListProperty(target, "Group")) {
+        if (!child) continue;
 
-    // if (!target->group.empty()) {
+        auto childProps = getPropertiesAsStringMapbyGroup(child);
+        auto childIt = childProps.find(propName);
+        if (childIt != childProps.end() && isUsable(childIt->second["Value"])) {
+            return childIt->second["Value"];
+        }
+    }
 
-    //     for (auto* child : target->group) {
-
-    //         if (!child || !child->properties.count(propName)) continue;
-
-    //         if (!child->properties.at(propName).empty()) 
-    //         {
-    //             return child->properties.at(propName);
-    //         }
-    //     }
-    // }
     return {};
 }
-
 
 auto extractPdmData(App::DocumentObject* obj) ->  std::map<std::string, std::string> {
     // Hinweis: Rückgabetyp im Header anpassen, falls dort noch App::DocumentObject* stand.
@@ -333,81 +335,47 @@ auto extractPdmData(App::DocumentObject* obj) ->  std::map<std::string, std::str
 
     if (!obj) return result;
 
-    ///TODO:
+    // 1. Einfache Werte über resolvePdmValue holen (durchsucht Objekt, Link-Ziel und Group-Kinder)
+    result["ArticleID"] = resolvePdmValue(obj, "ArticleID");
+    result["Bezeichnung"] = resolvePdmValue(obj, "Bezeichnung");
 
-    // // 1. Einfache Werte über deine bestehende resolvePdmValue holen
-    // result["ArticleID"] = resolvePdmValue(obj, "ArticleID");
-    // result["Bezeichnung"] = resolvePdmValue(obj, "Bezeichnung");
+    if (result["Bezeichnung"].empty()) {
+        result["Bezeichnung"] = resolvePdmValue(obj, "ProfilTyp");
+    }
 
-    // if (result["Bezeichnung"].empty()) {
-    //     result["Bezeichnung"] = resolvePdmValue(obj, "ProfilTyp");
-    // }
+    result["Material"] = resolvePdmValue(obj, "MaterialName");
 
-    // result["Material"] = resolvePdmValue(obj, "MaterialName");
+    // Fallback für Material aus dem verlinkten Objekt ("ShapeMaterial") holen
+    if (result["Material"].empty()) {
+        result["Material"] = resolvePdmValue(obj, "ShapeMaterial");
+    }
 
-    // // 2. Link-Auflösung für Material-Fallback und Rohling-Prüfung
-    // App::DocumentObject* linkedObj = obj->getLinkedObject(false);
-    // App::DocumentObject* pdmObj = (linkedObj && linkedObj != obj) ? linkedObj : obj;
+    if (result["Material"].empty()) {
+        result["Material"] = "-";
+    }
 
-    // // Fallback für Material aus dem verlinkten Objekt ("ShapeMaterial") holen
-    // if (result["Material"].empty() && pdmObj != obj) {
-    //     if (auto* prop = pdmObj->getPropertyByName("ShapeMaterial")) {
-    //         if (prop->getTypeId() == App::PropertyString::getClassTypeId()) {
-    //             result["Material"] = static_cast<const App::PropertyString*>(prop)->getStrValue();
-    //         }
-    //     }
-    // }
+    std::string preis = resolvePdmValue(obj, "Preis");
+    result["Preis"] = preis.empty() ? "0.0" : preis;
 
-    // if (result["Material"].empty()) {
-    //     result["Material"] = "-";
-    // }
+    // 2. Rohling/Halbzeug-Ermittlung direkt aus den FreeCAD-Properties auslesen
+    App::DocumentObject* pdmObj = GetOriginalObject(obj);
+    if (!pdmObj) pdmObj = obj;
 
-    // std::string preis = resolvePdmValue(obj, "Preis");
-    // result["Preis"] = preis.empty() ? "0.0" : preis;
+    std::string rohling = "-";
+    std::string currentType{pdmObj->getTypeId().getName()};
 
-    // // 3. Rohling/Halbzeug-Ermittlung direkt aus den FreeCAD-Properties auslesen
-    // std::string rohling = "-";
-    // std::string currentType{pdmObj->getTypeId().getName()};
-
-    // if (currentType != "Assembly::AssemblyObject") {
-    //     if (auto* prop = pdmObj->getPropertyByName("BasiertAufHalbzeug")) {
-    //         if (prop->getTypeId() == App::PropertyString::getClassTypeId()) {
-    //             std::string halbzeugValue = static_cast<const App::PropertyString*>(prop)->getStrValue();
-    //             if (!halbzeugValue.empty()) {
-    //                 rohling = halbzeugValue;
-    //             }
-    //         }
-    //     }
-    // }
-    // result["Rohling"] = rohling;
+    if (currentType != "Assembly::AssemblyObject") {
+        std::string halbzeugValue = resolvePdmValue(obj, "BasiertAufHalbzeug");
+        if (!halbzeugValue.empty()) {
+            rohling = halbzeugValue;
+        }
+    }
+    result["Rohling"] = rohling;
 
     return result;
 }
 
-/// @brief 
-/// @param obj 
-/// @return 
-
-auto getPropetiesAsStringMap(App::DocumentObject* obj) -> std::map<std::string, std::string> {
-    std::map<std::string, std::string> propertiesMap;
-
-    if (!obj) return propertiesMap;
-
-    ///TODO:
-
-    // for (const auto& prop : obj->properties) {
-    //     propertiesMap[prop.first] = prop.second;
-
-    // #ifdef DEBUG
-    //     FC_LOG("obj:" << obj->name << ":Property: " << prop.first << " = " << prop.second);
-    // #endif
-
-    // }
-     return propertiesMap;
-}
-
-
-auto getPropertiesAsStringMap(App::DocumentObject* in_obj) -> std::map<std::string, std::map<std::string, std::string>> {
+auto getPropertiesAsStringMapbyGroup(App::DocumentObject* in_obj) -> std::map<std::string, std::map<std::string, std::string>> {
     std::map<std::string, std::map<std::string, std::string>> propertiesMap;
 
     if (!in_obj) return propertiesMap;
@@ -427,7 +395,11 @@ auto getPropertiesAsStringMap(App::DocumentObject* in_obj) -> std::map<std::stri
 
         std::string propName{prop->getName()}; 
         std::string propGroup = prop->getGroup() ? prop->getGroup() : "Base"; 
-        std::string propType{prop->getTypeId().getName()}; 
+
+ //       const Base::Type& typeId = prop->getTypeId();
+ //       std::string_view propType = typeId.getName();  // Bei 1.1.1 ist getName() auf Base::Type
+
+        std::string propType = safeStringCast(prop->getTypeId().getName());
         std::string propValue = "";         
         
         // --- REINES C++ TYP-CASTING ---
@@ -513,5 +485,8 @@ auto GetOriginalObject(App::DocumentObject *obj) -> App::DocumentObject*
 
     return obj; // Liefert das finale, echte Geometrie-Objekt
 }
+
+
+
 
 } // namespace FCProject

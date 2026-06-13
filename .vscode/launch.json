@@ -15,7 +15,7 @@
                 { "name": "PYTHONNOUSERSITE", "value": "1" },
                 { "name": "QT_PLUGIN_PATH", "value": "/home/maxx/Documents/FreeCAD-Development/.venv/lib/python3.12/site-packages/PySide6/Qt/plugins" }
             ],
-            "externalConsole": true,
+            "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [
                 {

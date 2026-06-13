@@ -63,6 +63,12 @@ add_library(FCProjectCore SHARED ${FCPROJECT_SOURCES})
     # Das erzwingt das Makro DEBUG auf C++ Ebene, wenn CONFIG auf Debug steht
 target_compile_definitions(FCProjectCore PRIVATE  $<$<CONFIG:Debug>:DEBUG> $<$<CONFIG:Debug>:FC_DEBUG>)
 
+# RPATH setzen, damit zur Laufzeit z.B. Spreadsheet.so im FreeCAD-Lib-Verzeichnis gefunden wird
+set_target_properties(FCProjectCore PROPERTIES
+    BUILD_RPATH "/home/maxx/freecad/install/lib"
+    INSTALL_RPATH "/home/maxx/freecad/install/lib"
+)
+
 # 4. Inklusionspfade & Features
 # FreeCAD_INCLUDE_DIRS wird durch find_package automatisch befüllt!
 find_package(pybind11 REQUIRED)
@@ -79,6 +85,7 @@ target_compile_features(FCProjectCore PUBLIC cxx_std_20)
 target_link_libraries(FCProjectCore
     PRIVATE
     fmt::fmt    # Bindet die fmt-Bibliothek direkt an dein Addon
+    /home/maxx/freecad/install/lib/Spreadsheet.so # Für Spreadsheet::Sheet (BOM-Export als Tabelle)
     PUBLIC
     ${FreeCAD_LIBRARIES}
     Qt6::Core Qt6::Gui Qt6::Widgets
@@ -96,10 +103,10 @@ set_target_properties(FCProjectCore PROPERTIES PREFIX "")
 # Prüft direkt, ob der Pfad der Python-Ausführungsdatei das Wort "venv311" enthält
 if(NOT CMAKE_PRES_DEV)
     set(FC_MOD_DIR "/home/maxx/.local/share/FreeCAD/v1-1/Mod/FCProject")
-    message(STATUS "Post-Build: Target für FreeCAD 1.1.1 (Python 3.11) erkannt.")
+    message(STATUS "Post-Build: Target für FreeCAD 1.1.1.")
 else()
     set(FC_MOD_DIR "/home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject")
-    message(STATUS "Post-Build: Target für FreeCAD 1.2dev (Python 3.12) erkannt.")
+    message(STATUS "Post-Build: Target für FreeCAD 1.2dev.")
 endif()
 
 # 6. Installation

@@ -9,6 +9,8 @@
 #include <vector>
 #include "Utils.h"
 #include <fstream>
+#include <algorithm>
+#include <Mod/Spreadsheet/App/Sheet.h>
 
 FC_LOG_LEVEL_INIT("FCProject");
 
@@ -16,16 +18,26 @@ namespace App { class DocumentObject; }
 
 namespace FCProject {
 
+namespace {
 
-// Hilfsfunktion für FreeCAD 1.1.1 (C-String-Variante)
-inline std::string safeStringCast(const char* ptr) {
-    return ptr != nullptr ? std::string(ptr) : std::string();
+// Maskiert ein Feld für CSV (RFC 4180): Felder mit Komma, Anführungszeichen
+// oder Zeilenumbruch werden in Anführungszeichen gesetzt, enthaltene
+// Anführungszeichen werden verdoppelt.
+auto escapeCsvField(const std::string& field) -> std::string {
+    if (field.find_first_of(",\"\n\r") == std::string::npos) {
+        return field;
+    }
+
+    std::string escaped = "\"";
+    for (char c : field) {
+        if (c == '"') escaped += '"';
+        escaped += c;
+    }
+    escaped += "\"";
+    return escaped;
 }
 
-// Hilfsfunktion für FreeCAD 1.2dev (string_view-Variante)
-inline std::string safeStringCast(std::string_view view) {
-    return std::string(view);
-}
+} // namespace
 
 BOMManager::BOMManager(const std::string& root_name)  {
 
@@ -40,13 +52,25 @@ BOMManager::BOMManager(const std::string& root_name)  {
     
     auto obj = doc->getObject(root_name.c_str());
     if (obj) {
+        rootAssembly = obj;
+
+        std::string fileName = doc->getFileName();
+        std::filesystem::path docDir = fileName.empty()
+             ? std::filesystem::current_path(): std::filesystem::path(fileName).parent_path();
 
 
-        auto myMap = getPropertiesAsStringMap(obj);
+        exportToCsv(docDir.string());
+        exportToSpreadsheet(docDir.string());
+
+        auto myMap = getPropertiesAsStringMapbyGroup(obj);
+
+        generateStructuralBom();
+
+        printAssemblyTree(obj); // Debug-Ausgabe der Baumstruktur
 
         // Einzelnen Wert gezielt abfragen
-        std::string gruppe = myMap["Label"]["Group"];
-        std::string wert   = myMap["Label"]["Value"];
+        std::string gruppe = myMap["ArticleID"]["Group"];
+        std::string wert   = myMap["ArticleID"]["Value"];
 
     }
 }
@@ -111,7 +135,11 @@ auto BOMManager::generateStructuralBom() -> std::vector<std::vector<std::string>
         std::string preisStr = "0.0";
         try {
             if (!pdmInfo["Preis"].empty()) {
-                preisStr = std::to_string(std::stod(pdmInfo["Preis"]));
+                // Deutsches Dezimal-Komma in Punkt umwandeln, damit std::stod
+                // den Wert korrekt parst (z. B. "12,50" -> "12.50")
+                std::string preisRoh = pdmInfo["Preis"];
+                std::replace(preisRoh.begin(), preisRoh.end(), ',', '.');
+                preisStr = std::to_string(std::stod(preisRoh));
             }
         } catch (...) {
             preisStr = pdmInfo["Preis"]; // Fallback, falls der Preis kein valides Double ist
@@ -146,9 +174,9 @@ auto BOMManager::exportToCsv(const std::string& targetDir) -> bool {
     out << "Position (Struktur-Index),Artikel-ID,Benennung,Werkstoff,Rohling/Halbzeug,Preis,Menge\n";
 
     for (auto& row : rows) {
-        
+
         for (size_t i = 0; i < row.size(); ++i) {
-            out << row[i];
+            out << escapeCsvField(row[i]);
             if (i + 1 < row.size()) out << ",";
         }
         out << "\n";
@@ -156,9 +184,37 @@ auto BOMManager::exportToCsv(const std::string& targetDir) -> bool {
     return true;
 }
 
-auto BOMManager::exportToSpreadsheet(const std::string& targetDir) -> bool {
-    // Placeholder: In a C++ FreeCAD implementation, this would create a spreadsheet object.
-    return exportToCsv(targetDir);
+auto BOMManager::exportToSpreadsheet(const std::string& /*targetDir*/) -> bool {
+
+    auto doc = App::GetApplication().getActiveDocument();
+    if (!doc) return false;
+
+    auto rows = generateStructuralBom();
+    if (rows.empty()) return false;
+
+    auto* sheet = doc->addObject<Spreadsheet::Sheet>("BOM_Struktur");
+    if (!sheet) return false;
+
+    static const std::vector<std::string> header = {
+        "Position (Struktur-Index)", "Artikel-ID", "Benennung",
+        "Werkstoff", "Rohling/Halbzeug", "Preis", "Menge"
+    };
+    static const char* columns[] = {"A", "B", "C", "D", "E", "F", "G"};
+
+    for (size_t col = 0; col < header.size(); ++col) {
+        std::string address = std::string(columns[col]) + "1";
+        sheet->setCell(address.c_str(), header[col].c_str());
+    }
+
+    for (size_t r = 0; r < rows.size(); ++r) {
+        for (size_t col = 0; col < rows[r].size() && col < std::size(columns); ++col) {
+            std::string address = std::string(columns[col]) + std::to_string(r + 2);
+            sheet->setCell(address.c_str(), rows[r][col].c_str());
+        }
+    }
+
+    doc->recompute();
+    return true;
 }
 
 
