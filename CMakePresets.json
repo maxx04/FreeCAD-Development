@@ -12,11 +12,12 @@
             "generator": "Unix Makefiles",
             "binaryDir": "${sourceDir}/build-fc12",
             "cacheVariables": {
-                "CMAKE_PRES_12": "TRUE",
-                "CMAKE_PRES_11": "FALSE",
+                "CMAKE_PRES_DEV": "TRUE",
                 "CMAKE_BUILD_TYPE": "Debug",
                 "PYTHON_EXECUTABLE": "${sourceDir}/../.venv/bin/python",
-                "CMAKE_CURRENT_SOURCE_DIR": "${sourceDir}/FCProject"
+                "CMAKE_CURRENT_SOURCE_DIR": "${sourceDir}/FCProject",
+                "CMAKE_CXX_STANDARD": "20",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
             }
         },
         {
@@ -25,11 +26,14 @@
             "generator": "Unix Makefiles",
             "binaryDir": "${sourceDir}/build-fc11",
             "cacheVariables": {
-                "CMAKE_PRES_12": "FALSE",
-                "CMAKE_PRES_11": "TRUE",
+                "CMAKE_PRES_DEV": "FALSE",
                 "CMAKE_BUILD_TYPE": "Debug",
                 "PYTHON_EXECUTABLE": "${sourceDir}/../.venv311/bin/python",
-                "CMAKE_CURRENT_SOURCE_DIR": "${sourceDir}/FCProject"
+                "Python_ROOT_DIR": "${sourceDir}/../.venv311",
+                "CMAKE_CURRENT_SOURCE_DIR": "${sourceDir}/FCProject",
+                "CMAKE_CXX_STANDARD": "17",
+                "CMAKE_CXX_EXTENSIONS": "OFF",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
             }
         }
     ]

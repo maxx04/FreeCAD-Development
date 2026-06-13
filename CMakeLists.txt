@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(FCProject)
 #project(FCProject LANGUAGES CXX Python)
-set(CMAKE_CXX_STANDARD 20)
+
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # 1. Compile Commands immer aktivieren
@@ -94,7 +94,7 @@ target_link_libraries(FCProjectCore
 set_target_properties(FCProjectCore PROPERTIES PREFIX "")
 
 # Prüft direkt, ob der Pfad der Python-Ausführungsdatei das Wort "venv311" enthält
-if(CMAKE_PRES_11)
+if(NOT CMAKE_PRES_DEV)
     set(FC_MOD_DIR "/home/maxx/.local/share/FreeCAD/v1-1/Mod/FCProject")
     message(STATUS "Post-Build: Target für FreeCAD 1.1.1 (Python 3.11) erkannt.")
 else()

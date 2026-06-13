@@ -5,6 +5,8 @@ import FreeCADGui as Gui
 from PySide6 import QtWidgets
 from FCProjectCore import BOMManager
 
+import debugpy
+
 class BOMExportCommand:
     def GetResources(self):
         import os
@@ -16,6 +18,9 @@ class BOMExportCommand:
         }
 
     def Activated(self):
+
+
+        
         active_doc = App.ActiveDocument
         main_win = Gui.getMainWindow()
 
@@ -43,7 +48,10 @@ class BOMExportCommand:
             if not auswahl:
                 App.Console.PrintError("Fehler: Bitte klicke zuerst die Hauptbaugruppe im Baum an!")
                 return
-                # Nimm das erste Element, das der Nutzer angeklickt hat
+                # Nimm das erste App::DocumentObject, das der Nutzer angeklickt hat
+                
+            debugpy.breakpoint()
+            
             root_assembly = auswahl[0]
 
             manager = BOMManager(root_assembly.Name)

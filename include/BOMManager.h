@@ -11,7 +11,7 @@ namespace FCProject {
 class BOMManager {
 
 private:
-    Element* rootAssembly{nullptr};
+    App::DocumentObject* rootAssembly{nullptr};
 
 public:
     BOMManager() = default;
@@ -24,7 +24,7 @@ public:
 
     auto exportToSpreadsheet(const std::string& targetDir) -> bool;
 
-    auto convertToElement(App::DocumentObject* obj, std::map<App::DocumentObject*, Element*>& cache) -> Element*;
+    auto GetOriginalObject(App::DocumentObject *obj) -> App::DocumentObject*;
 
 };
 

@@ -51,7 +51,8 @@
     "C_Cpp.errorSquiggles": "disabled",
     "cmake.ignoreKitEnv": true,
     "cmake.options.statusBarVisibility": "visible",
-    "cmake.useCMakePresets": "always"
+    "cmake.useCMakePresets": "always",
+    "python-envs.defaultEnvManager": "ms-python.python:venv"
 
 
 

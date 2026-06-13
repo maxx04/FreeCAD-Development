@@ -1,88 +1,145 @@
+// 1. Eigene Projekt-Header (Projekt-Schnittstellen immer zuerst)
 #include "../include/Utils.h"
 
+// 2. FreeCAD Core Basis-Header
+#include <Base/Console.h>
 
-//#include <Base/Writer.h>
-#include <App/DocumentObject.h>
-
+// 3. FreeCAD App- & Object-Header
 #include <App/DocumentObject.h>
 #include <App/Property.h>
 #include <App/ObjectIdentifier.h>
-#include <Base/Console.h>
-#include <App/Link.h> // WICHTIG: Enthält die Definition für Link-Objekte
-#include <App/DocumentObject.h>
-#include <App/PropertyLinks.h> // Wichtig für den Zugriff auf PropertyLink
 
+// 4. FreeCAD Link-, Gruppen- & Property-Typen
+#include <App/Link.h>
+#include <App/PropertyLinks.h>
+#include <App/PropertyStandard.h>
 
-#include <string>
-#include <vector>
+// 5. C++ Standard Template Library (STL) Header (Alphabetisch sortiert)
 #include <algorithm>
 #include <functional>
-#include <sstream>
 #include <iostream>
-#include <set>
 #include <map>
-#include "Utils.h"
+#include <set>
+#include <sstream>
+#include <string>
+#include <tuple>
+#include <vector>
+
 
 FC_LOG_LEVEL_INIT("FCProject");
 
 namespace FCProject {
 
-void ensureProperty(Element& obj, const std::string& name, const std::string& value) {
-    obj.properties[name] = value;
+// void ensureProperty(App::DocumentObject& obj, const std::string& name, const std::string& value) {
+//     obj.properties[name] = value;
+// }
+
+
+
+// Hilfsfunktion zum sicheren Auslesen von Link-Listen (für Group und Features)
+std::vector<App::DocumentObject*> getObjectsFromLinkListProperty(const App::DocumentObject* obj, const char* propName) {
+    std::vector<App::DocumentObject*> result;
+    if (!obj) return result;
+    
+    if (auto* prop = obj->getPropertyByName(propName)) {
+        if (auto* linkList = dynamic_cast<const App::PropertyLinkList*>(prop)) {
+            return linkList->getValue();
+        }
+    }
+    return result;
 }
 
-auto getCleanChildren(Element* sourceObj) -> std::vector<Element*> {
-
-    std::vector<Element*> items;
+auto getCleanChildren(App::DocumentObject* sourceObj) -> std::vector<App::DocumentObject*> {
+    std::vector<App::DocumentObject*> items;
     if (!sourceObj) return items;
-    if (sourceObj->origin) items.push_back(sourceObj->origin);
 
-    std::vector<Element*> rawGroup = sourceObj->group;
-
-    std::vector<Element*> rawFeatures = sourceObj->features;
-
-    std::set<Element*> hiddenInSubfolders;
-
-    for (auto* c : rawGroup) {
-        if (c && (c->typeId == "App::DocumentObjectGroup" || c->typeId == "Assembly::JointGroup")) {
-            for (auto* sub : c->group) {
-                if (sub) hiddenInSubfolders.insert(sub);
+    // 1. Origin auslesen (falls vorhanden als PropertyLink)
+    if (auto* originProp = sourceObj->getPropertyByName("Origin")) {
+        if (auto* originLink = dynamic_cast<const App::PropertyLink*>(originProp)) {
+            if (auto* originObj = originLink->getValue()) {
+                items.push_back(originObj);
             }
         }
     }
 
+    // 2. Gruppen und Features über die offiziellen Properties holen
+    std::vector<App::DocumentObject*> rawGroup = getObjectsFromLinkListProperty(sourceObj, "Group");
+    std::vector<App::DocumentObject*> rawFeatures = getObjectsFromLinkListProperty(sourceObj, "Features");
+
+    std::set<App::DocumentObject*> hiddenInSubfolders;
+
+    // Unterordner durchsuchen (App::DocumentObjectGroup oder Assembly::JointGroup)
+    for (const auto* c : rawGroup) {
+        if (c) {
+            std::string typeName{c->getTypeId().getName()};
+            if (typeName == "App::DocumentObjectGroup" || typeName == "Assembly::JointGroup") {
+                std::vector<App::DocumentObject*> subGroup = getObjectsFromLinkListProperty(c, "Group");
+                for (auto* sub : subGroup) {
+                    if (sub) {
+                        hiddenInSubfolders.insert(sub);
+                    }
+                }
+            }
+        }
+    }
+
+    // Elemente ohne Duplikate in die Liste eintragen
     for (auto* c : rawGroup) {
         if (c && hiddenInSubfolders.count(c) == 0 && std::find(items.begin(), items.end(), c) == items.end()) {
             items.push_back(c);
         }
     }
+    
     for (auto* c : rawFeatures) {
         if (c && std::find(items.begin(), items.end(), c) == items.end()) {
             items.push_back(c);
         }
     }
+    
     return items;
 }
 
-auto getArtikelId(Element* element) -> std::string {
-    if (!element) return "None";
-    if (element->properties.count("ArticleID") && !element->properties.at("ArticleID").empty()) {
-        return element->properties.at("ArticleID");
-    }
-    Element* current = element;
-    while (current && current->linkedObject) {
-        current = current->linkedObject;
-        if (current->properties.count("ArticleID") && !current->properties.at("ArticleID").empty()) {
-            return current->properties.at("ArticleID");
+auto getArtikelId(App::DocumentObject* obj) -> std::string {
+    if (!obj) return "None";
+
+    // Lambda-Funktion, um eine PropertyString im Objekt zu suchen und den Wert zu liefern
+    auto getArticleIdFromProp = [](const App::DocumentObject* dObj) -> std::string {
+        if (auto* prop = dObj->getPropertyByName("ArticleID")) {
+            if (prop->getTypeId() == App::PropertyString::getClassTypeId()) {
+                std::string val = static_cast<const App::PropertyString*>(prop)->getStrValue();
+                if (!val.empty()) return val;
+            }
+        }
+        return "";
+    };
+
+    // 1. Direkt am aktuellen Objekt suchen
+    std::string id = getArticleIdFromProp(obj);
+    if (!id.empty()) return id;
+
+    // 2. Falls leer, der Link-Kette folgen (getLinkedObject fängt alle Link-Typen ab)
+    App::DocumentObject* current = obj;
+    while (current) {
+        App::DocumentObject* linked = current->getLinkedObject(false);
+        if (linked && linked != current) {
+            current = linked;
+            id = getArticleIdFromProp(current);
+            if (!id.empty()) return id;
+        } else {
+            break;
         }
     }
     
     return "None";
 }
 
-auto printAssemblyTree(Element* rootObject) -> void {
+auto printAssemblyTree(App::DocumentObject* rootObject) -> void {
     if (!rootObject) {
-        std::cout << "Kein Objekt übergeben." << std::endl;
+        #ifdef DEBUG
+            FC_LOG("Kein Objekt übergeben.");
+        #else
+            std::cout << "Kein Objekt übergeben." << std::endl;
+        #endif
         return;
     }
 
@@ -90,17 +147,21 @@ auto printAssemblyTree(Element* rootObject) -> void {
         FC_LOG("\n--- START DER BAUGRUPPEN-ANALYSE ---");
     #endif  
 
-    struct Item { Element* obj; int depth; std::vector<Element*> path; std::vector<bool> flags; };
+    struct Item { 
+        App::DocumentObject* obj; 
+        int depth; 
+        std::vector<App::DocumentObject*> path; 
+        std::vector<bool> flags; 
+    };
     std::vector<Item> stack{{rootObject, 0, {}, {}}};
 
     while (!stack.empty()) {
-
         Item item = stack.back();
-
         stack.pop_back();
 
         if (!item.obj) continue;
 
+        // Zyklusschutz über physische C++ Pointer-Adressen im RAM
         if (std::find(item.path.begin(), item.path.end(), item.obj) != item.path.end()) continue;
 
         item.path.push_back(item.obj);
@@ -116,28 +177,33 @@ auto printAssemblyTree(Element* rootObject) -> void {
         std::string artikelId = getArtikelId(item.obj);
         
         #ifdef DEBUG
-            FC_LOG(prefix << item.obj->label << " [ID: " << artikelId << "] (" << item.obj->typeId << ")");
+            // Versionenunabhängiges Auslesen von Label und Typname über die FreeCAD API
+            std::string currentLabel = item.obj->Label.getStrValue();
+            std::string currentType{item.obj->getTypeId().getName()};
+            FC_LOG(prefix << currentLabel << " [ID: " << artikelId << "] (" << currentType << ")");
         #endif
 
-        std::vector<Element*> children = getCleanChildren(item.obj);
-        if (item.obj->linkedObject) {
-            for (auto* child : getCleanChildren(item.obj->linkedObject)) {
-                if (std::find(children.begin(), children.end(), child) == children.end()) {
+        // Kinder über deine neue getCleanChildren sammeln
+        std::vector<App::DocumentObject*> children = getCleanChildren(item.obj);
+        
+        // Verlinktes Objekt auflösen und dessen Kinder hinzufügen, falls vorhanden
+        App::DocumentObject* linkedObj = item.obj->getLinkedObject(false);
+        if (linkedObj && linkedObj != item.obj) {
+            for (auto* child : getCleanChildren(linkedObj)) {
+                if (child && std::find(children.begin(), children.end(), child) == children.end()) {
                     children.push_back(child);
                 }
             }
         }
 
+        // Kinder in umgekehrter Reihenfolge auf den Stack legen
         for (int i = static_cast<int>(children.size()) - 1; i >= 0; --i) {
-
             bool childIsLast = (i == static_cast<int>(children.size()) - 1);
 
             auto nextFlags = item.flags;
-
             nextFlags.push_back(childIsLast);
 
             stack.push_back({children[i], item.depth + 1, item.path, nextFlags});
-
         }
     }
 
@@ -146,148 +212,174 @@ auto printAssemblyTree(Element* rootObject) -> void {
     #endif
 }
 
-auto getAssemblyTree(Element* rootObject) -> std::vector<std::tuple<Element*, int, std::string, std::vector<int>>> {
-
-    std::vector<std::tuple<Element*, int, std::string, std::vector<int>>> assemblyTree; // Ergebnis-Container für den Assembly-Baum
+auto getAssemblyTree(App::DocumentObject* rootObject) -> std::vector<std::tuple<App::DocumentObject*, int, std::string, std::vector<int>>> {
+    std::vector<std::tuple<App::DocumentObject*, int, std::string, std::vector<int>>> assemblyTree; 
 
     if (!rootObject) {
-        FC_LOG("Kein Objekt übergeben."); // Wenn kein Eingabeobjekt vorhanden ist, Log schreiben
-        return assemblyTree; // Leeres Ergebnis zurückgeben
+        #ifdef DEBUG
+            FC_LOG("Kein Objekt übergeben."); 
+        #endif
+        return assemblyTree; 
     }
+
     #ifdef DEBUG
-        FC_LOG("\n--- START DURCHLAUF ---"); // Debug-Ausgabe zum Beginn der Traversierung
+        FC_LOG("\n--- START DURCHLAUF ---"); 
     #endif
 
-    struct Item { Element* obj; int depth; std::vector<Element*> path; std::vector<bool> flags; std::vector<int> indexPath; }; // Stack-Eintrag für Traversierung
+    // Stack-Eintrag nutzt jetzt direkt App::DocumentObject* statt App::DocumentObject*
+    struct Item { 
+        App::DocumentObject* obj; 
+        int depth; 
+        std::vector<App::DocumentObject*> path; 
+        std::vector<bool> flags; 
+        std::vector<int> indexPath; 
+    }; 
 
-    std::vector<Item> stack{{rootObject, 0, {}, {}, {1}}}; // Root-Objekt auf den Stack legen
+    std::vector<Item> stack{{rootObject, 0, {}, {}, {1}}}; 
 
     while (!stack.empty()) {
+        Item item = stack.back(); 
+        stack.pop_back(); 
 
-        Item item = stack.back(); // Aktuellen Stack-Eintrag lesen
+        if (!item.obj) continue; 
 
-        stack.pop_back(); // Eintrag aus dem Stack entfernen
+        // Zyklusschutz über die echten C++ Objekt-Pointer im RAM
+        if (std::find(item.path.begin(), item.path.end(), item.obj) != item.path.end()) continue; 
 
-        if (!item.obj) continue; // Falls das Objekt null ist, überspringen
+        item.path.push_back(item.obj); 
 
-        if (std::find(item.path.begin(), item.path.end(), item.obj) != item.path.end()) continue; // Zyklus vermeiden
-
-        item.path.push_back(item.obj); // Objekt zum aktuellen Pfad hinzufügen
-
-        std::string artikelId = getArtikelId(item.obj); // Artikel-ID für das Objekt ermitteln
+        // Holt die Artikel-ID direkt vom FreeCAD-Objekt
+        std::string artikelId = getArtikelId(item.obj); 
 
         #ifdef DEBUG
-
-            FC_LOG(item.obj->label << " [ID: " << artikelId << "] (" << item.obj->typeId << ")"); // Debug-Ausgabe für den aktuellen Knoten
-
+            // Versionenunabhängiges Auslesen von Label und Typname
+            std::string currentLabel{item.obj->Label.getValue()};
+            std::string currentType{item.obj->getTypeId().getName()};
+            FC_LOG(currentLabel << " [ID: " << artikelId << "] (" << currentType << ")"); 
         #endif
 
-        assemblyTree.emplace_back(item.obj, item.depth, artikelId, item.indexPath); // Knoten zum Ergebnis hinzufügen
+        assemblyTree.emplace_back(item.obj, item.depth, artikelId, item.indexPath); 
 
-        std::vector<Element*> children{}; // Kinderliste für das aktuelle Objekt initialisieren
+        // Kinder-Ermittlung direkt über FreeCADs integriertes Link-System
+        std::vector<App::DocumentObject*> children; 
 
-        if (item.obj->linkedObject) {
+        // 1. Prüfen, ob das Objekt ein Link auf ein anderes Objekt ist
+        App::DocumentObject* linkedObj = item.obj->getLinkedObject(false);
+        App::DocumentObject* sourceObj = (linkedObj && linkedObj != item.obj) ? linkedObj : item.obj;
 
-            for (auto* child : getCleanChildren(item.obj->linkedObject)) {
-
-                if (std::find(children.begin(), children.end(), child) == children.end()) 
-                {
-                    children.push_back(child); // Einzigartige Kinder aus dem verlinkten Objekt hinzufügen
-                }
+        // 2. Alle ausgehenden Kinder-Links (OutList) des Geometrie-Objekts einsammeln
+        // Das ersetzt das fehleranfällige getCleanChildren() komplett!
+        const std::vector<App::DocumentObject*>& outList = sourceObj->getOutList();
+        for (auto* child : outList) {
+            if (child && std::find(children.begin(), children.end(), child) == children.end()) {
+                children.push_back(child); 
             }
         }
-        else
-            children = getCleanChildren(item.obj); // Direkte Kinder hinzufügen, falls kein verlinktes Objekt vorhanden ist
-        
 
-
+        // Kinder in umgekehrter Reihenfolge auf den Stack legen
         for (int i = static_cast<int>(children.size()) - 1; i >= 0; --i) {
+            bool childIsLast = (i == static_cast<int>(children.size()) - 1); 
 
-            bool childIsLast = (i == static_cast<int>(children.size()) - 1); // Prüfen, ob aktuelles Kind das letzte ist
+            auto nextFlags = item.flags; 
+            nextFlags.push_back(childIsLast); 
 
-            auto nextFlags = item.flags; // Flag-Liste kopieren
+            auto childIndexPath = item.indexPath; 
+            childIndexPath.push_back(i + 1); 
 
-            nextFlags.push_back(childIsLast); // Füge Flag für das Kind hinzu
-
-            auto childIndexPath = item.indexPath; // Indexpfad kopieren
-
-            childIndexPath.push_back(i + 1); // Kind-Index zum Pfad hinzufügen
-
-            stack.push_back({children[i], item.depth + 1, item.path, nextFlags, childIndexPath}); // Kind als neuen Stack-Eintrag hinzufügen
+            stack.push_back({children[i], item.depth + 1, item.path, nextFlags, childIndexPath}); 
         }
     }
+
     #ifdef DEBUG
-        FC_LOG("🏁 --- ANALYSE ERFOLGREICH BEENDET ---"); // Debug-Ausgabe nach Abschluss der Traversierung
+        FC_LOG("🏁 --- ANALYSE ERFOLGREICH BEENDET ---"); 
     #endif
 
-
-
-    return assemblyTree; // Ergebnisliste zurückgeben
+    return assemblyTree; 
 }
 
-auto resolvePdmValue(Element* obj, const std::string& propName) -> std::string {
+auto resolvePdmValue(App::DocumentObject* obj, const std::string& propName) -> std::string {
     ///HACK: wie tief die Verlinkung kann sein.
+    ///TODO:
 
-    if (!obj) return {};
+    // if (!obj) return {};
 
-    Element* target = obj;
+    // App::DocumentObject* target = obj;
 
-    if (obj->linkedObject) target = obj->linkedObject;
+    // if (obj->linkedObject) target = obj->linkedObject;
 
-    if (target->properties.count(propName) && !target->properties.at(propName).empty()) {
-        return target->properties.at(propName);
-    }
+    // if (target->properties.count(propName) && !target->properties.at(propName).empty()) {
+    //     return target->properties.at(propName);
+    // }
 
-    if (!target->group.empty()) {
+    // if (!target->group.empty()) {
 
-        for (auto* child : target->group) {
+    //     for (auto* child : target->group) {
 
-            if (!child || !child->properties.count(propName)) continue;
+    //         if (!child || !child->properties.count(propName)) continue;
 
-            if (!child->properties.at(propName).empty()) 
-            {
-                return child->properties.at(propName);
-            }
-        }
-    }
+    //         if (!child->properties.at(propName).empty()) 
+    //         {
+    //             return child->properties.at(propName);
+    //         }
+    //     }
+    // }
     return {};
 }
 
-auto extractPdmData(Element* obj) -> std::map<std::string, std::string> {
 
+auto extractPdmData(App::DocumentObject* obj) ->  std::map<std::string, std::string> {
+    // Hinweis: Rückgabetyp im Header anpassen, falls dort noch App::DocumentObject* stand.
     std::map<std::string, std::string> result;
 
-    result["ArticleID"] = resolvePdmValue(obj, "ArticleID");
-    result["Bezeichnung"] = resolvePdmValue(obj, "Bezeichnung");
+    if (!obj) return result;
 
-    if (result["Bezeichnung"].empty()) {
-        result["Bezeichnung"] = resolvePdmValue(obj, "ProfilTyp");
-    }
+    ///TODO:
 
-    result["Material"] = resolvePdmValue(obj, "MaterialName");
+    // // 1. Einfache Werte über deine bestehende resolvePdmValue holen
+    // result["ArticleID"] = resolvePdmValue(obj, "ArticleID");
+    // result["Bezeichnung"] = resolvePdmValue(obj, "Bezeichnung");
 
-    if (result["Material"].empty() && obj->linkedObject && !obj->linkedObject->properties["ShapeMaterial"].empty()) {
-        result["Material"] = obj->linkedObject->properties["ShapeMaterial"];
-    }
+    // if (result["Bezeichnung"].empty()) {
+    //     result["Bezeichnung"] = resolvePdmValue(obj, "ProfilTyp");
+    // }
 
-    if (result["Material"].empty()) result["Material"] = "-";
+    // result["Material"] = resolvePdmValue(obj, "MaterialName");
 
-    std::string preis = resolvePdmValue(obj, "Preis");
+    // // 2. Link-Auflösung für Material-Fallback und Rohling-Prüfung
+    // App::DocumentObject* linkedObj = obj->getLinkedObject(false);
+    // App::DocumentObject* pdmObj = (linkedObj && linkedObj != obj) ? linkedObj : obj;
 
-    result["Preis"] = preis.empty() ? "0.0" : preis;
+    // // Fallback für Material aus dem verlinkten Objekt ("ShapeMaterial") holen
+    // if (result["Material"].empty() && pdmObj != obj) {
+    //     if (auto* prop = pdmObj->getPropertyByName("ShapeMaterial")) {
+    //         if (prop->getTypeId() == App::PropertyString::getClassTypeId()) {
+    //             result["Material"] = static_cast<const App::PropertyString*>(prop)->getStrValue();
+    //         }
+    //     }
+    // }
 
-    std::string rohling = "-";
+    // if (result["Material"].empty()) {
+    //     result["Material"] = "-";
+    // }
 
-    Element* pdmObj = obj->linkedObject ? obj->linkedObject : obj;
+    // std::string preis = resolvePdmValue(obj, "Preis");
+    // result["Preis"] = preis.empty() ? "0.0" : preis;
 
-    if (pdmObj->typeId != "Assembly::AssemblyObject") {
+    // // 3. Rohling/Halbzeug-Ermittlung direkt aus den FreeCAD-Properties auslesen
+    // std::string rohling = "-";
+    // std::string currentType{pdmObj->getTypeId().getName()};
 
-        if (pdmObj->properties.count("BasiertAufHalbzeug") && !pdmObj->properties.at("BasiertAufHalbzeug").empty()) 
-        {
-            rohling = pdmObj->properties.at("BasiertAufHalbzeug");
-        }
-    }
-    result["Rohling"] = rohling;
+    // if (currentType != "Assembly::AssemblyObject") {
+    //     if (auto* prop = pdmObj->getPropertyByName("BasiertAufHalbzeug")) {
+    //         if (prop->getTypeId() == App::PropertyString::getClassTypeId()) {
+    //             std::string halbzeugValue = static_cast<const App::PropertyString*>(prop)->getStrValue();
+    //             if (!halbzeugValue.empty()) {
+    //                 rohling = halbzeugValue;
+    //             }
+    //         }
+    //     }
+    // }
+    // result["Rohling"] = rohling;
 
     return result;
 }
@@ -295,22 +387,24 @@ auto extractPdmData(Element* obj) -> std::map<std::string, std::string> {
 /// @brief 
 /// @param obj 
 /// @return 
-auto getPropetiesAsStringMap(Element* obj) -> std::map<std::string, std::string> {
+
+auto getPropetiesAsStringMap(App::DocumentObject* obj) -> std::map<std::string, std::string> {
     std::map<std::string, std::string> propertiesMap;
 
     if (!obj) return propertiesMap;
 
-    for (const auto& prop : obj->properties) {
-        propertiesMap[prop.first] = prop.second;
+    ///TODO:
 
-    #ifdef DEBUG
-        FC_LOG("obj:" << obj->name << ":Property: " << prop.first << " = " << prop.second);
-    #endif
+    // for (const auto& prop : obj->properties) {
+    //     propertiesMap[prop.first] = prop.second;
 
-    }
-    return propertiesMap;
+    // #ifdef DEBUG
+    //     FC_LOG("obj:" << obj->name << ":Property: " << prop.first << " = " << prop.second);
+    // #endif
+
+    // }
+     return propertiesMap;
 }
-
 
 
 auto getPropertiesAsStringMap(App::DocumentObject* in_obj) -> std::map<std::string, std::map<std::string, std::string>> {
@@ -381,8 +475,6 @@ auto getPropertiesAsStringMap(App::DocumentObject* in_obj) -> std::map<std::stri
 
     return propertiesMap;
 }
-
-
 
 
 auto GetOriginalObject(App::DocumentObject *obj) -> App::DocumentObject*

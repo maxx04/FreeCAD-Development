@@ -9,14 +9,14 @@
 
 namespace FCProject {
 
-void ensureProperty(Element& obj, const std::string& name, const std::string& value);
-auto getCleanChildren(Element* sourceObj) -> std::vector<Element*>;
-auto getArtikelId(Element* element) -> std::string;
-void printAssemblyTree(Element* rootObject);
-auto getAssemblyTree(Element* rootObject) -> std::vector<std::tuple<Element*, int, std::string, std::vector<int>>>;
-auto resolvePdmValue(Element* obj, const std::string& propName) -> std::string;
-auto extractPdmData(Element* obj) -> std::map<std::string, std::string>;
-auto getPropetiesAsStringMap(Element* obj) -> std::map<std::string, std::string>;
+//void ensureProperty(App::DocumentObject& obj, const std::string& name, const std::string& value);
+auto getCleanChildren(App::DocumentObject* sourceObj) -> std::vector<App::DocumentObject*>;
+auto getArtikelId(App::DocumentObject* obj) -> std::string;
+void printAssemblyTree(App::DocumentObject* rootObject);
+auto getAssemblyTree(App::DocumentObject* rootObject) -> std::vector<std::tuple<App::DocumentObject*, int, std::string, std::vector<int>>>;
+auto resolvePdmValue(App::DocumentObject* obj, const std::string& propName) -> std::string;
+auto extractPdmData(App::DocumentObject* obj) -> std::map<std::string, std::string>;
+auto getPropetiesAsStringMap(App::DocumentObject* obj) -> std::map<std::string, std::string>;
 auto getPropertiesAsStringMap(App::DocumentObject *obj) -> std::map<std::string, std::map<std::string, std::string>>;
 
 auto GetOriginalObject(App::DocumentObject *obj) -> App::DocumentObject*;

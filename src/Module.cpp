@@ -12,7 +12,7 @@ PYBIND11_MODULE(FCProjectCore, m) {
     // Kette ohne Semikolons in der Mitte!
     py::class_<BOMManager>(m, "BOMManager")
        .def(py::init<>())
-       .def(py::init<std::string&>(), py::arg("root_name"))
+       .def(py::init<const std::string&>(), py::arg("root_name"))
        .def("generate_structural_bom", &BOMManager::generateStructuralBom)
        .def("export_to_csv", &BOMManager::exportToCsv)
        .def("export_to_spreadsheet", &BOMManager::exportToSpreadsheet); 
