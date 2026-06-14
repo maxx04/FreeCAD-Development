@@ -30,14 +30,9 @@ FC_LOG_LEVEL_INIT("FCProject");
 
 namespace FCProject {
 
-// void ensureProperty(App::DocumentObject& obj, const std::string& name, const std::string& value) {
-//     obj.properties[name] = value;
-// }
-
-
 
 // Hilfsfunktion zum sicheren Auslesen von Link-Listen (für Group und Features)
-std::vector<App::DocumentObject*> getObjectsFromLinkListProperty(const App::DocumentObject* obj, const char* propName) {
+auto getObjectsFromLinkListProperty(const App::DocumentObject* obj, const char* propName) -> std::vector<App::DocumentObject*> {
     std::vector<App::DocumentObject*> result;
     if (!obj) return result;
     
@@ -98,40 +93,6 @@ auto getCleanChildren(App::DocumentObject* sourceObj) -> std::vector<App::Docume
     
     return items;
 }
-
-// auto getArtikelId(App::DocumentObject* obj) -> std::string {
-//     if (!obj) return "None";
-
-//     // Lambda-Funktion, um eine PropertyString im Objekt zu suchen und den Wert zu liefern
-//     auto getArticleIdFromProp = [](const App::DocumentObject* dObj) -> std::string {
-//         if (auto* prop = dObj->getPropertyByName("ArticleID")) {
-//             if (prop->getTypeId() == App::PropertyString::getClassTypeId()) {
-//                 std::string val = static_cast<const App::PropertyString*>(prop)->getStrValue();
-//                 if (!val.empty()) return val;
-//             }
-//         }
-//         return "";
-//     };
-
-//     // 1. Direkt am aktuellen Objekt suchen
-//     std::string id = getArticleIdFromProp(obj);
-//     if (!id.empty()) return id;
-
-//     // 2. Falls leer, der Link-Kette folgen (getLinkedObject fängt alle Link-Typen ab)
-//     App::DocumentObject* current = obj;
-//     while (current) {
-//         App::DocumentObject* linked = current->getLinkedObject(false);
-//         if (linked && linked != current) {
-//             current = linked;
-//             id = getArticleIdFromProp(current);
-//             if (!id.empty()) return id;
-//         } else {
-//             break;
-//         }
-//     }
-    
-//     return "None";
-// }
 
 auto printAssemblyTree(App::DocumentObject* rootObject) -> void {
     if (!rootObject) {
@@ -446,7 +407,6 @@ auto getPropertiesAsStringMapbyGroup(App::DocumentObject* in_obj) -> std::map<st
     return propertiesMap;
 }
 
-
 auto GetOriginalObject(App::DocumentObject *obj) -> App::DocumentObject*
 {
     if (!obj) return nullptr;
@@ -503,9 +463,5 @@ auto escapeCsvField(const std::string& field) -> std::string {
 
     return escaped;
 }
-
-
-
-
 
 } // namespace FCProject

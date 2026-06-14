@@ -13,7 +13,7 @@ struct Vector3 {
 
     Vector3() = default;
     Vector3(double x_, double y_, double z_) : x(x_), y(y_), z(z_) {}
-    Vector3 operator*(double scalar) const { return {x * scalar, y * scalar, z * scalar}; }
+    auto operator*(double scalar) const -> Vector3 { return {x * scalar, y * scalar, z * scalar}; }
 }; 
 
 

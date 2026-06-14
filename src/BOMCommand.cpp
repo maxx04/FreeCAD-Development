@@ -3,12 +3,12 @@
 
 namespace FCProject {
 
-bool BOMExportCommand::activated() {
+auto BOMExportCommand::activated() -> bool {
     std::cout << "BOMExportCommand placeholder activated" << std::endl;
     return true;
 }
 
-bool BOMExportCommand::isActive() const {
+auto BOMExportCommand::isActive() const -> bool {
     return true;
 }
 

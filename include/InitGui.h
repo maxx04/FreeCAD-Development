@@ -6,9 +6,9 @@ namespace FCProject {
 
 class InitGui {
 public:
-    void initialize();
-    void activated();
-    std::string getClassName() const;
+    auto initialize() -> void;
+    auto activated() -> void;
+    auto getClassName() const -> std::string;
 };
 
 } // namespace FCProject

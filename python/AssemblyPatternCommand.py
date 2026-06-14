@@ -7,7 +7,7 @@ try:
 except ImportError:
     from version import __version__
 
-from AssemblyPatternCreator import AssemblyPatternCreator
+from FCProjectCore import AssemblyPatternCreator
 
 class AssemblyPatternCommand:
     """Command zum Erstellen eines Pattern (Array) von Elementen über Joints in einer Assembly."""
@@ -81,7 +81,7 @@ class AssemblyPatternDialog(QtWidgets.QDialog):
         self.doc = doc
         self.assembly = assembly
         try:
-            self.creator = AssemblyPatternCreator(doc, assembly)
+            self.creator = AssemblyPatternCreator(assembly.Name)
             self.init_ui()
         except Exception as e:
             App.Console.PrintError(f"FCProject Dialog Init Error: {str(e)}\n")
@@ -220,7 +220,7 @@ class AssemblyPatternDialog(QtWidgets.QDialog):
 
         try:
             self.creator.create_pattern(
-                source_element=source_element,
+                source_element_name=source_element.Name,
                 count=count,
                 distance=distance,
                 direction=direction

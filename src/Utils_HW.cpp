@@ -2,6 +2,6 @@
 
 Utils_HW::Utils_HW() {}
 
-std::string Utils_HW::sayHello(const std::string& name) {
+auto Utils_HW::sayHello(const std::string& name) -> std::string {
     return "Hello " + name + " from C++!";
 }

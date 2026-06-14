@@ -58,7 +58,7 @@ def walk_ultimate_everything(root_object):
                 if linked.Origin not in children:
                     children.append(linked.Origin)
 
-        # Rekursiver Aufruf für jedes gefundene Kind-App::DocumentObject
+        # Rekursiver Aufruf für jedes gefundene Kind-Element
         for child in children:
             yield from _traverse(child, current_depth + 1)
 
@@ -89,7 +89,7 @@ def walk_assembly_iterative(root_object):
     visited = set()
 
     while stack:
-        # Das oberste App::DocumentObject vom Stapel holen
+        # Das oberste Element vom Stapel holen
         obj, depth = stack.pop()
 
         # Schutz vor Endlosschleifen (falls sich Objekte gegenseitig verlinken)
@@ -215,7 +215,7 @@ def get_clean_children(source_obj):
     raw_group = list(source_obj.Group) if hasattr(source_obj, "Group") and source_obj.Group else []
     raw_features = list(source_obj.Features) if hasattr(source_obj, "Features") and source_obj.Features else []
     
-    # Filter für App::DocumentObjecte, die in Unterordnern (Patterns, Joints) stecken
+    # Filter für Elemente, die in Unterordnern (Patterns, Joints) stecken
     hidden_in_subfolders = set()
     for c in raw_group:
         if c and c.TypeId in ["App::DocumentObjectGroup", "Assembly::JointGroup"]:
@@ -233,17 +233,17 @@ def get_clean_children(source_obj):
             
     return items
 
-def get_artikel_id(App::DocumentObject):
+def get_artikel_id(Element):
     """
     Folgt einer Kette von Links (unendlich tief), bis die ArtikelID 
     gefunden wird oder das Ende der Verknüpfungen erreicht ist.
     """
-    # 1. Sicherheitscheck: Wenn das App::DocumentObject selbst die ID hat
-    if hasattr(App::DocumentObject, "ArticleID") and App::DocumentObject.ArticleID:
-        return str(App::DocumentObject.ArticleID)
+    # 1. Sicherheitscheck: Wenn das Element selbst die ID hat
+    if hasattr(Element, "ArticleID") and Element.ArticleID:
+        return str(Element.ArticleID)
         
     # 2. Die Link-Kette (Link-on-Link) komplett auflösen
-    current = App::DocumentObject
+    current = Element
     while hasattr(current, "LinkedObject") and current.LinkedObject:
         # Wir springen eine Ebene tiefer im Link-Netzwerk
         current = current.LinkedObject
@@ -298,7 +298,7 @@ def print_perfect_assembly_tree(root_object):
                     children.append(child)
 
         # Kinder rückwärts auf den Stack legen (wegen LIFO)
-        # i == 0 entspricht in der 'reversed'-Schleife dem echten LETZTEN App::DocumentObject
+        # i == 0 entspricht in der 'reversed'-Schleife dem echten LETZTEN Element
         for i, child in enumerate(reversed(children)):
             child_is_last = (i == 0)
             next_flags = flags + [child_is_last]
@@ -307,7 +307,7 @@ def print_perfect_assembly_tree(root_object):
     print("🏁 --- ANALYSE ERFOLGREICH BEENDET ---")
 
 def get_assembly_tree(root_object) -> list:
-    """Gibt eine Liste aller App::DocumentObjecte in der Baugruppe zurück, inklusive Tiefe und ArtikelID."""
+    """Gibt eine Liste aller Elemente in der Baugruppe zurück, inklusive Tiefe und ArtikelID."""
     """Iteriert durch die Baugruppe und drückt einen Baum aus."""
 
     assambly_tree = []
@@ -355,7 +355,7 @@ def get_assembly_tree(root_object) -> list:
                     children.append(child)
 
         # Kinder rückwärts auf den Stack legen (wegen LIFO)
-        # i == 0 entspricht in der 'reversed'-Schleife dem echten LETZTEN App::DocumentObject
+        # i == 0 entspricht in der 'reversed'-Schleife dem echten LETZTEN Element
         for i, child in enumerate(reversed(children)):
             child_is_last = (i == 0)
             next_flags = flags + [child_is_last]

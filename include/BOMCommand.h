@@ -6,8 +6,8 @@ namespace FCProject {
 
 class BOMExportCommand {
 public:
-    bool activated();
-    bool isActive() const;
+    auto activated() -> bool;
+    auto isActive() const -> bool;
 };
 
 } // namespace FCProject

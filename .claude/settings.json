@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(env)",
+      "Bash(cmake --build . -- -j4)"
+    ]
+  }
+}
