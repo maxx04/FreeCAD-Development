@@ -20,11 +20,9 @@ public:
 
     auto generateStructuralBom() -> std::vector<std::vector<std::string>>;
 
-    auto exportToCsv(const std::string& targetDir) -> bool;
+    auto exportToCsv(const std::string& targetDir) -> std::string;
 
     auto exportToSpreadsheet(const std::string& targetDir) -> bool;
-
-    auto GetOriginalObject(App::DocumentObject *obj) -> App::DocumentObject*;
 
 };
 

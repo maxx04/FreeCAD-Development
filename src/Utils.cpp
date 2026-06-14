@@ -99,39 +99,39 @@ auto getCleanChildren(App::DocumentObject* sourceObj) -> std::vector<App::Docume
     return items;
 }
 
-auto getArtikelId(App::DocumentObject* obj) -> std::string {
-    if (!obj) return "None";
+// auto getArtikelId(App::DocumentObject* obj) -> std::string {
+//     if (!obj) return "None";
 
-    // Lambda-Funktion, um eine PropertyString im Objekt zu suchen und den Wert zu liefern
-    auto getArticleIdFromProp = [](const App::DocumentObject* dObj) -> std::string {
-        if (auto* prop = dObj->getPropertyByName("ArticleID")) {
-            if (prop->getTypeId() == App::PropertyString::getClassTypeId()) {
-                std::string val = static_cast<const App::PropertyString*>(prop)->getStrValue();
-                if (!val.empty()) return val;
-            }
-        }
-        return "";
-    };
+//     // Lambda-Funktion, um eine PropertyString im Objekt zu suchen und den Wert zu liefern
+//     auto getArticleIdFromProp = [](const App::DocumentObject* dObj) -> std::string {
+//         if (auto* prop = dObj->getPropertyByName("ArticleID")) {
+//             if (prop->getTypeId() == App::PropertyString::getClassTypeId()) {
+//                 std::string val = static_cast<const App::PropertyString*>(prop)->getStrValue();
+//                 if (!val.empty()) return val;
+//             }
+//         }
+//         return "";
+//     };
 
-    // 1. Direkt am aktuellen Objekt suchen
-    std::string id = getArticleIdFromProp(obj);
-    if (!id.empty()) return id;
+//     // 1. Direkt am aktuellen Objekt suchen
+//     std::string id = getArticleIdFromProp(obj);
+//     if (!id.empty()) return id;
 
-    // 2. Falls leer, der Link-Kette folgen (getLinkedObject fängt alle Link-Typen ab)
-    App::DocumentObject* current = obj;
-    while (current) {
-        App::DocumentObject* linked = current->getLinkedObject(false);
-        if (linked && linked != current) {
-            current = linked;
-            id = getArticleIdFromProp(current);
-            if (!id.empty()) return id;
-        } else {
-            break;
-        }
-    }
+//     // 2. Falls leer, der Link-Kette folgen (getLinkedObject fängt alle Link-Typen ab)
+//     App::DocumentObject* current = obj;
+//     while (current) {
+//         App::DocumentObject* linked = current->getLinkedObject(false);
+//         if (linked && linked != current) {
+//             current = linked;
+//             id = getArticleIdFromProp(current);
+//             if (!id.empty()) return id;
+//         } else {
+//             break;
+//         }
+//     }
     
-    return "None";
-}
+//     return "None";
+// }
 
 auto printAssemblyTree(App::DocumentObject* rootObject) -> void {
     if (!rootObject) {
@@ -174,8 +174,9 @@ auto printAssemblyTree(App::DocumentObject* rootObject) -> void {
             prefix += item.flags.back() ? "└── " : "├── ";
         }
 
-        std::string artikelId = getArtikelId(item.obj);
-        
+        std::string artikelId = resolvePdmValue(item.obj, "ArticleID");
+        if (artikelId.empty()) artikelId = "None";
+
         #ifdef DEBUG
             // Versionenunabhängiges Auslesen von Label und Typname über die FreeCAD API
             std::string currentLabel = item.obj->Label.getStrValue();
@@ -208,7 +209,7 @@ auto printAssemblyTree(App::DocumentObject* rootObject) -> void {
     }
 
     #ifdef DEBUG
-        FC_LOG("🏁 --- ANALYSE ERFOLGREICH BEENDET ---");
+        FC_LOG("🏁 --- DURCHLAUF BEENDET ---");
     #endif
 }
 
@@ -226,7 +227,6 @@ auto getAssemblyTree(App::DocumentObject* rootObject) -> std::vector<std::tuple<
         FC_LOG("\n--- START DURCHLAUF ---"); 
     #endif
 
-    // Stack-Eintrag nutzt jetzt direkt App::DocumentObject* statt App::DocumentObject*
     struct Item { 
         App::DocumentObject* obj; 
         int depth; 
@@ -249,7 +249,8 @@ auto getAssemblyTree(App::DocumentObject* rootObject) -> std::vector<std::tuple<
         item.path.push_back(item.obj); 
 
         // Holt die Artikel-ID direkt vom FreeCAD-Objekt
-        std::string artikelId = getArtikelId(item.obj); 
+        std::string artikelId = resolvePdmValue(item.obj, "ArticleID");
+        if (artikelId.empty()) artikelId = "None";
 
         #ifdef DEBUG
             // Versionenunabhängiges Auslesen von Label und Typname
@@ -260,19 +261,16 @@ auto getAssemblyTree(App::DocumentObject* rootObject) -> std::vector<std::tuple<
 
         assemblyTree.emplace_back(item.obj, item.depth, artikelId, item.indexPath); 
 
-        // Kinder-Ermittlung direkt über FreeCADs integriertes Link-System
-        std::vector<App::DocumentObject*> children; 
+        // Kinder über getCleanChildren sammeln (wie in printAssemblyTree)
+        std::vector<App::DocumentObject*> children = getCleanChildren(item.obj);
 
-        // 1. Prüfen, ob das Objekt ein Link auf ein anderes Objekt ist
+        // Verlinktes Objekt auflösen und dessen Kinder hinzufügen, falls vorhanden
         App::DocumentObject* linkedObj = item.obj->getLinkedObject(false);
-        App::DocumentObject* sourceObj = (linkedObj && linkedObj != item.obj) ? linkedObj : item.obj;
-
-        // 2. Alle ausgehenden Kinder-Links (OutList) des Geometrie-Objekts einsammeln
-        // Das ersetzt das fehleranfällige getCleanChildren() komplett!
-        const std::vector<App::DocumentObject*>& outList = sourceObj->getOutList();
-        for (auto* child : outList) {
-            if (child && std::find(children.begin(), children.end(), child) == children.end()) {
-                children.push_back(child); 
+        if (linkedObj && linkedObj != item.obj) {
+            for (auto* child : getCleanChildren(linkedObj)) {
+                if (child && std::find(children.begin(), children.end(), child) == children.end()) {
+                    children.push_back(child);
+                }
             }
         }
 
@@ -291,7 +289,7 @@ auto getAssemblyTree(App::DocumentObject* rootObject) -> std::vector<std::tuple<
     }
 
     #ifdef DEBUG
-        FC_LOG("🏁 --- ANALYSE ERFOLGREICH BEENDET ---"); 
+        FC_LOG("🏁 --- DURCHLAUF BEENDET ---"); 
     #endif
 
     return assemblyTree; 
@@ -485,6 +483,27 @@ auto GetOriginalObject(App::DocumentObject *obj) -> App::DocumentObject*
 
     return obj; // Liefert das finale, echte Geometrie-Objekt
 }
+
+// Maskiert ein Feld für CSV (RFC 4180): Felder mit Komma, Anführungszeichen
+// oder Zeilenumbruch werden in Anführungszeichen gesetzt, enthaltene
+// Anführungszeichen werden verdoppelt.
+auto escapeCsvField(const std::string& field) -> std::string {
+
+    if (field.find_first_of(",\"\n\r") == std::string::npos) {
+        return field;
+    }
+
+    std::string escaped = "\"";
+
+    for (char c : field) {
+        if (c == '"') escaped += '"';
+        escaped += c;
+    }
+    escaped += "\"";
+
+    return escaped;
+}
+
 
 
 

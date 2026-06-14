@@ -20,29 +20,13 @@ namespace FCProject {
 
 namespace {
 
-// Maskiert ein Feld für CSV (RFC 4180): Felder mit Komma, Anführungszeichen
-// oder Zeilenumbruch werden in Anführungszeichen gesetzt, enthaltene
-// Anführungszeichen werden verdoppelt.
-auto escapeCsvField(const std::string& field) -> std::string {
-    if (field.find_first_of(",\"\n\r") == std::string::npos) {
-        return field;
-    }
-
-    std::string escaped = "\"";
-    for (char c : field) {
-        if (c == '"') escaped += '"';
-        escaped += c;
-    }
-    escaped += "\"";
-    return escaped;
-}
 
 } // namespace
 
 BOMManager::BOMManager(const std::string& root_name)  {
 
     #ifdef DEBUG
-        FC_LOG("ERFOLG: Der Debug-Modus ist aktiv!");
+        FC_LOG("Der Debug-Modus ist aktiv!");
     #else
         FC_LOG_WARNING("WARNUNG: Immer noch im Release-Modus!");
     #endif
@@ -60,7 +44,9 @@ BOMManager::BOMManager(const std::string& root_name)  {
 
 
         exportToCsv(docDir.string());
-        exportToSpreadsheet(docDir.string());
+        //HACK: Wird aktuell in Python aaufgerufen.
+        // exportToSpreadsheet(docDir.string()); 
+
 
         auto myMap = getPropertiesAsStringMapbyGroup(obj);
 
@@ -158,18 +144,18 @@ auto BOMManager::generateStructuralBom() -> std::vector<std::vector<std::string>
     return bomList;
 }
 
-auto BOMManager::exportToCsv(const std::string& targetDir) -> bool {
+auto BOMManager::exportToCsv(const std::string& targetDir) -> std::string  {
 
     auto rows = generateStructuralBom();
 
     std::filesystem::path targetDirPath(targetDir);
 
-    if (rows.empty()) return false;
+    if (rows.empty()) return "";
 
     std::filesystem::path csvPath = targetDirPath / (std::string("BOM_Struktur_") + (rootAssembly ? rootAssembly->getNameInDocument() : "document") + ".csv");
     std::ofstream out(csvPath);
 
-    if (!out) return false;
+    if (!out) return "";
 
     out << "Position (Struktur-Index),Artikel-ID,Benennung,Werkstoff,Rohling/Halbzeug,Preis,Menge\n";
 
@@ -181,10 +167,10 @@ auto BOMManager::exportToCsv(const std::string& targetDir) -> bool {
         }
         out << "\n";
     }
-    return true;
+    return csvPath.string();
 }
 
-auto BOMManager::exportToSpreadsheet(const std::string& /*targetDir*/) -> bool {
+auto BOMManager::exportToSpreadsheet(const std::string& /*targetDir*/) -> bool{
 
     auto doc = App::GetApplication().getActiveDocument();
     if (!doc) return false;
