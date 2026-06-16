@@ -1,6 +1,12 @@
 import FreeCAD as App
 import FreeCADGui as Gui
 
+def floatGerman(value, default=0.0):
+    try:
+        return float(str(value).replace(",", "."))
+    except (ValueError, TypeError):
+        return default
+
 def _ensure_property(App, obj, prop_type, name, group, desc, default=None):
         try:
             if not hasattr(obj, name):

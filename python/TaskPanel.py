@@ -82,12 +82,6 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         self.main_layout.addWidget(self.close_btn)
         
         self.main_layout.addStretch()
-        
-        # 6. Stücklisten Button (BOM)
-        self.bom_btn = QtWidgets.QPushButton("Projekt-Stückliste (BOM) exportieren")
-        self.bom_btn.setStyleSheet("background-color: #2b579a; color: white; font-weight: bold;")
-        self.bom_btn.clicked.connect(self.on_export_bom_clicked)
-        self.main_layout.addWidget(self.bom_btn)
 
     def rebuild_dynamic_fields(self):
         """Baut die dynamischen Felder auf. Erzeugt bei Typ R ein Dropdown für die Profile."""
@@ -134,13 +128,65 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
                 if combo_field.count() == 0:
                     combo_field.addItem("Keine Vorlagen in _Common_Resources gefunden", "None")
                     
+                combo_field.currentIndexChanged.connect(self._update_material_from_profile)
                 self.dynamic_layout.addWidget(combo_field)
                 self.inputs_map[prop_name] = combo_field
+                # Initial: Material aus dem aktuell vorausgewählten Profil laden
+                QtCore.QTimer.singleShot(0, self._update_material_from_profile)
             else:
                 # Normales Textfeld für alle anderen Eigenschaften (Length, Bezeichnung, Hersteller etc.)
                 input_field = QtWidgets.QLineEdit(default_val)
                 self.dynamic_layout.addWidget(input_field)
                 self.inputs_map[prop_name] = input_field
+
+    def _update_material_from_profile(self):
+        """Liest das ShapeMaterial aus der gewählten Profildatei und trägt es ins Material-Feld ein."""
+        profile_combo = self.inputs_map.get("ProfilTyp")
+        if not profile_combo or not self.proj_dir:
+            return
+
+        profile_name = profile_combo.currentData()
+        if not profile_name or profile_name == "None":
+            return
+
+        base_cad_dir = os.path.dirname(self.proj_dir)
+        profile_path = os.path.join(base_cad_dir, "_Common_Resources", "Profiles", f"{profile_name}.FCStd")
+
+        if not os.path.exists(profile_path):
+            return
+
+        # Prüfen ob das Profil-Dokument bereits offen ist (nicht doppelt öffnen)
+        already_open_name = None
+        for doc_name, doc in App.listDocuments().items():
+            if hasattr(doc, 'FileName') and doc.FileName == profile_path:
+                already_open_name = doc_name
+                break
+
+        try:
+            if already_open_name:
+                temp_doc = App.getDocument(already_open_name)
+                should_close = False
+            else:
+                temp_doc = App.openDocument(profile_path)
+                should_close = True
+
+            material_name = None
+            for obj in temp_doc.Objects:
+                if obj.isDerivedFrom("PartDesign::Body") and hasattr(obj, "ShapeMaterial"):
+                    mat = obj.ShapeMaterial
+                    if mat and hasattr(mat, 'Name') and mat.Name and mat.Name != "Default":
+                        material_name = mat.Name
+                        break
+
+            if should_close:
+                App.closeDocument(temp_doc.Name)
+
+            if material_name:
+                self.material_input.setText(material_name)
+                App.Console.PrintMessage(f"FCProject: Material '{material_name}' aus Profil '{profile_name}' übernommen.\n")
+
+        except Exception as e:
+            App.Console.PrintWarning(f"FCProject: Material aus Profil '{profile_name}' konnte nicht gelesen werden: {str(e)}\n")
 
     def open_material_gui_via_dummy_object(self):
         active_doc = App.ActiveDocument
@@ -268,22 +314,4 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         except Exception as e:
             QtWidgets.QMessageBox.critical(None, "FCProject", f"Fehler: {str(e)}")
 
-    def on_export_bom_clicked(self):
-        """Triggert den PDM Stücklisten-Export."""
-        if not self.proj_dir:
-            QtWidgets.QMessageBox.warning(self, "FCProject BOM", "Kein aktiver Projektordner ermittelbar!")
-            return
-            
-        try:
-            from BOMManager import BOMManager
-            manager = BOMManager()
-            csv_result_path = manager.export_to_csv(self.proj_dir)
-            
-            if csv_result_path:
-                QtWidgets.QMessageBox.information(
-                    self, "FCProject: BOM Export", 
-                    f"Stückliste erfolgreich generiert!\n\nDatei: {os.path.basename(csv_result_path)}\nPfad: {self.proj_dir}"
-                )
-        except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "FCProject", f"Fehler beim BOM-Export: {str(e)}")
 

@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(env)",
-      "Bash(cmake --build . -- -j4)"
+      "Bash(cmake --build . -- -j4)",
+      "Bash(ls /home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject/)",
+      "Read(//home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject/**)",
+      "Bash(mv /home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject/SaveObserver.py /home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject/DocObserver.py)"
+    ],
+    "additionalDirectories": [
+      "/home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject"
     ]
   }
 }

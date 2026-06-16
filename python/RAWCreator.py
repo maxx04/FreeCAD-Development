@@ -11,11 +11,7 @@ class RAWCreator:
         profile_template = properties.get("ProfilTyp", "None")
         material_target = properties.get("__TargetMaterialName__", "Aluminum")
 
-        try:
-            price_val = float(properties.get("Preis", 0.0))
-        except (ValueError, TypeError):
-            App.Console.PrintWarning("FCProject: Ungültiger Preis-Wert. Verwende Standardwert 0.0.\n")
-            price_val = 0.0
+        price_val = Utils.floatGerman(properties.get("Preis", 0.0))
 
         # Die reine, isolierte PDM-ID für das ERP-System holen (z.B. U20_0005_R_)
         pure_id = properties.get("__PureArticleID__", trailing_name)

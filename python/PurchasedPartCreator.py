@@ -16,11 +16,7 @@ class PurchasedPartCreator:
         bestell_val = properties.get("Bestellnummer", "000-000")
         material_target = properties.get("__TargetMaterialName__", "Steel")
         profile_path = properties.get("__LinkedRawProfilePath__", None) # Optional gewählte Basis-Datei
-        try:
-            price_val = float(properties.get("Preis", 0.0))
-        except (ValueError, TypeError):
-            App.Console.PrintWarning("FCProject: Ungültiger Preis-Wert. Verwende Standardwert 0.0.\n")
-            price_val = 0.0
+        price_val = Utils.floatGerman(properties.get("Preis", 0.0))
 
         new_doc = App.newDocument(trailing_name)
         App.setActiveDocument(new_doc.Name)

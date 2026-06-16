@@ -22,10 +22,12 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
 
     def Initialize(self):
         import ProjectManager as ProjectManager
-        import Commands as Commands  
+        import Commands as Commands
         import BOMCommand as BOMCommand
-        import AssemblyPatternCommand as AssemblyPatternCommand 
-        
+        import AssemblyPatternCommand as AssemblyPatternCommand
+        import DocObserver
+        DocObserver.register()
+
         self.appendToolbar("FCProject Tools", [
             "FCProject_ProjectManager", 
             "FCProject_CreatePart", 

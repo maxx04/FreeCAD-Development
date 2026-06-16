@@ -10,11 +10,7 @@ class PartCreator:
     def create(self, file_path, base_name, trailing_name, config, properties):
         bezeichnung_val = properties.get("Bezeichnung", "Standardteil")
         material_target = properties.get("__TargetMaterialName__", "Steel")
-        try:
-            price_val = float(properties.get("Preis", 0.0))
-        except (ValueError, TypeError):
-            App.Console.PrintWarning("FCProject: Ungültiger Preis-Wert. Verwende Standardwert 0.0.\n")
-            price_val = 0.0
+        price_val = Utils.floatGerman(properties.get("Preis", 0.0))
         
         # Der absolute Pfad zur gewählten Halbzeug-Datei (wird nur gesetzt, wenn im Dialog 'Ja' geklickt wurde)
         profile_path = properties.get("__LinkedRawProfilePath__", None)
