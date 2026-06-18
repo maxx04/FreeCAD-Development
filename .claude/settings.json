@@ -5,7 +5,11 @@
       "Bash(cmake --build . -- -j4)",
       "Bash(ls /home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject/)",
       "Read(//home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject/**)",
-      "Bash(mv /home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject/SaveObserver.py /home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject/DocObserver.py)"
+      "Bash(mv /home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject/SaveObserver.py /home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject/DocObserver.py)",
+      "Bash(grep -rn \"def addTipNameToSub\" /home/maxx/Documents/FreeCAD-Development/ 2>/dev/null | head -20)",
+      "Read(//home/maxx/Documents/FreeCAD-Development/**)",
+      "Bash(find /home/maxx -name \"UtilsAssembly.py\" 2>/dev/null | head -5)",
+      "Read(//home/maxx/**)"
     ],
     "additionalDirectories": [
       "/home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject"

@@ -1,11 +1,25 @@
 import os
 import FreeCAD as App
 
+try:
+    from PySide2 import QtCore
+except ImportError:
+    from PySide6 import QtCore
+
 
 class FCProjectDocObserver:
-    """Prüft beim Öffnen ob der Dateiname mit dem ersten PDM-Objekt übereinstimmt."""
+    """Prüft beim Öffnen/Speichern ob der Dateiname mit dem PDM-Objekt übereinstimmt."""
 
     def slotOpenDocument(self, doc):
+        # Objekte sind beim Open-Signal noch nicht geladen — kurz verzögern
+        QtCore.QTimer.singleShot(500, lambda: _check_doc(doc))
+
+    def slotSavedDocument(self, doc):
+        _check_doc(doc)
+
+
+def _check_doc(doc):
+    try:
         if not doc.FileName:
             return
 
@@ -25,12 +39,9 @@ class FCProjectDocObserver:
         if current_stem == expected_stem:
             return
 
-        try:
-            from PySide2 import QtCore
-        except ImportError:
-            from PySide6 import QtCore
-
         QtCore.QTimer.singleShot(0, lambda: _ask_rename(doc, expected_stem))
+    except Exception as e:
+        App.Console.PrintWarning(f"FCProject DocObserver: Fehler bei Prüfung: {str(e)}\n")
 
 
 def _is_project_folder(folder):
@@ -40,9 +51,25 @@ def _is_project_folder(folder):
 
 
 def _find_pdm_object(doc):
+    """Findet das primäre PDM-Objekt im Dokument.
+    Bevorzugt Assembly oder Body gegenüber untergeordneten Link-Objekten."""
+    # Zuerst: Assembly-Objekte (Baugruppen-Dokument)
+    for obj in doc.Objects:
+        if obj.TypeId == "Assembly::AssemblyObject":
+            if hasattr(obj, "ArticleID") and obj.ArticleID:
+                return obj
+
+    # Dann: PartDesign::Body (Einzelteil-Dokument)
+    for obj in doc.Objects:
+        if obj.TypeId == "PartDesign::Body":
+            if hasattr(obj, "ArticleID") and obj.ArticleID:
+                return obj
+
+    # Fallback: erstes beliebiges Objekt mit ArticleID
     for obj in doc.Objects:
         if hasattr(obj, "ArticleID") and obj.ArticleID:
             return obj
+
     return None
 
 
@@ -96,6 +123,10 @@ def register():
     if _observer is None:
         _observer = FCProjectDocObserver()
         App.addDocumentObserver(_observer)
+
+    # Bereits geöffnete Dokumente nachträglich prüfen (z.B. nach Auto-Restore)
+    for doc in App.listDocuments().values():
+        QtCore.QTimer.singleShot(200, lambda d=doc: _check_doc(d))
 
 
 def unregister():

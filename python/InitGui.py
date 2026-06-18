@@ -29,10 +29,10 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         DocObserver.register()
 
         self.appendToolbar("FCProject Tools", [
-            "FCProject_ProjectManager", 
-            "FCProject_CreatePart", 
-            "FCProject_ExportBOM", 
-            "FCProject_AssemblyPattern" 
+            "FCProject_ProjectManager",
+            "FCProject_CreatePart",
+            "FCProject_ExportBOM",
+            "FCProject_PatternGroup"
         ])
 
 
