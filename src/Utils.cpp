@@ -44,6 +44,32 @@ auto getObjectsFromLinkListProperty(const App::DocumentObject* obj, const char* 
     return result;
 }
 
+// Erkennt reine Durchreich-Container (z.B. Pattern-Feature-Objekte aus Python),
+// die selbst keine eigene ArticleID besitzen und daher keinen eigenen
+// BOM-Strukturschritt erzeugen dürfen - auch wenn resolvePdmValue() über die
+// Group-Kinder-Suche fälschlich eine ArticleID eines Kindes "erben" würde.
+auto isPassThroughContainer(const App::DocumentObject* obj) -> bool {
+    if (!obj) return false;
+    if (obj->getPropertyByName("ArticleID") != nullptr) return false;
+
+    std::string typeName{obj->getTypeId().getName()};
+    if (typeName == "App::DocumentObjectGroupPython") return true;
+
+    // Pattern-Feature-Objekte (Linear-/CircularPatternProxy aus PatternFeatures.py)
+    // sind App::FeaturePython mit eigener "Group"-Property (PropertyLinkListHidden
+    // statt PropertyLinkList, um den GeoFeatureGroup-Scope-Check zu vermeiden) und
+    // ohne eigene ArticleID. Erkennung über die für Pattern-Objekte typischen
+    // Properties "SourceElement" + "Count", damit normale Bauteile (App::FeaturePython
+    // ohne diese Properties) unverändert ihre eigene/abgeleitete ArticleID behalten.
+    if (typeName == "App::FeaturePython" &&
+        obj->getPropertyByName("SourceElement") != nullptr &&
+        obj->getPropertyByName("Count") != nullptr) {
+        return true;
+    }
+
+    return false;
+}
+
 auto getCleanChildren(App::DocumentObject* sourceObj) -> std::vector<App::DocumentObject*> {
     std::vector<App::DocumentObject*> items;
     if (!sourceObj) return items;
@@ -135,7 +161,7 @@ auto printAssemblyTree(App::DocumentObject* rootObject) -> void {
             prefix += item.flags.back() ? "└── " : "├── ";
         }
 
-        std::string artikelId = resolvePdmValue(item.obj, "ArticleID");
+        std::string artikelId = isPassThroughContainer(item.obj) ? "None" : resolvePdmValue(item.obj, "ArticleID");
         if (artikelId.empty()) artikelId = "None";
 
         #ifdef DEBUG
@@ -210,7 +236,7 @@ auto getAssemblyTree(App::DocumentObject* rootObject) -> std::vector<std::tuple<
         item.path.push_back(item.obj); 
 
         // Holt die Artikel-ID direkt vom FreeCAD-Objekt
-        std::string artikelId = resolvePdmValue(item.obj, "ArticleID");
+        std::string artikelId = isPassThroughContainer(item.obj) ? "None" : resolvePdmValue(item.obj, "ArticleID");
         if (artikelId.empty()) artikelId = "None";
 
         #ifdef DEBUG

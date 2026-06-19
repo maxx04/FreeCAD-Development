@@ -126,8 +126,9 @@ install(DIRECTORY resources/icons/
 
 )
 
-install(DIRECTORY python/ 
+install(DIRECTORY python/
         DESTINATION "${FC_MOD_DIR}"
+        PATTERN "__pycache__" EXCLUDE
 
 )
 

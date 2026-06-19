@@ -25,6 +25,7 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         import Commands as Commands
         import BOMCommand as BOMCommand
         import AssemblyPatternCommand as AssemblyPatternCommand
+        import PatternFeatures as PatternFeatures
         import DocObserver
         DocObserver.register()
 

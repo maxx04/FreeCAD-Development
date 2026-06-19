@@ -74,6 +74,11 @@ auto BOMManager::generateStructuralBom() -> std::vector<std::vector<std::string>
     std::vector<int> visibleIndexCounters;
     int previousDepth = -1;
 
+    // Merkt sich pro ArtikelID den Index der bereits erzeugten BOM-Zeile,
+    // damit weitere Vorkommen (z.B. Pattern-Kopien) nicht als eigene Zeile
+    // auftauchen, sondern nur die Menge der ersten Zeile erhöhen.
+    std::map<std::string, size_t> articleRowIndex;
+
     for (auto& row : tree) {
         // Änderung: Nutze direkt den nativen FreeCAD-Typ App::DocumentObject*
         App::DocumentObject* obj = nullptr;
@@ -131,15 +136,25 @@ auto BOMManager::generateStructuralBom() -> std::vector<std::vector<std::string>
             preisStr = pdmInfo["Preis"]; // Fallback, falls der Preis kein valides Double ist
         }
 
-        bomList.push_back({
-            structureIndex, 
-            pdmInfo["ArticleID"], 
-            pdmInfo["Bezeichnung"], 
-            pdmInfo["Material"], 
-            pdmInfo["Rohling"], 
-            preisStr,
-            "1"
-        });
+        auto existingRow = articleRowIndex.find(pdmInfo["ArticleID"]);
+        if (existingRow == articleRowIndex.end()) {
+            articleRowIndex[pdmInfo["ArticleID"]] = bomList.size();
+            bomList.push_back({
+                structureIndex,
+                pdmInfo["ArticleID"],
+                pdmInfo["Bezeichnung"],
+                pdmInfo["Material"],
+                pdmInfo["Rohling"],
+                preisStr,
+                "1"
+            });
+        } else {
+            // Gleiche ArtikelID bereits vorhanden (z.B. Pattern-Kopie) -> nur Menge erhöhen
+            std::string& menge = bomList[existingRow->second].back();
+            int mengeWert = 1;
+            try { mengeWert = std::stoi(menge); } catch (...) {}
+            menge = std::to_string(mengeWert + 1);
+        }
     }
     return bomList;
 }
