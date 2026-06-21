@@ -90,6 +90,112 @@ def _sync_link_copies(doc, source, existing_copies, target_count, label_prefix):
     return copies
 
 
+def _pattern_get_sub_object(obj, subname, ret_type, mat, transform, depth):
+    """Löst einen Pfad-Abschnitt über die eigene "Group"-Property auf.
+
+    App::FeaturePython besitzt (anders als App::DocumentObjectGroupPython mit
+    GroupExtension) keine eingebaute Pfadauflösung durch seine Group-Kinder.
+    Ohne diesen Hook schlägt jede Selektion/Bearbeitung eines Objekts
+    *innerhalb* einer Pattern-Kopie fehl ("Sub-object ... not found"), da
+    FreeCAD den Pfad "LinearPattern.Copy_1.Sketch" nicht durchnavigieren kann.
+    Bildet exakt die Logik von GroupExtension::extensionGetSubObject nach.
+    """
+    if not subname or '.' not in subname:
+        return False
+
+    dot = subname.index('.')
+    name = subname[:dot]
+    rest = subname[dot + 1:]
+
+    target = None
+    if name.startswith('$'):
+        label = name[1:]
+        for child in obj.Group:
+            if child.Label == label:
+                target = child
+                break
+    else:
+        candidate = obj.Document.getObject(name)
+        if candidate in list(obj.Group):
+            target = candidate
+
+    if target is None:
+        return False
+
+    return target.getSubObject(rest, retType=ret_type, matrix=mat, transform=True, depth=depth + 1)
+
+
+def _axis_from_reference(ref_obj, ref_sub):
+    """Ermittelt (Achsenvektor, Punkt auf der Achse) aus einer Referenz.
+
+    Unterstützt: gerade Kanten (Edge-Subelement) und Linien-/Datum-Achsen-
+    Objekte (Achse = lokale Z-Richtung der Placement, Punkt = Placement.Base).
+    Gibt None zurück, wenn die Referenz keine gültige Achse beschreibt.
+    """
+    if ref_obj is None:
+        return None
+    try:
+        if ref_sub and ref_sub.startswith('Edge'):
+            edge = ref_obj.Shape.getElement(ref_sub)
+            if len(edge.Vertexes) < 2:
+                return None
+            p1 = edge.Vertexes[0].Point
+            p2 = edge.Vertexes[-1].Point
+            direction = p2 - p1
+            if direction.Length < 1e-9:
+                return None
+            return direction.normalize(), p1
+
+        rot = ref_obj.Placement.Rotation
+        return rot.multVec(Vector(0, 0, 1)), ref_obj.Placement.Base
+    except Exception:
+        return None
+
+
+def _resolve_rotation_axis(obj):
+    """Liefert (Achsenvektor, Punkt auf der Achse) für das Pattern.
+
+    Ist ReferenceAxis gesetzt und gültig, hat sie Vorrang vor der globalen
+    X/Y/Z-Achse (Eigenschaft "Axis"), die weiterhin als einfacher Standardfall
+    durch den globalen Ursprung wirkt.
+    """
+    ref = getattr(obj, 'ReferenceAxis', None)
+    if ref and ref[0] is not None:
+        ref_sub = ref[1][0] if ref[1] else None
+        axis = _axis_from_reference(ref[0], ref_sub)
+        if axis is not None:
+            return axis
+        App.Console.PrintWarning(
+            f"FCProject: Pattern '{obj.Label}' hat eine ungültige ReferenceAxis, verwende '{obj.Axis}' statt.\n"
+        )
+    return _get_axis_vector(obj.Axis), Vector(0, 0, 0)
+
+
+def _check_reference_creates_cycle(obj, candidate):
+    """Prüft, ob die neue Abhängigkeit obj -> candidate (via ReferenceAxis) einen
+    DAG-Zyklus erzeugen würde, BEVOR die Eigenschaft tatsächlich gesetzt wird.
+
+    Eine neue Kante obj -> candidate schließt genau dann einen Zyklus, wenn
+    candidate im *bestehenden* Abhängigkeitsgraphen schon (transitiv) von obj
+    abhängt, d.h. ein Pfad candidate -> ... -> obj existiert. Das prüfen wir
+    über das von FreeCAD bereitgestellte getPathsByOutList().
+
+    Gibt den gefundenen Pfad (Liste von DocumentObject, candidate...obj) zurück,
+    oder None, falls keine Zyklusgefahr besteht.
+    """
+    if candidate is None or candidate == obj:
+        return None
+    try:
+        paths = candidate.getPathsByOutList(obj)
+    except Exception:
+        return None
+    return paths[0] if paths else None
+
+
+def _pattern_get_sub_objects(obj, reason):
+    return [f"{child.Name}." for child in obj.Group if child is not None and child.isAttachedToDocument()]
+
+
 class LinearPatternProxy:
     """Proxy für ein lineares Pattern-Feature (App::FeaturePython)."""
 
@@ -99,12 +205,15 @@ class LinearPatternProxy:
 
     def _add_properties(self, obj):
         if not hasattr(obj, 'Group'):
+            #HACK: 
             # PropertyLinkListHidden statt PropertyLinkList: Kopien dürfen auf
             # Objekte verweisen, die bereits einer Assembly/einem Part zugeordnet
             # sind, ohne den GeoFeatureGroup-Scope-Check ("out of scope") auszulösen.
             obj.addProperty("App::PropertyLinkListHidden", "Group", "Pattern", "Vom Pattern erzeugte Kopien", locked=True)
         if not hasattr(obj, 'SourceElement'):
-            obj.addProperty("App::PropertyLink", "SourceElement", "Pattern", "Zu wiederholendes Element")
+            # PropertyXLink statt PropertyLink: Quell-Element darf auch in einem
+            # anderen Dokument liegen (z.B. ein per Link eingebundenes Teil-Dokument).
+            obj.addProperty("App::PropertyXLink", "SourceElement", "Pattern", "Zu wiederholendes Element")
         if not hasattr(obj, 'Direction'):
             obj.addProperty("App::PropertyEnumeration", "Direction", "Pattern", "Richtung der Wiederholung")
             obj.Direction = ["X-Achse", "Y-Achse", "Z-Achse"]
@@ -118,6 +227,12 @@ class LinearPatternProxy:
     def onChanged(self, obj, prop):
         if prop == 'Count' and obj.Count < 0:
             obj.Count = 0
+
+    def getSubObject(self, obj, subname, ret_type, mat, transform, depth):
+        return _pattern_get_sub_object(obj, subname, ret_type, mat, transform, depth)
+
+    def getSubObjects(self, obj, reason):
+        return _pattern_get_sub_objects(obj, reason)
 
     def execute(self, obj):
         source = obj.SourceElement
@@ -163,11 +278,32 @@ class CircularPatternProxy:
             # sind, ohne den GeoFeatureGroup-Scope-Check ("out of scope") auszulösen.
             obj.addProperty("App::PropertyLinkListHidden", "Group", "Pattern", "Vom Pattern erzeugte Kopien", locked=True)
         if not hasattr(obj, 'SourceElement'):
-            obj.addProperty("App::PropertyLink", "SourceElement", "Pattern", "Zu wiederholendes Element")
+            # PropertyXLink statt PropertyLink: Quell-Element darf auch in einem
+            # anderen Dokument liegen (z.B. ein per Link eingebundenes Teil-Dokument).
+            obj.addProperty("App::PropertyXLink", "SourceElement", "Pattern", "Zu wiederholendes Element")
         if not hasattr(obj, 'Axis'):
-            obj.addProperty("App::PropertyEnumeration", "Axis", "Pattern", "Rotationsachse (durch den globalen Ursprung)")
+            obj.addProperty("App::PropertyEnumeration", "Axis", "Pattern", "Rotationsachse (durch den globalen Ursprung), falls keine ReferenceAxis gewählt ist")
             obj.Axis = ["X-Achse", "Y-Achse", "Z-Achse"]
             obj.Axis = "Z-Achse"
+        _ref_axis_type = "App::PropertyXLinkSub"
+        _ref_axis_tip = "Datum-Achse, gerade Kante oder Linienobjekt als Rotationsachse (überschreibt 'Axis')"
+        if not hasattr(obj, 'ReferenceAxis'):
+            # Normale (nicht versteckte) Link-Property: Änderungen an der Referenz
+            # lösen weiterhin automatisch ein Neuberechnen des Patterns aus. Ob die
+            # Auswahl einen DAG-Zyklus erzeugen würde, wird stattdessen VOR der
+            # Zuweisung im Task-Panel geprüft (siehe _check_reference_creates_cycle),
+            # damit der Nutzer die Referenz von vornherein passend wählen kann.
+            # PropertyXLink* statt PropertyLink*, damit die Referenz auch in einem
+            # anderen Dokument liegen darf.
+            obj.addProperty(_ref_axis_type, "ReferenceAxis", "Pattern", _ref_axis_tip)
+        elif obj.getTypeIdOfProperty('ReferenceAxis') != _ref_axis_type:
+            # Migration bereits gespeicherter Pattern-Objekte vom vorherigen
+            # (versteckten) Property-Typ zurück auf den normalen Typ.
+            old_value = obj.ReferenceAxis
+            obj.removeProperty('ReferenceAxis')
+            obj.addProperty(_ref_axis_type, "ReferenceAxis", "Pattern", _ref_axis_tip)
+            if old_value:
+                obj.ReferenceAxis = old_value
         if not hasattr(obj, 'Angle'):
             obj.addProperty("App::PropertyAngle", "Angle", "Pattern", "Gesamtwinkel des Patterns")
             obj.Angle = 360.0
@@ -179,6 +315,12 @@ class CircularPatternProxy:
         if prop == 'Count' and obj.Count < 0:
             obj.Count = 0
 
+    def getSubObject(self, obj, subname, ret_type, mat, transform, depth):
+        return _pattern_get_sub_object(obj, subname, ret_type, mat, transform, depth)
+
+    def getSubObjects(self, obj, reason):
+        return _pattern_get_sub_objects(obj, reason)
+
     def execute(self, obj):
         source = obj.SourceElement
         if source is None:
@@ -186,7 +328,7 @@ class CircularPatternProxy:
             return
 
         base = source.Placement
-        axis_vector = _get_axis_vector(obj.Axis)
+        axis_vector, axis_point = _resolve_rotation_axis(obj)
         angle = obj.Angle.Value
         count = obj.Count
 
@@ -200,7 +342,7 @@ class CircularPatternProxy:
 
         for i, copy in enumerate(copies, start=1):
             rot = Rotation(axis_vector, step * i)
-            new_base = rot.multVec(base.Base)
+            new_base = axis_point + rot.multVec(base.Base - axis_point)
             new_rot = rot.multiply(base.Rotation)
             copy.Placement = Placement(new_base, new_rot)
             _set_visibility(copy, True)
@@ -229,9 +371,8 @@ if _GUI_AVAILABLE:
         Die Tree-Verschachtelung der Kopien muss daher hier manuell erfolgen.
         """
 
-        def __init__(self, vobj, icon_path):
+        def __init__(self, vobj):
             vobj.Proxy = self
-            self.icon_path = icon_path
 
         def attach(self, vobj):
             self.Object = vobj.Object
@@ -240,7 +381,12 @@ if _GUI_AVAILABLE:
             return list(self.Object.Group)
 
         def getIcon(self):
-            return self.icon_path
+            # Beim Laden eines gespeicherten Dokuments ruft FreeCAD __setstate__
+            # statt __init__ auf - das Icon wird daher hier anhand des Proxy-Typs
+            # bestimmt statt aus einem beim Restore nicht vorhandenen Attribut.
+            if isinstance(self.Object.Proxy, CircularPatternProxy):
+                return os.path.join(ICON_DIR, 'circular_pattern.svg')
+            return os.path.join(ICON_DIR, 'assembly_pattern.svg')
 
         def doubleClicked(self, vobj):
             Gui.ActiveDocument.setEdit(vobj.Object.Name)
@@ -336,6 +482,7 @@ if _GUI_AVAILABLE:
             self.obj = obj
             self._snapshot = {
                 'Axis': obj.Axis,
+                'ReferenceAxis': obj.ReferenceAxis,
                 'Angle': obj.Angle.Value,
                 'Count': obj.Count,
             }
@@ -344,12 +491,28 @@ if _GUI_AVAILABLE:
             self.form.setWindowTitle("FCProject: Zirkulares Pattern bearbeiten")
             layout = QtWidgets.QVBoxLayout(self.form)
 
-            layout.addWidget(QtWidgets.QLabel("Rotationsachse:"))
+            layout.addWidget(QtWidgets.QLabel("Rotationsachse (Standard, durch den globalen Ursprung):"))
             self.axis_combo = QtWidgets.QComboBox()
             self.axis_combo.addItems(["X-Achse", "Y-Achse", "Z-Achse"])
             self.axis_combo.setCurrentText(obj.Axis)
             self.axis_combo.currentTextChanged.connect(self._on_change)
             layout.addWidget(self.axis_combo)
+
+            layout.addWidget(QtWidgets.QLabel(
+                "Oder: Datum-Achse, Kante oder Linienobjekt in 3D-Ansicht/Baum auswählen:"
+            ))
+            self.reference_label = QtWidgets.QLabel(self._format_reference(obj.ReferenceAxis))
+            self.reference_label.setWordWrap(True)
+            layout.addWidget(self.reference_label)
+
+            buttons_row = QtWidgets.QHBoxLayout()
+            self.pick_axis_button = QtWidgets.QPushButton("Auswahl als Achse verwenden")
+            self.pick_axis_button.clicked.connect(self._on_pick_axis)
+            buttons_row.addWidget(self.pick_axis_button)
+            self.clear_axis_button = QtWidgets.QPushButton("Zurücksetzen (X/Y/Z verwenden)")
+            self.clear_axis_button.clicked.connect(self._on_clear_axis)
+            buttons_row.addWidget(self.clear_axis_button)
+            layout.addLayout(buttons_row)
 
             layout.addWidget(QtWidgets.QLabel("Gesamtwinkel (°):"))
             self.angle_spinbox = QtWidgets.QDoubleSpinBox()
@@ -368,10 +531,65 @@ if _GUI_AVAILABLE:
             self.count_spinbox.valueChanged.connect(self._on_change)
             layout.addWidget(self.count_spinbox)
 
+        @staticmethod
+        def _format_reference(ref):
+            if not ref or ref[0] is None:
+                return "Keine ausgewählt (es wird die obige globale Achse verwendet)"
+            ref_obj, subs = ref
+            sub = subs[0] if subs else ""
+            return f"{ref_obj.Label}{'.' + sub if sub else ''}"
+
         def _on_change(self, *_args):
             self.obj.Axis = self.axis_combo.currentText()
             self.obj.Angle = self.angle_spinbox.value()
             self.obj.Count = self.count_spinbox.value()
+            self.obj.Document.recompute()
+
+        def _on_pick_axis(self):
+            selection = Gui.Selection.getSelectionEx()
+            if len(selection) != 1 or len(selection[0].SubElementNames) > 1:
+                QtWidgets.QMessageBox.warning(
+                    self.form,
+                    "FCProject Pattern",
+                    "Bitte genau eine Kante, Datum-Achse oder ein Linienobjekt in der 3D-Ansicht oder im Baum auswählen."
+                )
+                return
+
+            sel = selection[0]
+            sub = sel.SubElementNames[0] if sel.SubElementNames else None
+            if _axis_from_reference(sel.Object, sub) is None:
+                QtWidgets.QMessageBox.warning(
+                    self.form,
+                    "FCProject Pattern",
+                    "Die Auswahl ist keine gültige Achse (erwartet: gerade Kante, Datum-Achse oder Linienobjekt)."
+                )
+                return
+
+            cycle_path = _check_reference_creates_cycle(self.obj, sel.Object)
+            if cycle_path is not None:
+                # cycle_path = [Auswahl, ..., Pattern] (bestehender Pfad). Die neue
+                # Kante Pattern -> Auswahl (ReferenceAxis) würde ihn zum Kreis schließen.
+                chain = " → ".join(o.Label for o in cycle_path)
+                QtWidgets.QMessageBox.warning(
+                    self.form,
+                    "FCProject Pattern",
+                    "Diese Auswahl kann nicht als Achse verwendet werden: Sie würde eine "
+                    "zirkuläre Abhängigkeit erzeugen (das Pattern würde indirekt von sich "
+                    f"selbst abhängen).\n\nBestehende Abhängigkeitskette:\n{chain}\n\n"
+                    f"Die neue Verknüpfung '{self.obj.Label} → {sel.Object.Label}' würde diese "
+                    "Kette zu einem Kreis schließen.\n\n"
+                    "Wähle stattdessen eine Achse/Kante, die nicht (auch nicht indirekt über "
+                    "die Assembly) vom Pattern selbst abhängt - z.B. eine Kante am Quell-Element."
+                )
+                return
+
+            self.obj.ReferenceAxis = (sel.Object, [sub] if sub else [])
+            self.reference_label.setText(self._format_reference(self.obj.ReferenceAxis))
+            self.obj.Document.recompute()
+
+        def _on_clear_axis(self):
+            self.obj.ReferenceAxis = None
+            self.reference_label.setText(self._format_reference(None))
             self.obj.Document.recompute()
 
         def accept(self):
@@ -381,6 +599,7 @@ if _GUI_AVAILABLE:
 
         def reject(self):
             self.obj.Axis = self._snapshot['Axis']
+            self.obj.ReferenceAxis = self._snapshot['ReferenceAxis']
             self.obj.Angle = self._snapshot['Angle']
             self.obj.Count = self._snapshot['Count']
             self.obj.Document.recompute()
@@ -407,7 +626,7 @@ def make_linear_pattern(doc, assembly, source_element, direction="X-Achse", spac
             assembly.addObject(obj)
 
         if _GUI_AVAILABLE and obj.ViewObject:
-            ViewProviderPattern(obj.ViewObject, os.path.join(ICON_DIR, 'assembly_pattern.svg'))
+            ViewProviderPattern(obj.ViewObject)
 
         doc.recompute()
         doc.commitTransaction()
@@ -433,7 +652,7 @@ def make_circular_pattern(doc, assembly, source_element, axis="Z-Achse", angle=3
             assembly.addObject(obj)
 
         if _GUI_AVAILABLE and obj.ViewObject:
-            ViewProviderPattern(obj.ViewObject, os.path.join(ICON_DIR, 'circular_pattern.svg'))
+            ViewProviderPattern(obj.ViewObject)
 
         doc.recompute()
         doc.commitTransaction()
