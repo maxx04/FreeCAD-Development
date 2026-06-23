@@ -90,6 +90,156 @@ def _sync_link_copies(doc, source, existing_copies, target_count, label_prefix):
     return copies
 
 
+def _get_assembly_joint_modules():
+    """Importiert die echten Assembly-Workbench-Module für die Joint-Erstellung.
+
+    Gibt (JointObject, UtilsAssembly) zurück, oder (None, None), falls die
+    Assembly-Workbench nicht geladen ist (z.B. im Konsolenmodus ohne GUI).
+    """
+    try:
+        import JointObject
+        import UtilsAssembly
+        return JointObject, UtilsAssembly
+    except ImportError:
+        return None, None
+
+
+def _sub_name_for_child(child, root):
+    """Ermittelt den Subnamen-Pfad von `child` relativ zu `root` (über Parents)."""
+    if child is None or root is None or child == root:
+        return None
+    try:
+        for parent_obj, path in (child.Parents or []):
+            if parent_obj == root or parent_obj.Name == root.Name:
+                return f"{path}{child.Name}" if path.endswith('.') else f"{path}.{child.Name}"
+    except Exception:
+        pass
+    return child.Name
+
+
+def _first_lcs_subname(element):
+    """Sucht das erste lokale Koordinatensystem (LCS) in `element` (oder im
+    verlinkten Original, falls `element` ein App::Link ist) und gibt dessen
+    Subnamen-Pfad zurück. None, falls keines gefunden wird (Aufrufer fällt
+    dann auf die reine Objekt-Platzierung zurück).
+    """
+    if element is None:
+        return None
+    root = getattr(element, 'LinkedObject', None) or element
+    try:
+        children = list(root.OutList)
+    except Exception:
+        return None
+
+    for child in children:
+        if child is not None and child.isDerivedFrom('App::LocalCoordinateSystem'):
+            return _sub_name_for_child(child, root)
+    return None
+
+
+def _build_joint_ref(element, lcs_subname):
+    return [element, [lcs_subname or "", ""]]
+
+
+def _compute_joint_offset2(ref1, ref2, UtilsAssembly):
+    """Berechnet das Offset2 für ein Fixed-Joint, das die aktuelle relative
+    Position von ref1 und ref2 einfriert. None bei Fehler.
+    """
+    try:
+        plc1 = UtilsAssembly.findPlacement(ref1, False)
+        plc2 = UtilsAssembly.findPlacement(ref2, False)
+        if plc1 is None or plc2 is None:
+            return None
+        global1 = UtilsAssembly.getJcsGlobalPlc(plc1, ref1)
+        global2 = UtilsAssembly.getJcsGlobalPlc(plc2, ref2)
+        if global1 is None or global2 is None:
+            return None
+        return global2.inverse().multiply(global1)
+    except Exception:
+        return None
+
+
+def _sync_pattern_joints(doc, assembly, source, copies, existing_joints, label_prefix):
+    """Gleicht Stern-Joints (Original <-> jede Kopie) idempotent mit `copies` ab.
+
+    Die Joints sind rein informativ/dokumentarisch: sie machen die durch das
+    Pattern erzeugte Beziehung als echtes Assembly-Joint im Baum sichtbar und
+    editierbar, bestimmen aber NICHT die Position der Kopien - das bleibt
+    Aufgabe von execute() (Pattern-Code bleibt maßgeblich). Schlägt die
+    Joint-Erstellung fehl (z.B. Assembly-Workbench nicht geladen, kein
+    GeoFeatureGroup), wird das ohne Auswirkung auf das Pattern selbst nur
+    gewarnt - Joints sind ein optionales Add-on, kein hartes Erfordernis.
+    """
+    JointObject, UtilsAssembly = _get_assembly_joint_modules()
+    if JointObject is None or not hasattr(assembly, 'newObject'):
+        return [j for j in existing_joints if j is not None]
+
+    # Bestehende Joints einsammeln, die noch zu einer aktuellen Kopie passen;
+    # verwaiste Joints (Kopie wurde inzwischen entfernt, z.B. Count verkleinert) löschen.
+    joint_by_copy = {}
+    for joint in existing_joints:
+        if joint is None:
+            continue
+        try:
+            ref1_obj = joint.Reference1[0] if joint.Reference1 else None
+            ref2_obj = joint.Reference2[0] if joint.Reference2 else None
+        except Exception:
+            continue
+        other = ref2_obj if ref1_obj == source else (ref1_obj if ref2_obj == source else None)
+        if other in copies and other not in joint_by_copy:
+            joint_by_copy[other] = joint
+        else:
+            try:
+                doc.removeObject(joint.Name)
+            except Exception:
+                pass
+
+    try:
+        joint_group = UtilsAssembly.getJointGroup(assembly)
+    except Exception as e:
+        App.Console.PrintWarning(f"FCProject: Konnte Joint-Gruppe nicht ermitteln: {e}\n")
+        return list(joint_by_copy.values())
+
+    ref1 = _build_joint_ref(source, _first_lcs_subname(source))
+    result = []
+
+    for i, copy in enumerate(copies, start=1):
+        ref2 = _build_joint_ref(copy, _first_lcs_subname(copy))
+        offset = _compute_joint_offset2(ref1, ref2, UtilsAssembly)
+
+        joint = joint_by_copy.get(copy)
+        if joint is None:
+            try:
+                joint = joint_group.newObject("App::FeaturePython", f"{label_prefix}Joint_{i}")
+                joint.Label = f"{label_prefix}Joint_{i}"
+                JointObject.Joint(joint, 0)  # Index 0 = "Fixed"
+                if _GUI_AVAILABLE and joint.ViewObject:
+                    JointObject.ViewProviderJoint(joint.ViewObject)
+                joint.Reference1 = ref1
+                joint.Reference2 = ref2
+            except Exception as e:
+                App.Console.PrintWarning(
+                    f"FCProject: Joint zwischen '{source.Label}' und '{copy.Label}' konnte nicht erstellt werden: {e}\n"
+                )
+                continue
+
+        if offset is not None:
+            try:
+                joint.Offset2 = offset
+            except Exception:
+                pass
+
+        try:
+            joint_group.purgeTouched()
+            joint.purgeTouched()
+        except Exception:
+            pass
+
+        result.append(joint)
+
+    return result
+
+
 def _pattern_get_sub_object(obj, subname, ret_type, mat, transform, depth):
     """Löst einen Pfad-Abschnitt über die eigene "Group"-Property auf.
 
@@ -205,7 +355,7 @@ class LinearPatternProxy:
 
     def _add_properties(self, obj):
         if not hasattr(obj, 'Group'):
-            #HACK: 
+            #HACK:
             # PropertyLinkListHidden statt PropertyLinkList: Kopien dürfen auf
             # Objekte verweisen, die bereits einer Assembly/einem Part zugeordnet
             # sind, ohne den GeoFeatureGroup-Scope-Check ("out of scope") auszulösen.
@@ -223,6 +373,10 @@ class LinearPatternProxy:
         if not hasattr(obj, 'Count'):
             obj.addProperty("App::PropertyInteger", "Count", "Pattern", "Anzahl Kopien (zusätzlich zum Original)")
             obj.Count = 3
+        if not hasattr(obj, 'Joints'):
+            # Hidden, wie Group: rein dokumentarisch, kein Einfluss auf den DAG.
+            obj.addProperty("App::PropertyLinkListHidden", "Joints", "Pattern",
+                             "Vom Pattern erzeugte Fixed-Joints (Original<->jede Kopie), rein informativ", locked=True)
 
     def onChanged(self, obj, prop):
         if prop == 'Count' and obj.Count < 0:
@@ -252,6 +406,13 @@ class LinearPatternProxy:
             _set_visibility(copy, True)
 
         obj.Group = copies
+
+        assembly = obj.getParentGeoFeatureGroup()
+        if assembly is not None:
+            try:
+                obj.Joints = _sync_pattern_joints(obj.Document, assembly, source, copies, list(obj.Joints), f"{obj.Name}_")
+            except Exception as e:
+                App.Console.PrintWarning(f"FCProject: Pattern-Joints konnten nicht synchronisiert werden: {e}\n")
 
     def onDocumentRestored(self, obj):
         self._add_properties(obj)
@@ -310,6 +471,10 @@ class CircularPatternProxy:
         if not hasattr(obj, 'Count'):
             obj.addProperty("App::PropertyInteger", "Count", "Pattern", "Anzahl Kopien (zusätzlich zum Original)")
             obj.Count = 5
+        if not hasattr(obj, 'Joints'):
+            # Hidden, wie Group: rein dokumentarisch, kein Einfluss auf den DAG.
+            obj.addProperty("App::PropertyLinkListHidden", "Joints", "Pattern",
+                             "Vom Pattern erzeugte Fixed-Joints (Original<->jede Kopie), rein informativ", locked=True)
 
     def onChanged(self, obj, prop):
         if prop == 'Count' and obj.Count < 0:
@@ -348,6 +513,13 @@ class CircularPatternProxy:
             _set_visibility(copy, True)
 
         obj.Group = copies
+
+        assembly = obj.getParentGeoFeatureGroup()
+        if assembly is not None:
+            try:
+                obj.Joints = _sync_pattern_joints(obj.Document, assembly, source, copies, list(obj.Joints), f"{obj.Name}_")
+            except Exception as e:
+                App.Console.PrintWarning(f"FCProject: Pattern-Joints konnten nicht synchronisiert werden: {e}\n")
 
     def onDocumentRestored(self, obj):
         self._add_properties(obj)
