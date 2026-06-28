@@ -1,0 +1,45 @@
+diff --git a/src/Mod/Assembly/JointObject.py b/src/Mod/Assembly/JointObject.py
+index adfda12e86..b90c0896d3 100644
+--- a/src/Mod/Assembly/JointObject.py
++++ b/src/Mod/Assembly/JointObject.py
+@@ -1532,7 +1532,15 @@ class MakeJointSelGate:
+                 if parent.isDerivedFrom("App::LocalCoordinateSystem"):
+                     datum = parent
+ 
+-            if self.assembly.hasObject(datum) and hasattr(datum, "MapMode"):
++            # hasObject() cannot check objects belonging to another document (e.g. a datum
++            # reached through an App::Link into a different .FCStd file in multi-document
++            # assemblies) and raises FreeCADError in that case - skip the membership/MapMode
++            # check then and accept the datum, same as for empty links above.
++            if (
++                datum.Document is self.assembly.Document
++                and self.assembly.hasObject(datum)
++                and hasattr(datum, "MapMode")
++            ):
+                 # accept only datum that are not attached
+                 return datum.MapMode == "Deactivated"
+ 
+@@ -1627,11 +1635,18 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+             self.createJointObject()
+             self.visibilityBackup = False
+ 
+-        self.jForm.angleSpinbox.valueChanged.connect(self.onAngleChanged)
+-        self.jForm.distanceSpinbox.valueChanged.connect(self.onDistanceChanged)
+-        self.jForm.distanceSpinbox2.valueChanged.connect(self.onDistance2Changed)
+-        self.jForm.offsetSpinbox.valueChanged.connect(self.onOffsetChanged)
+-        self.jForm.rotationSpinbox.valueChanged.connect(self.onRotationChanged)
++        # valueChanged is overloaded (double / Base::Quantity) in C++, but PySide6 only exposes
++        # the Base::Quantity variant to Python in this build, which it cannot marshal
++        # ("parameter 0 of type Base::Quantity cannot be converted") - the slot is never even
++        # invoked, so the typed value is silently lost. textChanged is emitted right after the
++        # same internal value update (see QuantitySpinBox::updateFromCache) and is a plain
++        # QString, so it connects safely; the handlers below ignore the argument anyway and
++        # re-read rawValue from the spinbox.
++        self.jForm.angleSpinbox.textChanged.connect(self.onAngleChanged)
++        self.jForm.distanceSpinbox.textChanged.connect(self.onDistanceChanged)
++        self.jForm.distanceSpinbox2.textChanged.connect(self.onDistance2Changed)
++        self.jForm.offsetSpinbox.textChanged.connect(self.onOffsetChanged)
++        self.jForm.rotationSpinbox.textChanged.connect(self.onRotationChanged)
+         bind = Gui.ExpressionBinding(self.jForm.angleSpinbox).bind(self.joint, "Angle")
+         bind = Gui.ExpressionBinding(self.jForm.distanceSpinbox).bind(self.joint, "Distance")
+         bind = Gui.ExpressionBinding(self.jForm.distanceSpinbox2).bind(self.joint, "Distance2")

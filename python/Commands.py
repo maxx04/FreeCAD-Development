@@ -1,4 +1,4 @@
-# Macro Version: 1.6.0 - FCProject: Command-Schnittstelle für Toolbar
+#  FCProject: Command-Schnittstelle für Toolbar
 
 import FreeCAD as App
 import FreeCADGui as Gui

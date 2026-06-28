@@ -9,10 +9,14 @@
       "Bash(grep -rn \"def addTipNameToSub\" /home/maxx/Documents/FreeCAD-Development/ 2>/dev/null | head -20)",
       "Read(//home/maxx/Documents/FreeCAD-Development/**)",
       "Bash(find /home/maxx -name \"UtilsAssembly.py\" 2>/dev/null | head -5)",
-      "Read(//home/maxx/**)"
+      "Read(//home/maxx/**)",
+      "Bash(xargs -I{} sh -c 'echo {}; md5sum {}')",
+      "Bash(git add *)"
     ],
     "additionalDirectories": [
-      "/home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject"
+      "/home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject",
+      "/home/maxx/freecad/freecad-source/src/Mod/Assembly",
+      "/home/maxx/freecad/install/Mod/Assembly"
     ]
   }
 }

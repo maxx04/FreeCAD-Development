@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Part Exchange Icon - Original-Box links, Ersatz-Box rechts, Tausch-Pfeile dazwischen -->
+  <defs>
+    <linearGradient id="pegrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#E27B4A;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#BD5A35;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="pegrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4A90E2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#357ABD;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Hintergrund transparent -->
+  <rect width="64" height="64" fill="white" opacity="0"/>
+
+  <!-- Original-Box (links, orange) -->
+  <g transform="translate(4, 30)">
+    <rect x="0" y="0" width="16" height="16" fill="url(#pegrad1)" stroke="#8B3A1E" stroke-width="0.5"/>
+    <polygon points="0,0 5,-4 21,-4 16,0" fill="#F59A6B" opacity="0.8"/>
+    <polygon points="16,0 21,-4 21,12 16,16" fill="#8B3A1E" opacity="0.6"/>
+  </g>
+
+  <!-- Ersatzteil-Box (rechts, blau) -->
+  <g transform="translate(44, 18)">
+    <rect x="0" y="0" width="16" height="16" fill="url(#pegrad2)" stroke="#1F4E79" stroke-width="0.5"/>
+    <polygon points="0,0 5,-4 21,-4 16,0" fill="#8AB6F0" opacity="0.8"/>
+    <polygon points="16,0 21,-4 21,12 16,16" fill="#1F4E79" opacity="0.6"/>
+  </g>
+
+  <!-- Tausch-Pfeile (zwei gegenläufige Bögen) -->
+  <path d="M 22 24 A 14 10 0 0 1 42 18" fill="none" stroke="#555555" stroke-width="2" marker-end="url(#arrowhead1)"/>
+  <path d="M 42 46 A 14 10 0 0 1 22 40" fill="none" stroke="#555555" stroke-width="2" marker-end="url(#arrowhead2)"/>
+  <defs>
+    <marker id="arrowhead1" markerWidth="6" markerHeight="4" refX="3" refY="2" orient="auto">
+      <polygon points="0 0, 6 2, 0 4" fill="#555555"/>
+    </marker>
+    <marker id="arrowhead2" markerWidth="6" markerHeight="4" refX="3" refY="2" orient="auto">
+      <polygon points="0 0, 6 2, 0 4" fill="#555555"/>
+    </marker>
+  </defs>
+</svg>

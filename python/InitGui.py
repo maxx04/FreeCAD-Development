@@ -26,6 +26,7 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         import BOMCommand as BOMCommand
         import AssemblyPatternCommand as AssemblyPatternCommand
         import PatternFeatures as PatternFeatures
+        import PartExchangeCommand as PartExchangeCommand
         import DocObserver
         DocObserver.register()
 
@@ -33,7 +34,8 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
             "FCProject_ProjectManager",
             "FCProject_CreatePart",
             "FCProject_ExportBOM",
-            "FCProject_PatternGroup"
+            "FCProject_PatternGroup",
+            "FCProject_PartExchange"
         ])
 
 
