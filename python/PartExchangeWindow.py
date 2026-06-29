@@ -8,6 +8,7 @@
 
 import FreeCAD as App
 import FreeCADGui as Gui
+import Part
 from PySide6 import QtWidgets, QtCore
 
 from PartExchangeAnalyzer import (
@@ -34,6 +35,8 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._original_joints = find_joints_referencing(original_obj)
         self._mappings = []  # [{"original": entry, "replacement_subelement": str}]
         self._pending_original = None
+        self._forced_visible = []  # ViewObjects, die für die Hervorhebung sichtbar gemacht wurden
+        self._marker_objs = {}  # doc.Name -> temporärer Marker (Part::Feature, kleine Kugel)
 
         self.setWindowTitle("FCProject: Part/Assembly ersetzen – Joint-Zuordnung")
         self.setModal(False)
@@ -81,6 +84,12 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self.pending_label = QtWidgets.QLabel()
         main_layout.addWidget(self.pending_label)
 
+        self.highlight_warning_label = QtWidgets.QLabel()
+        self.highlight_warning_label.setStyleSheet("color: #b8860b;")
+        self.highlight_warning_label.setWordWrap(True)
+        self.highlight_warning_label.setVisible(False)
+        main_layout.addWidget(self.highlight_warning_label)
+
         mapping_box = QtWidgets.QGroupBox("Zuordnungen (Joint → Ersatzteil-Referenz)")
         mapping_layout = QtWidgets.QVBoxLayout(mapping_box)
         self.mapping_table = QtWidgets.QTableWidget(0, 3)
@@ -91,6 +100,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self.mapping_table.setColumnWidth(2, 90)
         self.mapping_table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.mapping_table.verticalHeader().setVisible(False)
+        self.mapping_table.cellClicked.connect(self._on_mapping_row_clicked)
         mapping_layout.addWidget(self.mapping_table)
         main_layout.addWidget(mapping_box, stretch=1)
 
@@ -121,7 +131,9 @@ class PartExchangeWindow(QtWidgets.QDialog):
         if entry is None:
             return
         self._pending_original = entry
-        self._select(self.original_doc, self.original_obj, entry.get("subelement") or "")
+        sub = entry.get("subelement") or ""
+        self._select(self.original_doc, self.original_obj, sub)
+        self._show_marker(self.original_doc, self.original_obj, sub, (1.0, 0.0, 1.0))
         self._update_pending_label()
 
     def _on_use_selection_clicked(self):
@@ -171,7 +183,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._refresh_mapping_table()
         self._update_apply_button_state()
 
-    def _select(self, doc, obj, sub):
+    def _select(self, doc, obj, sub, *, clear=True):
         try:
             if Gui.ActiveDocument is None or Gui.ActiveDocument.Document is not doc:
                 Gui.setActiveDocument(doc.Name)
@@ -180,15 +192,172 @@ class PartExchangeWindow(QtWidgets.QDialog):
                 f"FCProject PartExchange: Dokument '{doc.Name}' konnte nicht aktiviert werden: {str(e)}\n"
             )
         try:
-            Gui.Selection.clearSelection(doc.Name)
+            # Eine von der Assembly-Werkbank (z.B. Joint erstellen/bearbeiten) hinterlassene
+            # Selection-Gate lehnt addSelection() sonst lautlos ab (nur eine kurze Meldung in
+            # der Statusleiste des Hauptfensters, kein Report-View-Eintrag, kein Python-Fehler).
+            Gui.Selection.removeSelectionGate(doc.Name)
         except Exception as e:
-            App.Console.PrintWarning(f"FCProject PartExchange: Auswahl konnte nicht geleert werden: {str(e)}\n")
+            App.Console.PrintWarning(
+                f"FCProject PartExchange: Selection-Gate für '{doc.Name}' konnte nicht entfernt werden: {str(e)}\n"
+            )
+        self._ensure_visible(obj, sub)
+        if clear:
+            try:
+                Gui.Selection.clearSelection(doc.Name)
+            except Exception as e:
+                App.Console.PrintWarning(
+                    f"FCProject PartExchange: Auswahl konnte nicht geleert werden: {str(e)}\n"
+                )
         try:
-            Gui.Selection.addSelection(doc.Name, obj.Name, sub)
+            ok = Gui.Selection.addSelection(doc.Name, obj.Name, sub)
+            if ok is False:
+                App.Console.PrintWarning(
+                    f"FCProject PartExchange: Auswahl von '{obj.Label}.{sub}' wurde abgelehnt "
+                    "(vermutlich eine aktive Selection-Gate/Selection-Filter-Einschränkung).\n"
+                )
         except Exception as e:
             App.Console.PrintWarning(
                 f"FCProject PartExchange: '{obj.Label}' konnte nicht selektiert werden: {str(e)}\n"
             )
+        self._fit_view_to_selection()
+
+    def _show_marker(self, doc, obj, sub, color):
+        """Setzt einen temporären Marker (kleine Kugel) direkt am referenzierten
+        Punkt (Face/Edge/Vertex), berechnet aus der echten OCC-Shape statt über
+        FreeCADs Selektions-/ViewProvider-Hervorhebung.
+
+        Manche ViewProvider (z.B. SheetMetals "BaseShape": getDisplayModes() -> [])
+        rendern keine Element-Hervorhebung - die zugrunde liegende Shape/Topologie
+        (Faces/Edges/Vertexes) ist davon unberührt und über getSubObject() immer
+        zuverlässig abrufbar. Der Marker ist ein normales Part::Feature mit
+        Standard-ViewProvider und funktioniert deshalb unabhängig vom Referenz-Typ.
+        """
+        self._set_highlight_warning(None)
+        if not sub:
+            return
+        try:
+            shape = obj.getSubObject(sub, 0)
+        except Exception as e:
+            App.Console.PrintWarning(
+                f"FCProject PartExchange: Shape für '{obj.Label}.{sub}' konnte nicht ermittelt werden: {str(e)}\n"
+            )
+            return
+        if shape is None or not hasattr(shape, "BoundBox"):
+            self._set_highlight_warning(sub)
+            return
+
+        point = None
+        for attr in ("CenterOfMass", "Point"):
+            try:
+                point = getattr(shape, attr)
+                break
+            except Exception:
+                continue
+        if point is None:
+            point = shape.BoundBox.Center
+
+        # Größe relativ zum GANZEN Bauteil statt zur (oft winzigen) Einzelfläche
+        # bemessen - sonst wirkt der Marker nach dem Auto-Zoom auf sich selbst
+        # riesig, weil "Fit Selection" immer bildschirmfüllend zoomt.
+        part_diagonal = shape.BoundBox.DiagonalLength
+        whole_obj = None
+        try:
+            chain = obj.getSubObjectList(sub)
+        except Exception:
+            chain = None
+        if chain:
+            whole_obj = chain[-1]
+            tip = getattr(whole_obj, "Tip", None)
+            display_obj = tip if tip is not None else whole_obj
+            try:
+                part_diagonal = display_obj.Shape.BoundBox.DiagonalLength
+            except Exception:
+                pass
+
+        radius = max(part_diagonal * 0.02, 0.3)
+        marker = self._marker_objs.get(doc.Name)
+        if marker is None or marker not in doc.Objects:
+            marker = doc.addObject("Part::Feature", "_FCProjectExchangeMarker")
+            marker.ViewObject.Selectable = False
+            self._marker_objs[doc.Name] = marker
+        marker.Shape = Part.makeSphere(radius, point)
+        marker.ViewObject.ShapeColor = color
+        marker.ViewObject.Visibility = True
+
+        # Für den Zoom das ganze Bauteil zusammen mit dem Marker selektieren,
+        # damit die Kamera nicht bis auf Marker-Größe heranzoomt, sondern das
+        # Bauteil als Kontext mit im Bild bleibt.
+        self._select(doc, marker, "")
+        if whole_obj is not None:
+            prefix, _tail = sub.rsplit(".", 1) if "." in sub else ("", sub)
+            display_name = (tip.Name if tip is not None else whole_obj.Name)
+            whole_sub = f"{prefix}.{display_name}." if prefix else f"{display_name}."
+            try:
+                Gui.Selection.addSelection(doc.Name, obj.Name, whole_sub)
+            except Exception:
+                pass
+        self._fit_view_to_selection()
+
+    def _set_highlight_warning(self, info):
+        if not info:
+            self.highlight_warning_label.setVisible(False)
+            return
+        self.highlight_warning_label.setText(
+            f"⚠ Referenz '{info}' konnte nicht als Geometrie aufgelöst werden - "
+            "kein Marker gesetzt. Bitte den Textpfad oben manuell prüfen."
+        )
+        self.highlight_warning_label.setVisible(True)
+
+    def _ensure_visible(self, obj, sub):
+        """Macht alle Objekte entlang des Subnamen-Pfads sichtbar, bevor sie selektiert werden.
+
+        Viele Referenzen (z.B. Kaufteil-Bodies) sind standardmäßig ausgeblendet
+        (zur Entflechtung der Baugruppendarstellung) - eine Selektion auf einem
+        unsichtbaren Objekt erzeugt aber keine sichtbare Hervorhebung. Bereits
+        ausgeblendete Objekte werden vermerkt, um sie beim Schließen des Fensters
+        wieder auf den Ursprungszustand zurückzusetzen.
+        """
+        try:
+            chain = obj.getSubObjectList(sub) if sub else [obj]
+        except Exception:
+            chain = [obj]
+        for o in chain:
+            vobj = getattr(o, "ViewObject", None)
+            if vobj is None:
+                continue
+            try:
+                if not vobj.Visibility:
+                    self._forced_visible.append(vobj)
+                    vobj.Visibility = True
+            except Exception as e:
+                App.Console.PrintWarning(
+                    f"FCProject PartExchange: '{o.Label}' konnte nicht sichtbar gemacht werden: {str(e)}\n"
+                )
+
+    def closeEvent(self, event):
+        for vobj in self._forced_visible:
+            try:
+                vobj.Visibility = False
+            except Exception:
+                pass
+        self._forced_visible.clear()
+        for marker in self._marker_objs.values():
+            try:
+                marker.Document.removeObject(marker.Name)
+            except Exception:
+                pass
+        self._marker_objs.clear()
+        super().closeEvent(event)
+
+    @staticmethod
+    def _fit_view_to_selection():
+        """Zoomt die aktive 3D-Ansicht auf die aktuelle Auswahl (Std_ViewFitSelection-Aufruf),
+        damit eine hervorgehobene Referenz auch sichtbar ist, wenn sie außerhalb des
+        aktuellen Bildausschnitts liegt oder sehr klein ist."""
+        try:
+            Gui.SendMsgToActiveView("ViewSelection")
+        except Exception as e:
+            App.Console.PrintWarning(f"FCProject PartExchange: Zoom auf Auswahl fehlgeschlagen: {str(e)}\n")
 
     # ----------------------------------------------------------- Mapping
 
@@ -213,6 +382,24 @@ class PartExchangeWindow(QtWidgets.QDialog):
             del self._mappings[row]
             self._refresh_mapping_table()
             self._update_apply_button_state()
+
+    def _on_mapping_row_clicked(self, row, _column):
+        if not (0 <= row < len(self._mappings)):
+            return
+        mapping = self._mappings[row]
+        original = mapping["original"]
+        self._pending_original = original
+        self._update_pending_label()
+
+        same_doc = self.replacement_doc is self.original_doc
+        original_sub = original.get("subelement") or ""
+        self._select(self.original_doc, self.original_obj, original_sub)
+        self._show_marker(self.original_doc, self.original_obj, original_sub, (1.0, 0.0, 1.0))
+        if not same_doc:
+            QtWidgets.QApplication.processEvents()
+        replacement_sub = mapping["replacement_subelement"] or ""
+        self._select(self.replacement_doc, self.replacement_obj, replacement_sub, clear=not same_doc)
+        self._show_marker(self.replacement_doc, self.replacement_obj, replacement_sub, (0.0, 1.0, 1.0))
 
     def _update_apply_button_state(self):
         required_keys = {_joint_key(entry) for entry in self._original_joints}
