@@ -6,9 +6,10 @@
 # Auswirkungen auf andere Abhängigkeiten (Gruppenmitgliedschaft, generische
 # Links, Ausblenden/Umbenennen des Originals) sind explizit ein späterer Schritt.
 
+import re
+
 import FreeCAD as App
 import FreeCADGui as Gui
-import Part
 from PySide6 import QtWidgets, QtCore
 
 from PartExchangeAnalyzer import (
@@ -16,6 +17,13 @@ from PartExchangeAnalyzer import (
 )
 
 ENTRY_ROLE = QtCore.Qt.UserRole
+
+# Subname-Endung (z.B. "Face14") -> ViewProvider-Property mit einer Farbe pro Element.
+# Teil von ViewProviderPartExt (Mod/Part/Gui/ViewProviderExt.h) - unabhängig von
+# eigenen getDisplayModes()-Overrides (z.B. SheetMetal "BaseShape": liefert []) und
+# unabhängig vom Selection-System.
+_ELEMENT_COLOR_PROP = {"Face": "DiffuseColor", "Edge": "LineColorArray", "Vertex": "PointColorArray"}
+_ELEMENT_COUNT_ATTR = {"Face": "Faces", "Edge": "Edges", "Vertex": "Vertexes"}
 
 
 def _joint_key(entry):
@@ -31,12 +39,17 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self.replacement_obj = replacement_obj
         self.original_doc = original_obj.Document
         self.replacement_doc = replacement_obj.Document
+        # Anzeige-Dokument des Originals: das eigentliche Teil-Dokument (z.B.
+        # NM3_017_P_Einzelteil_), nicht die Baugruppe - in der Baugruppe muss
+        # für die Referenzprüfung nichts selektiert werden.
+        self.original_display_doc = self._resolve_display_doc(original_obj)
 
         self._original_joints = find_joints_referencing(original_obj)
         self._mappings = []  # [{"original": entry, "replacement_subelement": str}]
         self._pending_original = None
         self._forced_visible = []  # ViewObjects, die für die Hervorhebung sichtbar gemacht wurden
-        self._marker_objs = {}  # doc.Name -> temporärer Marker (Part::Feature, kleine Kugel)
+        self._color_overrides = {}  # (doc.Name, obj.Name, prop) -> (ViewObject, prop, Original-Farbliste)
+        self._embedded_views = []  # [(widget, doc)] - aus dem Haupt-MDI-Bereich ausgeliehene 3D-Ansichten
 
         self.setWindowTitle("FCProject: Part/Assembly ersetzen – Joint-Zuordnung")
         self.setModal(False)
@@ -46,7 +59,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._update_pending_label()
         self._update_apply_button_state()
 
-        self._arrange_3d_views()
+        self._embed_3d_views()
         self._position_below_main_window()
 
     # ------------------------------------------------------------------ UI
@@ -58,10 +71,13 @@ class PartExchangeWindow(QtWidgets.QDialog):
 
         left_box = QtWidgets.QGroupBox(f"Original: {self.original_obj.Label}")
         left_layout = QtWidgets.QVBoxLayout(left_box)
-        left_layout.addWidget(QtWidgets.QLabel("Joints, die dieses Teil referenzieren:"))
+        left_layout.addWidget(QtWidgets.QLabel("Joints, die dieses Teil referenzieren:"), stretch=0)
         self.joint_list = QtWidgets.QListWidget()
+        self.joint_list.setMaximumHeight(110)
         self.joint_list.itemClicked.connect(self._on_joint_clicked)
-        left_layout.addWidget(self.joint_list)
+        left_layout.addWidget(self.joint_list, stretch=0)
+        self.original_view_container = QtWidgets.QVBoxLayout()
+        left_layout.addLayout(self.original_view_container, stretch=1)
         columns.addWidget(left_box)
 
         right_box = QtWidgets.QGroupBox(f"Ersatzteil: {self.replacement_obj.Label}")
@@ -69,17 +85,18 @@ class PartExchangeWindow(QtWidgets.QDialog):
         right_layout.addWidget(QtWidgets.QLabel(
             "Fläche/Kante/LCS am Ersatzteil im 3D-Fenster ODER im Baum anklicken "
             "(z.B. Origin-Achse/-Ebene), dann übernehmen:"
-        ))
+        ), stretch=0)
         self.selection_label = QtWidgets.QLabel("Aktuelle 3D-Auswahl: –")
         self.selection_label.setWordWrap(True)
-        right_layout.addWidget(self.selection_label)
+        right_layout.addWidget(self.selection_label, stretch=0)
         self.use_selection_btn = QtWidgets.QPushButton("Als Referenz übernehmen")
         self.use_selection_btn.clicked.connect(self._on_use_selection_clicked)
-        right_layout.addWidget(self.use_selection_btn)
-        right_layout.addStretch()
+        right_layout.addWidget(self.use_selection_btn, stretch=0)
+        self.replacement_view_container = QtWidgets.QVBoxLayout()
+        right_layout.addLayout(self.replacement_view_container, stretch=1)
         columns.addWidget(right_box)
 
-        main_layout.addLayout(columns, stretch=2)
+        main_layout.addLayout(columns, stretch=3)
 
         self.pending_label = QtWidgets.QLabel()
         main_layout.addWidget(self.pending_label)
@@ -132,8 +149,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
             return
         self._pending_original = entry
         sub = entry.get("subelement") or ""
-        self._select(self.original_doc, self.original_obj, sub)
-        self._show_marker(self.original_doc, self.original_obj, sub, (1.0, 0.0, 1.0))
+        self._highlight_reference(self.original_obj, sub, (1.0, 0.0, 1.0))
         self._update_pending_label()
 
     def _on_use_selection_clicked(self):
@@ -183,128 +199,99 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._refresh_mapping_table()
         self._update_apply_button_state()
 
-    def _select(self, doc, obj, sub, *, clear=True):
-        try:
-            if Gui.ActiveDocument is None or Gui.ActiveDocument.Document is not doc:
-                Gui.setActiveDocument(doc.Name)
-        except Exception as e:
-            App.Console.PrintWarning(
-                f"FCProject PartExchange: Dokument '{doc.Name}' konnte nicht aktiviert werden: {str(e)}\n"
-            )
-        try:
-            # Eine von der Assembly-Werkbank (z.B. Joint erstellen/bearbeiten) hinterlassene
-            # Selection-Gate lehnt addSelection() sonst lautlos ab (nur eine kurze Meldung in
-            # der Statusleiste des Hauptfensters, kein Report-View-Eintrag, kein Python-Fehler).
-            Gui.Selection.removeSelectionGate(doc.Name)
-        except Exception as e:
-            App.Console.PrintWarning(
-                f"FCProject PartExchange: Selection-Gate für '{doc.Name}' konnte nicht entfernt werden: {str(e)}\n"
-            )
-        self._ensure_visible(obj, sub)
-        if clear:
-            try:
-                Gui.Selection.clearSelection(doc.Name)
-            except Exception as e:
-                App.Console.PrintWarning(
-                    f"FCProject PartExchange: Auswahl konnte nicht geleert werden: {str(e)}\n"
-                )
-        try:
-            ok = Gui.Selection.addSelection(doc.Name, obj.Name, sub)
-            if ok is False:
-                App.Console.PrintWarning(
-                    f"FCProject PartExchange: Auswahl von '{obj.Label}.{sub}' wurde abgelehnt "
-                    "(vermutlich eine aktive Selection-Gate/Selection-Filter-Einschränkung).\n"
-                )
-        except Exception as e:
-            App.Console.PrintWarning(
-                f"FCProject PartExchange: '{obj.Label}' konnte nicht selektiert werden: {str(e)}\n"
-            )
-        self._fit_view_to_selection()
+    def _highlight_reference(self, obj, sub, color):
+        """Färbt das referenzierte Face/Edge/Vertex direkt auf der echten Geometrie ein
+        (statt eines separaten Marker-Objekts) - die Baugruppen-Ansicht wird dafür
+        nicht gebraucht, der Wechsel passiert direkt im Teil-Dokument.
 
-    def _show_marker(self, doc, obj, sub, color):
-        """Setzt einen temporären Marker (kleine Kugel) direkt am referenzierten
-        Punkt (Face/Edge/Vertex), berechnet aus der echten OCC-Shape statt über
-        FreeCADs Selektions-/ViewProvider-Hervorhebung.
-
-        Manche ViewProvider (z.B. SheetMetals "BaseShape": getDisplayModes() -> [])
-        rendern keine Element-Hervorhebung - die zugrunde liegende Shape/Topologie
-        (Faces/Edges/Vertexes) ist davon unberührt und über getSubObject() immer
-        zuverlässig abrufbar. Der Marker ist ein normales Part::Feature mit
-        Standard-ViewProvider und funktioniert deshalb unabhängig vom Referenz-Typ.
+        Bewusst KEINE Gui.Selection-Auswahl des ganzen Objekts (z.B. für einen
+        Zoom-Fit): das löst bei ViewProvidern ohne Element-Hervorhebung (z.B.
+        SheetMetals "BaseShape") FreeCADs native Ganzes-Objekt-Auswahl aus, die
+        die normale Schattierung durch eine reine Drahtmodell-Darstellung ersetzt.
         """
         self._set_highlight_warning(None)
         if not sub:
             return
-        try:
-            shape = obj.getSubObject(sub, 0)
-        except Exception as e:
-            App.Console.PrintWarning(
-                f"FCProject PartExchange: Shape für '{obj.Label}.{sub}' konnte nicht ermittelt werden: {str(e)}\n"
-            )
-            return
-        if shape is None or not hasattr(shape, "BoundBox"):
+        self._ensure_visible(obj, sub)
+        display_obj = self._set_element_color(obj, sub, color)
+        if display_obj is None:
             self._set_highlight_warning(sub)
             return
+        self._ensure_view(display_obj.Document)
+        try:
+            Gui.setActiveDocument(display_obj.Document.Name)
+        except Exception:
+            pass
 
-        point = None
-        for attr in ("CenterOfMass", "Point"):
-            try:
-                point = getattr(shape, attr)
-                break
-            except Exception:
-                continue
-        if point is None:
-            point = shape.BoundBox.Center
-
-        # Größe relativ zum GANZEN Bauteil statt zur (oft winzigen) Einzelfläche
-        # bemessen - sonst wirkt der Marker nach dem Auto-Zoom auf sich selbst
-        # riesig, weil "Fit Selection" immer bildschirmfüllend zoomt.
-        part_diagonal = shape.BoundBox.DiagonalLength
-        whole_obj = None
+    def _set_element_color(self, obj, sub, color):
+        """Setzt eine Farbe für genau das referenzierte Element über DiffuseColor/
+        LineColorArray/PointColorArray (ViewProviderPartExt) - das ist Teil der
+        Geometrie-Darstellung selbst, nicht des Selection-Highlight-Mechanismus.
+        Gibt das eingefärbte Objekt zurück oder None, wenn die Referenz nicht
+        auflösbar war.
+        """
         try:
             chain = obj.getSubObjectList(sub)
         except Exception:
             chain = None
-        if chain:
-            whole_obj = chain[-1]
-            tip = getattr(whole_obj, "Tip", None)
-            display_obj = tip if tip is not None else whole_obj
-            try:
-                part_diagonal = display_obj.Shape.BoundBox.DiagonalLength
-            except Exception:
-                pass
+        if not chain:
+            return None
+        leaf = chain[-1]
+        tip = getattr(leaf, "Tip", None)
+        display_obj = tip if tip is not None else leaf
+        vobj = getattr(display_obj, "ViewObject", None)
+        if vobj is None or not hasattr(display_obj, "Shape"):
+            return None
 
-        radius = max(part_diagonal * 0.02, 0.3)
-        marker = self._marker_objs.get(doc.Name)
-        if marker is None or marker not in doc.Objects:
-            marker = doc.addObject("Part::Feature", "_FCProjectExchangeMarker")
-            marker.ViewObject.Selectable = False
-            self._marker_objs[doc.Name] = marker
-        marker.Shape = Part.makeSphere(radius, point)
-        marker.ViewObject.ShapeColor = color
-        marker.ViewObject.Visibility = True
+        tail = sub.rsplit(".", 1)[-1] if "." in sub else sub
+        match = re.match(r"([A-Za-z]+?)(\d+)$", tail)
+        if not match:
+            return display_obj
+        kind, number = match.group(1), int(match.group(2))
+        prop = _ELEMENT_COLOR_PROP.get(kind)
+        count_attr = _ELEMENT_COUNT_ATTR.get(kind)
+        if prop is None or not hasattr(vobj, prop):
+            return display_obj
+        try:
+            count = len(getattr(display_obj.Shape, count_attr))
+        except Exception:
+            return display_obj
+        index = number - 1
+        if index < 0 or index >= count:
+            return display_obj
 
-        # Für den Zoom das ganze Bauteil zusammen mit dem Marker selektieren,
-        # damit die Kamera nicht bis auf Marker-Größe heranzoomt, sondern das
-        # Bauteil als Kontext mit im Bild bleibt.
-        self._select(doc, marker, "")
-        if whole_obj is not None:
-            prefix, _tail = sub.rsplit(".", 1) if "." in sub else ("", sub)
-            display_name = (tip.Name if tip is not None else whole_obj.Name)
-            whole_sub = f"{prefix}.{display_name}." if prefix else f"{display_name}."
+        key = (display_obj.Document.Name, display_obj.Name, prop)
+        if key not in self._color_overrides:
             try:
-                Gui.Selection.addSelection(doc.Name, obj.Name, whole_sub)
+                original = list(getattr(vobj, prop))
             except Exception:
-                pass
-        self._fit_view_to_selection()
+                original = []
+            if len(original) != count:
+                base = getattr(vobj, "ShapeColor", (0.8, 0.8, 0.8, 1.0))
+                original = [base] * count
+            self._color_overrides[key] = (vobj, prop, original)
+
+        # 4. Tupel-Wert ist Alpha (1.0 = voll sichtbar/opak), KEINE Transparenz -
+        # ViewProviderPartExtPy.cpp parst ihn direkt in Base::Color.a; 0.0 macht
+        # die Fläche komplett unsichtbar.
+        _, _, original = self._color_overrides[key]
+        new_colors = list(original)
+        new_colors[index] = (color[0], color[1], color[2], 1.0)
+        try:
+            setattr(vobj, prop, new_colors)
+        except Exception as e:
+            App.Console.PrintWarning(
+                f"FCProject PartExchange: {prop} für '{display_obj.Label}' konnte nicht gesetzt werden: {str(e)}\n"
+            )
+        return display_obj
 
     def _set_highlight_warning(self, info):
         if not info:
             self.highlight_warning_label.setVisible(False)
             return
         self.highlight_warning_label.setText(
-            f"⚠ Referenz '{info}' konnte nicht als Geometrie aufgelöst werden - "
-            "kein Marker gesetzt. Bitte den Textpfad oben manuell prüfen."
+            f"⚠ Referenz '{info}' konnte nicht eingefärbt werden - "
+            "Bitte den Textpfad oben manuell prüfen."
         )
         self.highlight_warning_label.setVisible(True)
 
@@ -341,23 +328,14 @@ class PartExchangeWindow(QtWidgets.QDialog):
             except Exception:
                 pass
         self._forced_visible.clear()
-        for marker in self._marker_objs.values():
+        for vobj, prop, original in self._color_overrides.values():
             try:
-                marker.Document.removeObject(marker.Name)
+                setattr(vobj, prop, original)
             except Exception:
                 pass
-        self._marker_objs.clear()
+        self._color_overrides.clear()
+        self._restore_3d_views()
         super().closeEvent(event)
-
-    @staticmethod
-    def _fit_view_to_selection():
-        """Zoomt die aktive 3D-Ansicht auf die aktuelle Auswahl (Std_ViewFitSelection-Aufruf),
-        damit eine hervorgehobene Referenz auch sichtbar ist, wenn sie außerhalb des
-        aktuellen Bildausschnitts liegt oder sehr klein ist."""
-        try:
-            Gui.SendMsgToActiveView("ViewSelection")
-        except Exception as e:
-            App.Console.PrintWarning(f"FCProject PartExchange: Zoom auf Auswahl fehlgeschlagen: {str(e)}\n")
 
     # ----------------------------------------------------------- Mapping
 
@@ -391,15 +369,10 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._pending_original = original
         self._update_pending_label()
 
-        same_doc = self.replacement_doc is self.original_doc
         original_sub = original.get("subelement") or ""
-        self._select(self.original_doc, self.original_obj, original_sub)
-        self._show_marker(self.original_doc, self.original_obj, original_sub, (1.0, 0.0, 1.0))
-        if not same_doc:
-            QtWidgets.QApplication.processEvents()
+        self._highlight_reference(self.original_obj, original_sub, (1.0, 0.0, 1.0))
         replacement_sub = mapping["replacement_subelement"] or ""
-        self._select(self.replacement_doc, self.replacement_obj, replacement_sub, clear=not same_doc)
-        self._show_marker(self.replacement_doc, self.replacement_obj, replacement_sub, (0.0, 1.0, 1.0))
+        self._highlight_reference(self.replacement_obj, replacement_sub, (0.0, 1.0, 1.0))
 
     def _update_apply_button_state(self):
         required_keys = {_joint_key(entry) for entry in self._original_joints}
@@ -408,50 +381,126 @@ class PartExchangeWindow(QtWidgets.QDialog):
 
     # ------------------------------------------------------- Fenster-Layout
 
-    def _arrange_3d_views(self):
-        if self.original_doc is self.replacement_doc:
+    @staticmethod
+    def _resolve_display_doc(obj):
+        """Das Dokument, in dem `obj` tatsächlich seine Geometrie zeigt - bei einem
+        App::Link das verlinkte Teil-Dokument, sonst das eigene Dokument."""
+        linked = getattr(obj, "LinkedObject", None)
+        return linked.Document if linked is not None else obj.Document
+
+    def _embed_3d_views(self):
+        """Erzeugt für Original und Ersatzteil je eine ZUSÄTZLICHE 3D-Ansicht und bettet
+        sie direkt in diesen Dialog ein - so sieht man beides zusammen mit der
+        Joint-Zuordnung, ohne zwischen Fenstern wechseln zu müssen.
+
+        Wichtig: die bereits offene(n) Ansicht(en) im Hauptfenster werden NICHT
+        angefasst/geschlossen - schließt man die letzte Ansicht eines Dokuments,
+        schließt FreeCAD darüber das ganze Dokument. Stattdessen wird hier je eine
+        eigene, zusätzliche View erzeugt, die beim Schließen dieses Dialogs einfach
+        wieder verworfen wird (das Dokument hat dann immer noch seine ursprüngliche
+        Ansicht im Hauptfenster). Werkzeugleisten/Navigationswürfel bleiben im
+        Hauptfenster zurück (hier nicht nötig, nur Auswahl/Ansicht wird gebraucht);
+        Klicken/Zoomen/Rotieren in der eingebetteten Ansicht funktioniert normal.
+        """
+        main_win = Gui.getMainWindow()
+        mdi_area = main_win.findChild(QtWidgets.QMdiArea)
+        if mdi_area is None:
             return
+        self._embed_one(mdi_area, self.original_display_doc, self.original_view_container)
+        if self.replacement_doc is not self.original_display_doc:
+            self._embed_one(mdi_area, self.replacement_doc, self.replacement_view_container)
+
+    def _embed_one(self, mdi_area, doc, container_layout):
         try:
-            main_win = Gui.getMainWindow()
-            mdi_area = main_win.findChild(QtWidgets.QMdiArea)
-            if mdi_area is None:
-                return
-
-            Gui.setActiveDocument(self.original_doc.Name)
-            QtWidgets.QApplication.processEvents()
-            Gui.setActiveDocument(self.replacement_doc.Name)
+            gui_doc = Gui.getDocument(doc.Name)
+            gui_doc.createView("Gui::View3DInventor")
             QtWidgets.QApplication.processEvents()
 
-            original_sub = self._find_subwindow(mdi_area, self.original_doc)
-            replacement_sub = self._find_subwindow(mdi_area, self.replacement_doc)
-            if original_sub is None or replacement_sub is None:
+            # Per id()/Objekt-Identität lässt sich ein "neues" Subwindow nicht zuverlässig
+            # erkennen (PySide6 liefert bei subWindowList() ggf. neue Wrapper-Objekte für
+            # dasselbe QMdiSubWindow zurück - id()-Diffing griff dadurch z.B. auch die
+            # FreeCAD-Startseite ab). Stattdessen nach Titel filtern (enthält Label/Name
+            # des Dokuments) und das LETZTE Treffer-Fenster nehmen, da QMdiArea neue
+            # Subwindows ans Ende der Liste anhängt - die soeben erzeugte Ansicht steht
+            # also hinter der/den bereits vorher offenen Ansicht(en) desselben Dokuments.
+            label = doc.Label or doc.Name
+            matches = [
+                w for w in mdi_area.subWindowList()
+                if label in (w.windowTitle() or "") or doc.Name in (w.windowTitle() or "")
+            ]
+            if not matches:
+                return
+            sub_window = matches[-1]
+            widget = sub_window.widget()
+            if widget is None:
                 return
 
-            area_rect = mdi_area.rect()
-            half_w = area_rect.width() // 2
-            original_sub.showNormal()
-            replacement_sub.showNormal()
-            original_sub.setGeometry(0, 0, half_w, area_rect.height())
-            replacement_sub.setGeometry(half_w, 0, area_rect.width() - half_w, area_rect.height())
+            Gui.setActiveDocument(doc.Name)
+            QtWidgets.QApplication.processEvents()
+            try:
+                # Eine von der Assembly-Werkbank hinterlassene Selection-Gate würde
+                # spätere manuelle 3D-Klicks (Ersatzteil-Referenz wählen) sonst lautlos
+                # ablehnen.
+                Gui.Selection.removeSelectionGate(doc.Name)
+            except Exception:
+                pass
+            try:
+                Gui.SendMsgToActiveView("ViewFit")
+            except Exception:
+                pass
+
+            widget.setParent(None)
+            widget.setMinimumHeight(220)
+            container_layout.addWidget(widget)
+            widget.show()
+            self._embedded_views.append((widget, doc))
         except Exception as e:
-            App.Console.PrintWarning(f"FCProject PartExchange: Fenster konnten nicht angeordnet werden: {str(e)}\n")
+            App.Console.PrintWarning(
+                f"FCProject PartExchange: 3D-Ansicht für '{doc.Name}' konnte nicht eingebettet werden: {str(e)}\n"
+            )
+
+    def _restore_3d_views(self):
+        """Verwirft die für die Einbettung eigens erzeugten Zusatz-Ansichten wieder -
+        die ursprüngliche(n) Ansicht(en) im Hauptfenster waren nie betroffen, daher
+        ist hier ein einfaches close() sicher (es bleibt immer mindestens eine
+        andere Ansicht des Dokuments übrig)."""
+        for widget, doc in list(self._embedded_views):
+            try:
+                widget.close()
+            except Exception as e:
+                App.Console.PrintWarning(
+                    f"FCProject PartExchange: 3D-Ansicht für '{getattr(doc, 'Name', '?')}' "
+                    f"konnte nicht geschlossen werden: {str(e)}\n"
+                )
+        self._embedded_views.clear()
 
     @staticmethod
-    def _find_subwindow(mdi_area, doc):
-        label = doc.Label or doc.Name
-        for sub in mdi_area.subWindowList():
-            title = sub.windowTitle() or ""
-            if title.startswith(label) or title.startswith(doc.Name):
-                return sub
-        return None
+    def _ensure_view(doc):
+        """Erstellt ein 3D-Fenster für `doc`, falls noch keins offen ist (z.B. bei
+        Dokumenten, die nur als Link-Abhängigkeit nachgeladen wurden)."""
+        try:
+            gui_doc = Gui.getDocument(doc.Name)
+            if gui_doc.ActiveView is None:
+                gui_doc.createView("Gui::View3DInventor")
+        except Exception as e:
+            App.Console.PrintWarning(
+                f"FCProject PartExchange: 3D-Fenster für '{doc.Name}' konnte nicht erstellt werden: {str(e)}\n"
+            )
 
     def _position_below_main_window(self):
         try:
             main_win = Gui.getMainWindow()
             geo = main_win.geometry()
             width = int(geo.width() * 0.8)
-            self.resize(width, 420)
-            self.move(geo.x() + (geo.width() - width) // 2, geo.y() + geo.height())
+            # Höher als früher, da die eingebetteten 3D-Ansichten Platz brauchen -
+            # an der Bildschirmhöhe geclampt, damit der Dialog sichtbar bleibt.
+            screen = QtWidgets.QApplication.primaryScreen()
+            max_height = screen.availableGeometry().height() if screen else geo.height()
+            height = min(int(geo.height() * 0.9), max_height - 60)
+            self.resize(width, height)
+            x = geo.x() + (geo.width() - width) // 2
+            y = geo.y() + (geo.height() - height) // 2
+            self.move(x, max(y, 0))
         except Exception:
             pass
 
