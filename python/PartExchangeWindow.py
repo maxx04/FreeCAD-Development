@@ -30,6 +30,38 @@ def _joint_key(entry):
     return (entry["joint_obj"].Document.Name, entry["joint_obj"].Name, entry["joint_side"])
 
 
+class _ReplacementSelectionObserver:
+    """Beobachtet Gui.Selection und aktualisiert das 'Aktuelle 3D-Auswahl'-Label
+    in Echtzeit, wenn der Nutzer im Ersatzteil-Dokument etwas anklickt."""
+
+    def __init__(self, window):
+        self._win = window
+
+    def addSelection(self, doc_name, obj_name, sub_name, x=0, y=0, z=0):
+        win = self._win
+        if doc_name != win.replacement_doc.Name:
+            return
+        try:
+            obj = win.replacement_doc.getObject(obj_name)
+            label = getattr(obj, "Label", obj_name) if obj is not None else obj_name
+            sub = sub_name or ""
+            text = f"{label}.{sub}" if sub else label
+            win.selection_label.setText(f"Aktuelle 3D-Auswahl: {text}")
+        except Exception as e:
+            App.Console.PrintWarning(f"FCProject PartExchange SelectionObserver: {e}\n")
+
+    def removeSelection(self, doc_name, obj_name, sub_name):
+        pass
+
+    def clearSelection(self, doc_name):
+        if doc_name == self._win.replacement_doc.Name:
+            self._win.selection_label.setText("Aktuelle 3D-Auswahl: –")
+
+    def setSelection(self, doc_name):
+        pass
+
+
+
 class PartExchangeWindow(QtWidgets.QDialog):
     """Nicht-modales Fenster: Joint-Referenzen des Originals auf das Ersatzteil ummappen."""
 
@@ -51,6 +83,8 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._color_overrides = {}  # (doc.Name, obj.Name, prop) -> (ViewObject, prop, Original-Farbliste)
         self._embedded_views = []  # [(widget, doc)] - aus dem Haupt-MDI-Bereich ausgeliehene 3D-Ansichten
         self._highlighted_docs = set()  # doc.Name - für Datum-Hervorhebung (Gui.Selection) benutzte Dokumente
+        self._sel_observer = _ReplacementSelectionObserver(self)
+        Gui.Selection.addObserver(self._sel_observer)
 
         self.setWindowTitle("FCProject: Part/Assembly ersetzen – Joint-Zuordnung")
         self.setModal(False)
@@ -225,29 +259,71 @@ class PartExchangeWindow(QtWidgets.QDialog):
             self._set_highlight_warning(sub)
             return
         if not colored:
-            self._highlight_via_selection(display_obj)
+            self._highlight_via_selection(obj, sub, display_obj)
         self._ensure_view(display_obj.Document)
         try:
             Gui.setActiveDocument(display_obj.Document.Name)
         except Exception:
             pass
 
-    def _highlight_via_selection(self, display_obj):
-        """Gui.Selection-Auswahl für Datum-Elemente (Origin-Achse/-Ebene, LCS) - diese
-        haben keine Face/Edge/Vertex-Topologie zum Einfärben, sind aber Standard-
-        FreeCAD-Kernobjekte mit normal funktionierender Selektions-Hervorhebung."""
-        doc = display_obj.Document
+    def _highlight_via_selection(self, obj, sub, display_obj=None):
+        """Gui.Selection-Auswahl für Datum-Elemente (Origin-Achse/-Ebene, LCS).
+
+        Falls das aufgelöste Datum-Objekt (display_obj) in einem anderen Dokument
+        liegt als obj (z.B. obj=Pattern-Kopie in Assembly, display_obj=XY-Ebene im
+        Teil-Dok), wird die Selektion im Teil-Dok durchgeführt - sonst würde sie in
+        der Assembly landen, obwohl die eingebettete Ansicht das Teil-Dok zeigt.
+        """
+        if display_obj is not None and display_obj.Document is not obj.Document:
+            root, root_sub = self._datum_selection_root(display_obj)
+            if root is not None:
+                self._do_addselection(root.Document.Name, root.Name, root_sub)
+                return
+        self._do_addselection(obj.Document.Name, obj.Name, sub or "")
+
+    def _do_addselection(self, doc_name, obj_name, sub):
         try:
-            Gui.Selection.removeSelectionGate(doc.Name)
+            Gui.Selection.removeSelectionGate(doc_name)
         except Exception:
             pass
         try:
-            Gui.Selection.addSelection(doc.Name, display_obj.Name)
-            self._highlighted_docs.add(doc.Name)
+            Gui.Selection.addSelection(doc_name, obj_name, sub)
+            self._highlighted_docs.add(doc_name)
         except Exception as e:
             App.Console.PrintWarning(
-                f"FCProject PartExchange: '{display_obj.Label}' konnte nicht selektiert werden: {str(e)}\n"
+                f"FCProject PartExchange: '{obj_name}.{sub}' konnte nicht selektiert werden: {str(e)}\n"
             )
+
+    @staticmethod
+    def _datum_selection_root(datum_obj):
+        """Traversiert die Parents-Kette nach oben um Root-Objekt und Sub-Pfad für
+        addSelection im Kontext des Teil-Dokuments zu finden.
+
+        Beispiel: XY_Plane002 (Parents: Origin005 → NM3_002_R_Alu_40x001)
+        → gibt (NM3_002_R_Alu_40x001, "Origin005.XY_Plane002.") zurück, sodass
+        addSelection(part_doc, root.Name, "Origin005.XY_Plane002.") korrekt
+        die XY-Ebene turquois hervorhebt.
+        """
+        doc = datum_obj.Document
+        current = datum_obj
+        path_parts = []
+        seen = set()
+        try:
+            while True:
+                oid = id(current)
+                if oid in seen:
+                    break
+                seen.add(oid)
+                parents = [(p, path) for p, path in (getattr(current, "Parents", None) or [])
+                           if p.Document is doc]
+                if not parents:
+                    break
+                parent, path = parents[0]
+                path_parts.insert(0, path)
+                current = parent
+        except Exception:
+            return None, None
+        return current, "".join(path_parts)
 
     def _clear_highlight_selection(self):
         for doc_name in self._highlighted_docs:
@@ -274,8 +350,12 @@ class PartExchangeWindow(QtWidgets.QDialog):
         tip = getattr(leaf, "Tip", None)
         display_obj = tip if tip is not None else leaf
         vobj = getattr(display_obj, "ViewObject", None)
-        if vobj is None or not hasattr(display_obj, "Shape"):
+        if vobj is None:
             return None, False
+        if not hasattr(display_obj, "Shape"):
+            # Datum-Objekt (App::Line, App::Plane, LCS) — kein Shape zum Einfärben,
+            # aber via Gui.Selection hervorhebbar (turquoise wie beim manuellen Klick).
+            return display_obj, False
 
         tail = sub.rsplit(".", 1)[-1] if "." in sub else sub
         match = re.match(r"([A-Za-z]+?)(\d+)$", tail)
@@ -363,6 +443,10 @@ class PartExchangeWindow(QtWidgets.QDialog):
                 )
 
     def closeEvent(self, event):
+        try:
+            Gui.Selection.removeObserver(self._sel_observer)
+        except Exception:
+            pass
         for vobj in self._forced_visible:
             try:
                 vobj.Visibility = False
