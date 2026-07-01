@@ -50,6 +50,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._forced_visible = []  # ViewObjects, die für die Hervorhebung sichtbar gemacht wurden
         self._color_overrides = {}  # (doc.Name, obj.Name, prop) -> (ViewObject, prop, Original-Farbliste)
         self._embedded_views = []  # [(widget, doc)] - aus dem Haupt-MDI-Bereich ausgeliehene 3D-Ansichten
+        self._highlighted_docs = set()  # doc.Name - für Datum-Hervorhebung (Gui.Selection) benutzte Dokumente
 
         self.setWindowTitle("FCProject: Part/Assembly ersetzen – Joint-Zuordnung")
         self.setModal(False)
@@ -149,6 +150,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
             return
         self._pending_original = entry
         sub = entry.get("subelement") or ""
+        self._clear_highlight_selection()
         self._highlight_reference(self.original_obj, sub, (1.0, 0.0, 1.0))
         self._update_pending_label()
 
@@ -200,65 +202,97 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._update_apply_button_state()
 
     def _highlight_reference(self, obj, sub, color):
-        """Färbt das referenzierte Face/Edge/Vertex direkt auf der echten Geometrie ein
-        (statt eines separaten Marker-Objekts) - die Baugruppen-Ansicht wird dafür
+        """Hebt die referenzierte Geometrie hervor - die Baugruppen-Ansicht wird dafür
         nicht gebraucht, der Wechsel passiert direkt im Teil-Dokument.
 
-        Bewusst KEINE Gui.Selection-Auswahl des ganzen Objekts (z.B. für einen
-        Zoom-Fit): das löst bei ViewProvidern ohne Element-Hervorhebung (z.B.
-        SheetMetals "BaseShape") FreeCADs native Ganzes-Objekt-Auswahl aus, die
-        die normale Schattierung durch eine reine Drahtmodell-Darstellung ersetzt.
+        Zwei Fälle, je nach Referenztyp:
+        - Face/Edge/Vertex (echte Shape-Topologie): direktes Einfärben über
+          DiffuseColor/LineColorArray/PointColorArray, ohne Gui.Selection (das
+          löst bei ViewProvidern ohne Element-Hervorhebung, z.B. SheetMetals
+          "BaseShape", eine Ganzes-Objekt-Auswahl aus, die die normale
+          Schattierung durch eine reine Drahtmodell-Darstellung ersetzt).
+        - Datum-Elemente (Origin-Achse/-Ebene, LCS) ohne Face/Edge/Vertex-Index:
+          keine Shape-Topologie zum Einfärben vorhanden - hier ist die normale
+          Gui.Selection-Auswahl der richtige, "nicht-3D-Engine-nahe" Weg und
+          funktioniert für diese FreeCAD-Kernobjekte zuverlässig.
         """
         self._set_highlight_warning(None)
         if not sub:
             return
         self._ensure_visible(obj, sub)
-        display_obj = self._set_element_color(obj, sub, color)
+        display_obj, colored = self._set_element_color(obj, sub, color)
         if display_obj is None:
             self._set_highlight_warning(sub)
             return
+        if not colored:
+            self._highlight_via_selection(display_obj)
         self._ensure_view(display_obj.Document)
         try:
             Gui.setActiveDocument(display_obj.Document.Name)
         except Exception:
             pass
 
+    def _highlight_via_selection(self, display_obj):
+        """Gui.Selection-Auswahl für Datum-Elemente (Origin-Achse/-Ebene, LCS) - diese
+        haben keine Face/Edge/Vertex-Topologie zum Einfärben, sind aber Standard-
+        FreeCAD-Kernobjekte mit normal funktionierender Selektions-Hervorhebung."""
+        doc = display_obj.Document
+        try:
+            Gui.Selection.removeSelectionGate(doc.Name)
+        except Exception:
+            pass
+        try:
+            Gui.Selection.addSelection(doc.Name, display_obj.Name)
+            self._highlighted_docs.add(doc.Name)
+        except Exception as e:
+            App.Console.PrintWarning(
+                f"FCProject PartExchange: '{display_obj.Label}' konnte nicht selektiert werden: {str(e)}\n"
+            )
+
+    def _clear_highlight_selection(self):
+        for doc_name in self._highlighted_docs:
+            try:
+                Gui.Selection.clearSelection(doc_name)
+            except Exception:
+                pass
+        self._highlighted_docs.clear()
+
     def _set_element_color(self, obj, sub, color):
         """Setzt eine Farbe für genau das referenzierte Element über DiffuseColor/
         LineColorArray/PointColorArray (ViewProviderPartExt) - das ist Teil der
         Geometrie-Darstellung selbst, nicht des Selection-Highlight-Mechanismus.
-        Gibt das eingefärbte Objekt zurück oder None, wenn die Referenz nicht
-        auflösbar war.
+        Gibt (eingefärbtes/aufgelöstes Objekt, ob tatsächlich eingefärbt wurde)
+        zurück; Objekt ist None, wenn die Referenz nicht auflösbar war.
         """
         try:
             chain = obj.getSubObjectList(sub)
         except Exception:
             chain = None
         if not chain:
-            return None
+            return None, False
         leaf = chain[-1]
         tip = getattr(leaf, "Tip", None)
         display_obj = tip if tip is not None else leaf
         vobj = getattr(display_obj, "ViewObject", None)
         if vobj is None or not hasattr(display_obj, "Shape"):
-            return None
+            return None, False
 
         tail = sub.rsplit(".", 1)[-1] if "." in sub else sub
         match = re.match(r"([A-Za-z]+?)(\d+)$", tail)
         if not match:
-            return display_obj
+            return display_obj, False
         kind, number = match.group(1), int(match.group(2))
         prop = _ELEMENT_COLOR_PROP.get(kind)
         count_attr = _ELEMENT_COUNT_ATTR.get(kind)
         if prop is None or not hasattr(vobj, prop):
-            return display_obj
+            return display_obj, False
         try:
             count = len(getattr(display_obj.Shape, count_attr))
         except Exception:
-            return display_obj
+            return display_obj, False
         index = number - 1
         if index < 0 or index >= count:
-            return display_obj
+            return display_obj, False
 
         key = (display_obj.Document.Name, display_obj.Name, prop)
         if key not in self._color_overrides:
@@ -283,7 +317,8 @@ class PartExchangeWindow(QtWidgets.QDialog):
             App.Console.PrintWarning(
                 f"FCProject PartExchange: {prop} für '{display_obj.Label}' konnte nicht gesetzt werden: {str(e)}\n"
             )
-        return display_obj
+            return display_obj, False
+        return display_obj, True
 
     def _set_highlight_warning(self, info):
         if not info:
@@ -312,6 +347,12 @@ class PartExchangeWindow(QtWidgets.QDialog):
             vobj = getattr(o, "ViewObject", None)
             if vobj is None:
                 continue
+            # Partiell geladene Dokumente (als Link-Abhängigkeit geladen, nicht voll
+            # geöffnet): Visibility-Änderungen dort erzeugen FreeCAD-Warnmeldungen
+            # ("Changes to partial loaded document will not be saved") und werden
+            # ohnehin nicht persistiert - überspringen.
+            if getattr(o.Document, "Partial", False):
+                continue
             try:
                 if not vobj.Visibility:
                     self._forced_visible.append(vobj)
@@ -334,6 +375,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
             except Exception:
                 pass
         self._color_overrides.clear()
+        self._clear_highlight_selection()
         self._restore_3d_views()
         super().closeEvent(event)
 
@@ -369,6 +411,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._pending_original = original
         self._update_pending_label()
 
+        self._clear_highlight_selection()
         original_sub = original.get("subelement") or ""
         self._highlight_reference(self.original_obj, original_sub, (1.0, 0.0, 1.0))
         replacement_sub = mapping["replacement_subelement"] or ""
@@ -383,10 +426,25 @@ class PartExchangeWindow(QtWidgets.QDialog):
 
     @staticmethod
     def _resolve_display_doc(obj):
-        """Das Dokument, in dem `obj` tatsächlich seine Geometrie zeigt - bei einem
-        App::Link das verlinkte Teil-Dokument, sonst das eigene Dokument."""
-        linked = getattr(obj, "LinkedObject", None)
-        return linked.Document if linked is not None else obj.Document
+        """Das Dokument, in dem `obj` tatsächlich seine Geometrie zeigt.
+
+        Für App::Link-Ketten (z.B. Pattern-Kopie → Assembly-Link → Teil-Dokument)
+        wird die gesamte LinkedObject-Kette durchlaufen, bis kein weiterer Link
+        mehr folgt. Das stellt sicher, dass auch Pattern-Kopien das eigentliche
+        Teil-Dokument statt der Assembly liefern.
+        """
+        seen = set()
+        current = obj
+        while True:
+            obj_id = id(current)
+            if obj_id in seen:
+                break
+            seen.add(obj_id)
+            linked = getattr(current, "LinkedObject", None)
+            if linked is None:
+                break
+            current = linked
+        return current.Document
 
     def _embed_3d_views(self):
         """Erzeugt für Original und Ersatzteil je eine ZUSÄTZLICHE 3D-Ansicht und bettet
@@ -449,6 +507,8 @@ class PartExchangeWindow(QtWidgets.QDialog):
             except Exception:
                 pass
 
+            self._show_datum_objects(doc)
+
             widget.setParent(None)
             widget.setMinimumHeight(220)
             container_layout.addWidget(widget)
@@ -458,6 +518,32 @@ class PartExchangeWindow(QtWidgets.QDialog):
             App.Console.PrintWarning(
                 f"FCProject PartExchange: 3D-Ansicht für '{doc.Name}' konnte nicht eingebettet werden: {str(e)}\n"
             )
+
+    _DATUM_TYPES = (
+        "App::Origin",
+        "App::LocalCoordinateSystem",
+        "PartDesign::Line",
+        "PartDesign::Plane",
+        "PartDesign::Point",
+    )
+
+    def _show_datum_objects(self, doc):
+        """Macht alle Datum-/Referenz-Objekte im Dokument sichtbar (Origin, LCS,
+        Datum-Achse/-Ebene/-Punkt) und merkt sie für das Wiederherstellen beim
+        Schließen vor (via _forced_visible)."""
+        if getattr(doc, "Partial", False):
+            return
+        for obj in doc.Objects:
+            try:
+                if not any(obj.isDerivedFrom(t) for t in self._DATUM_TYPES):
+                    continue
+                vobj = getattr(obj, "ViewObject", None)
+                if vobj is None or vobj.Visibility:
+                    continue
+                self._forced_visible.append(vobj)
+                vobj.Visibility = True
+            except Exception:
+                pass
 
     def _restore_3d_views(self):
         """Verwirft die für die Einbettung eigens erzeugten Zusatz-Ansichten wieder -
@@ -510,7 +596,17 @@ class PartExchangeWindow(QtWidgets.QDialog):
         errors = []
         rewired_joints = 0
 
-        local_replacement = self._ensure_local_replacement(self.original_doc, self.replacement_obj)
+        assembly_obj = find_assembly(self.original_doc)
+        local_replacement = self._ensure_local_replacement(
+            self.original_doc, self.replacement_obj, assembly_obj
+        )
+
+        # Ersatzteil startet an der Position des alten Teils → bessere Solver-Konvergenz
+        try:
+            local_replacement.Placement = self.original_obj.Placement
+        except Exception:
+            pass
+
         mapping_by_key = {_joint_key(m["original"]): m for m in self._mappings}
 
         for entry in self._original_joints:
@@ -523,20 +619,34 @@ class PartExchangeWindow(QtWidgets.QDialog):
             ):
                 rewired_joints += 1
 
+        # Ersetztes Teil ausblenden
+        try:
+            orig_vobj = getattr(self.original_obj, "ViewObject", None)
+            if orig_vobj is not None:
+                orig_vobj.Visibility = False
+        except Exception:
+            pass
+
         try:
             self.original_doc.recompute()
         except Exception as e:
             errors.append(f"Neuberechnung des Original-Dokuments fehlgeschlagen: {str(e)}")
 
-        self._solve_assembly(errors)
+        self._solve_assembly(errors, assembly_obj)
 
-        summary = f"Joints umgehängt: {rewired_joints}"
-        if errors:
-            summary += "\n\nWarnungen:\n" + "\n".join(errors)
+        App.Console.PrintMessage(
+            f"FCProject PartExchange: {rewired_joints} Joint(s) erfolgreich umgehängt.\n"
+        )
+        for err in errors:
+            App.Console.PrintWarning(f"FCProject PartExchange: {err}\n")
 
-        QtWidgets.QMessageBox.information(self, "FCProject: Part/Assembly ersetzen", summary)
+        try:
+            Gui.setActiveDocument(self.original_doc.Name)
+        except Exception:
+            pass
+        self.close()
 
-    def _solve_assembly(self, errors):
+    def _solve_assembly(self, errors, assembly_obj=None):
         """Löst den Assembly-Solver explizit aus.
 
         `doc.recompute()` allein berechnet keine neuen Platzierungen anhand der
@@ -544,7 +654,8 @@ class PartExchangeWindow(QtWidgets.QDialog):
         über die Methode `solve()` auf dem Assembly::AssemblyObject angestoßen
         werden muss.
         """
-        assembly_obj = find_assembly(self.original_doc)
+        if assembly_obj is None:
+            assembly_obj = find_assembly(self.original_doc)
         if assembly_obj is None:
             errors.append(
                 "Keine Assembly im Original-Dokument gefunden - Position des Ersatzteils "
@@ -567,14 +678,22 @@ class PartExchangeWindow(QtWidgets.QDialog):
             errors.append(f"Assembly-Solver konnte nicht ausgeführt werden: {str(e)}")
 
     @staticmethod
-    def _ensure_local_replacement(doc, replacement):
+    def _ensure_local_replacement(doc, replacement, assembly=None):
         """Hängt ein Ersatzteil aus einem fremden Dokument als App::Link in `doc` ein,
-        damit die Joint-Referenz innerhalb desselben Dokuments bleibt."""
+        damit die Joint-Referenz innerhalb desselben Dokuments bleibt.
+        Der Link wird in die Assembly eingehängt (nicht lose ans Dokument-Root)."""
         if replacement.Document is doc:
             return replacement
         link = doc.addObject("App::Link", f"{replacement.Name}_Link")
         link.Label = replacement.Label
         link.LinkedObject = replacement
+        if assembly is not None and hasattr(assembly, 'addObject'):
+            try:
+                assembly.addObject(link)
+            except Exception as e:
+                App.Console.PrintWarning(
+                    f"FCProject PartExchange: Ersatzteil konnte nicht in Assembly eingehängt werden: {e}\n"
+                )
         return link
 
     @staticmethod

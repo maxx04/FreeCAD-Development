@@ -63,6 +63,31 @@ def _is_valid_source_element(element):
     return True
 
 
+def _remove_after_recompute(doc, name):
+    """Entfernt ein Objekt sicher außerhalb eines laufenden Recomputes."""
+    try:
+        doc.removeObject(name)
+    except Exception as e:
+        App.Console.PrintWarning(f"FCProject: Konnte '{name}' nicht entfernen: {e}\n")
+
+
+def _deferred_remove(doc, name):
+    """Verschiebt removeObject() per QTimer auf nach dem aktuellen Recompute.
+
+    Wird removeObject() direkt aus execute() heraus aufgerufen, befindet
+    sich das Zielobjekt oft noch im Zustand PendingRecompute — FreeCAD
+    muss die Löschung dann in pendingRemove zurückstellen und meldet
+    'pending remove … after recomputing' sowie 'still touched after recompute'.
+    Ein QTimer(0)-Aufruf stellt sicher, dass die Löschung erst nach dem
+    Recompute-Durchlauf erfolgt, wenn der PendingRecompute-Status gelöscht ist.
+    """
+    if _GUI_AVAILABLE:
+        from PySide6 import QtCore
+        QtCore.QTimer.singleShot(0, lambda: _remove_after_recompute(doc, name))
+    else:
+        _remove_after_recompute(doc, name)
+
+
 def _sync_link_copies(doc, source, existing_copies, target_count, label_prefix):
     """Gleicht App::Link-Kopien von `source` idempotent auf `target_count` Stück ab.
 
@@ -73,10 +98,7 @@ def _sync_link_copies(doc, source, existing_copies, target_count, label_prefix):
 
     while len(copies) > target_count:
         obsolete = copies.pop()
-        try:
-            doc.removeObject(obsolete.Name)
-        except Exception as e:
-            App.Console.PrintWarning(f"FCProject: Konnte Kopie '{obsolete.Name}' nicht entfernen: {e}\n")
+        _deferred_remove(doc, obsolete.Name)
 
     while len(copies) < target_count:
         index = len(copies) + 1
@@ -118,14 +140,28 @@ def _sub_name_for_child(child, root):
 
 
 def _first_lcs_subname(element):
-    """Sucht das erste lokale Koordinatensystem (LCS) in `element` (oder im
-    verlinkten Original, falls `element` ein App::Link ist) und gibt dessen
-    Subnamen-Pfad zurück. None, falls keines gefunden wird (Aufrufer fällt
-    dann auf die reine Objekt-Platzierung zurück).
+    """Sucht das erste lokale Koordinatensystem (LCS) im tatsächlichen Teil-Objekt
+    und gibt dessen Subnamen-Pfad zurück.
+
+    Bei App::Link-Ketten (z.B. Pattern-Kopie → Quell-Link → eigentliches Teil) wird
+    die gesamte LinkedObject-Kette durchlaufen, bis das eigentliche Teil erreicht ist.
+    App::Link ist für Subnamen transparent: der Subname relativ zum letzten Glied der
+    Kette funktioniert genauso beim Zugriff über die Kopie.
+    None, falls kein LCS gefunden wird.
     """
     if element is None:
         return None
-    root = getattr(element, 'LinkedObject', None) or element
+    root = element
+    seen = set()
+    while True:
+        rid = id(root)
+        if rid in seen:
+            break
+        seen.add(rid)
+        linked = getattr(root, 'LinkedObject', None)
+        if linked is None:
+            break
+        root = linked
     try:
         children = list(root.OutList)
     except Exception:
@@ -189,10 +225,7 @@ def _sync_pattern_joints(doc, assembly, source, copies, existing_joints, label_p
         if other in copies and other not in joint_by_copy:
             joint_by_copy[other] = joint
         else:
-            try:
-                doc.removeObject(joint.Name)
-            except Exception:
-                pass
+            _deferred_remove(doc, joint.Name)
 
     try:
         joint_group = UtilsAssembly.getJointGroup(assembly)
