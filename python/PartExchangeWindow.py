@@ -7,6 +7,7 @@
 # Links, Ausblenden/Umbenennen des Originals) sind explizit ein späterer Schritt.
 
 import re
+import weakref
 
 import FreeCAD as App
 import FreeCADGui as Gui
@@ -32,21 +33,44 @@ def _joint_key(entry):
 
 class _ReplacementSelectionObserver:
     """Beobachtet Gui.Selection und aktualisiert das 'Aktuelle 3D-Auswahl'-Label
-    in Echtzeit, wenn der Nutzer im Ersatzteil-Dokument etwas anklickt."""
+    in Echtzeit, wenn der Nutzer im Ersatzteil-Dokument etwas anklickt.
+
+    Nutzt weakref statt starker Referenz auf das Fenster: wenn das Fenster
+    geschlossen/gelöscht wurde (auch ohne sauberen closeEvent-Aufruf), wird der
+    Observer automatisch aus Gui.Selection entfernt und greift nicht mehr auf
+    ungültige Qt-Objekte zu. setText() wird über QTimer.singleShot() im
+    Haupt-Event-Loop aufgerufen - das verhindert Hänger wenn FreeCAD intern
+    Selektions-Events während eines Datei-Dialogs auslöst.
+    """
 
     def __init__(self, window):
-        self._win = window
+        self._win_ref = weakref.ref(window)
+        self._replacement_doc_name = window.replacement_doc.Name
+
+    def _get_win(self):
+        """Gibt das Fenster zurück oder None (und entfernt sich selbst falls weg)."""
+        win = self._win_ref()
+        if win is None:
+            try:
+                Gui.Selection.removeObserver(self)
+            except Exception:
+                pass
+        return win
 
     def addSelection(self, doc_name, obj_name, sub_name, x=0, y=0, z=0):
-        win = self._win
-        if doc_name != win.replacement_doc.Name:
+        if doc_name != self._replacement_doc_name:
+            return
+        win = self._get_win()
+        if win is None:
             return
         try:
-            obj = win.replacement_doc.getObject(obj_name)
+            doc = App.getDocument(doc_name)
+            obj = doc.getObject(obj_name) if doc is not None else None
             label = getattr(obj, "Label", obj_name) if obj is not None else obj_name
             sub = sub_name or ""
-            text = f"{label}.{sub}" if sub else label
-            win.selection_label.setText(f"Aktuelle 3D-Auswahl: {text}")
+            text = f"Aktuelle 3D-Auswahl: {label}.{sub}" if sub else f"Aktuelle 3D-Auswahl: {label}"
+            label_widget = win.selection_label
+            QtCore.QTimer.singleShot(0, lambda: label_widget.setText(text))
         except Exception as e:
             App.Console.PrintWarning(f"FCProject PartExchange SelectionObserver: {e}\n")
 
@@ -54,8 +78,13 @@ class _ReplacementSelectionObserver:
         pass
 
     def clearSelection(self, doc_name):
-        if doc_name == self._win.replacement_doc.Name:
-            self._win.selection_label.setText("Aktuelle 3D-Auswahl: –")
+        if doc_name != self._replacement_doc_name:
+            return
+        win = self._get_win()
+        if win is None:
+            return
+        label_widget = win.selection_label
+        QtCore.QTimer.singleShot(0, lambda: label_widget.setText("Aktuelle 3D-Auswahl: –"))
 
     def setSelection(self, doc_name):
         pass
@@ -205,8 +234,8 @@ class PartExchangeWindow(QtWidgets.QDialog):
         else:
             # Baum-Auswahl eines Kind-Elements (z.B. Origin-Achse/-Ebene, LCS),
             # das in der 3D-Ansicht kaum treffsicher anklickbar ist.
-            subelement = subpath_for_descendant(self.replacement_obj, sel_obj.Object)
-            if subelement is None:
+            path_to_obj = subpath_for_descendant(self.replacement_obj, sel_obj.Object)
+            if path_to_obj is None:
                 QtWidgets.QMessageBox.warning(
                     self, "FCProject",
                     f"'{sel_obj.Object.Label}' gehört nicht zu '{self.replacement_obj.Label}'.\n"
@@ -214,6 +243,10 @@ class PartExchangeWindow(QtWidgets.QDialog):
                     "(z.B. eine Origin-Achse/-Ebene oder ein LCS)."
                 )
                 return
+            # Sub-Element-Name (Face/Edge/Vertex) anhängen, damit _set_element_color
+            # später den Index auflösen und die spezifische Fläche einfärben kann.
+            sub_el = sel_obj.SubElementNames[0] if sel_obj.SubElementNames else ""
+            subelement = f"{path_to_obj}.{sub_el}" if sub_el else path_to_obj
 
         if self._pending_original is None:
             QtWidgets.QMessageBox.warning(
