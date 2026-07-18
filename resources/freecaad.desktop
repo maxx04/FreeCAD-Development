@@ -5,3 +5,4 @@ Exec=/home/maxx/freecad/run-freecad-1.2.sh %f
 Icon=/home/maxx/freecad/logo-freecad.svg
 Terminal=false
 Categories=Graphics;Engineering;
+MimeType=application/x-extension-fcstd;

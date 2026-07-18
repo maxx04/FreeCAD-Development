@@ -130,7 +130,15 @@ install(DIRECTORY resources/icons/
 install(DIRECTORY python/
         DESTINATION "${FC_MOD_DIR}"
         PATTERN "__pycache__" EXCLUDE
-
 )
 
+# Startskript nach ~/freecad/ installieren (PROGRAMS setzt automatisch +x)
+install(PROGRAMS resources/run-freecad-1.2.sh
+    DESTINATION "/home/maxx/freecad"
+)
 
+# Desktop-Eintrag nach ~/.local/share/applications/ installieren
+install(FILES resources/freecaad.desktop
+    DESTINATION "/home/maxx/.local/share/applications"
+    RENAME "freecad-1-2.desktop"
+)
