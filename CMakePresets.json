@@ -7,10 +7,10 @@
     },
     "configurePresets": [
         {
-            "name": "FC-1.2dev",
-            "displayName": "FreeCAD 1.2 (Python 3.12, selbst gebaut)",
+            "name": "FC-26.3dev",
+            "displayName": "FreeCAD 26.3 (Python 3.12, selbst gebaut)",
             "generator": "Unix Makefiles",
-            "binaryDir": "${sourceDir}/build-fc12",
+            "binaryDir": "${sourceDir}/build-fc263",
             "cacheVariables": {
                 "CMAKE_PRES_DEV": "TRUE",
                 "CMAKE_BUILD_TYPE": "Debug",
@@ -20,14 +20,14 @@
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "FC_SOURCE_DIR": "/home/maxx/freecad/freecad-source",
                 "FC_LIB_DIR": "/home/maxx/freecad/install/lib",
-                "FC_MOD_DIR": "/home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject"
+                "FC_MOD_DIR": "/home/maxx/.local/share/FreeCAD/v26-3/Mod/FCProject"
             }
         },
         {
-            "name": "FC-1.2dev-appimage",
-            "displayName": "FreeCAD dev (Python 3.11, AppImage-Libs)",
+            "name": "FC-26.3dev-appimage",
+            "displayName": "FreeCAD 26.3dev (Python 3.11, AppImage-Libs)",
             "generator": "Unix Makefiles",
-            "binaryDir": "${sourceDir}/build-fc12-appimage",
+            "binaryDir": "${sourceDir}/build-fc263-appimage",
             "cacheVariables": {
                 "CMAKE_PRES_DEV": "TRUE",
                 "CMAKE_BUILD_TYPE": "Debug",
@@ -39,22 +39,6 @@
                 "FC_SOURCE_DIR": "/home/maxx/freecad/freecad-source",
                 "FC_LIB_DIR": "/home/maxx/freecad/appimage-extracted/usr/lib",
                 "FC_MOD_DIR": "/home/maxx/.local/share/FreeCAD/v26-3/Mod/FCProject"
-            }
-        },
-        {
-            "name": "FC-1.1.1",
-            "displayName": "FreeCAD 1.1.1 (Python 3.11)",
-            "generator": "Unix Makefiles",
-            "binaryDir": "${sourceDir}/build-fc11",
-            "cacheVariables": {
-                "CMAKE_PRES_DEV": "FALSE",
-                "CMAKE_BUILD_TYPE": "Debug",
-                "PYTHON_EXECUTABLE": "${sourceDir}/../.venv311/bin/python",
-                "Python_ROOT_DIR": "${sourceDir}/../.venv311",
-                "CMAKE_CURRENT_SOURCE_DIR": "${sourceDir}/FCProject",
-                "CMAKE_CXX_STANDARD": "17",
-                "CMAKE_CXX_EXTENSIONS": "OFF",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
             }
         }
     ]

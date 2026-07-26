@@ -1,7 +1,7 @@
 [Desktop Entry]
-Name=FreeCAD 1.2
+Name=FreeCAD 26.3
 Type=Application
-Exec=/home/maxx/freecad/run-freecad-1.2.sh %f
+Exec=/home/maxx/freecad/run-freecad-26.3.sh %f
 Icon=/home/maxx/freecad/logo-freecad.svg
 Terminal=false
 Categories=Graphics;Engineering;

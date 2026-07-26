@@ -2,19 +2,13 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "(gdb) Launch FreeCAD 1.2dev",
+            "name": "(gdb) Launch FreeCAD 26.3dev",
             "type": "cppdbg",
             "request": "launch",
-            "program": "/home/maxx/freecad/freecad-source/bin/FreeCAD",
-            "args": ["-l"],
+            "program": "/bin/bash",
+            "args": ["/home/maxx/freecad/run-freecad-26.3.sh"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
-            "environment": [
-                { "name": "LD_LIBRARY_PATH", "value": "/home/maxx/Documents/FreeCAD-Development/.venv/lib/python3.12/site-packages/PySide6/Qt/lib:/lib/x86_64-linux-gnu" },
-                { "name": "PYTHONPATH", "value": "/home/maxx/Documents/FreeCAD-Development/.venv/lib/python3.12/site-packages" },
-                { "name": "PYTHONNOUSERSITE", "value": "1" },
-                { "name": "QT_PLUGIN_PATH", "value": "/home/maxx/Documents/FreeCAD-Development/.venv/lib/python3.12/site-packages/PySide6/Qt/plugins" }
-            ],
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [
@@ -24,60 +18,15 @@
                     "ignoreFailures": true
                 },
                 {
-                    "description": "Ignoriere SIGPWR und SIGXCPU (beschleunigt Python-Debugging)",
-                    "text": "handle SIGPWR SIGXCPU nostop noprint pass",
-                    "ignoreFailures": true
-                }
-            ]
-        },
-        {
-            "name": "(gdb) Launch FreeCAD 1.1.1",
-            "type": "cppdbg",
-            "request": "launch",
-            "program": "/home/maxx/freecad/squashfs-root/usr/bin/freecad",
-            "args": ["-l"],
-            "stopAtEntry": false,
-            "sourceFileMap": { "/home/maxx/.local/share/FreeCAD/v1-1/Mod/FCProject": "${workspaceFolder}/FCProject/src"},
-
-            "cwd": "${workspaceFolder}",
-            "environment": [
-                // Erzwingt, dass das AppImage absolut KEINE Pfade aus deinem .venv oder System-Qt erbt
-                { "name": "LD_LIBRARY_PATH", "value": "" },
-                { "name": "PYTHONPATH", "value": "" },
-                { "name": "QT_PLUGIN_PATH", "value": "" },
-                { "name": "QT_QPA_PLATFORM_PLUGIN_PATH", "value": "" },
-                { "name": "PYTHONNOUSERSITE", "value": "1" }
-            ],
-            "externalConsole": false,
-            "MIMode": "gdb",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for gdb",
-                    "text": "-enable-pretty-printing",
+                    "description": "Nach exec() im Startskript (bash -> FreeCAD) weiter debuggen, statt abzubrechen",
+                    "text": "set follow-exec-mode same",
                     "ignoreFailures": true
                 },
                 {
                     "description": "Ignoriere SIGPWR und SIGXCPU (beschleunigt Python-Debugging)",
                     "text": "handle SIGPWR SIGXCPU nostop noprint pass",
                     "ignoreFailures": true
-                },
-                {
-                    "description": "Folge Kindprozessen bei AppImages (Wichtig für Breakpoints!)",
-                    "text": "-gdb-set follow-fork-mode child",
-                    "ignoreFailures": true
-                },
-                {
-                "description": "Stoppe sofort, wenn das Addon geladen wird",
-                "text": "set stop-on-solib-events 1",
-                "ignoreFailures": true
-                },
-                {
-                "description": "Zwinge GDB an der Funktion convertToApp::DocumentObject anzuhalten",
-                "text": "break FCProject::BOMManager::convertToApp::DocumentObject",
-                "ignoreFailures": true
                 }
-
-
             ]
         },
         {
@@ -100,7 +49,7 @@
             "name": "(gdb) Attach to FreeCAD",
             "type": "cppdbg",
             "request": "attach",
-            "program": "/home/maxx/freecad/squashfs-root/usr/bin/freecad",
+            "program": "/home/maxx/freecad/install/bin/FreeCAD",
             "processId": "${command:pickProcess}",
             "MIMode": "gdb",
             "setupCommands": [
@@ -120,12 +69,8 @@
     ],
     "compounds": [
         {
-            "name": "FreeCAD 1.2 Komplett-Debug (C++ & Python)",
-            "configurations": ["(gdb) Launch FreeCAD 1.2dev", "Python: FreeCAD Attach"]
-        },
-        {
-            "name": "FreeCAD 1.1.1 Komplett-Debug (C++ & Python)",
-            "configurations": ["(gdb) Launch FreeCAD 1.1.1", "Python: FreeCAD Attach"]
+            "name": "FreeCAD 26.3 Komplett-Debug (C++ & Python)",
+            "configurations": ["(gdb) Launch FreeCAD 26.3dev", "Python: FreeCAD Attach"]
         }
     ]
 }

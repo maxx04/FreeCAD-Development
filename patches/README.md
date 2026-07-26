@@ -41,3 +41,40 @@ cp src/Mod/Assembly/JointObject.py /home/maxx/freecad/install/Mod/Assembly/Joint
 
 (Reines Python, kein Rebuild von FreeCADGui nötig - Kopieren in `install/`
 reicht für sofortige Wirkung.)
+
+## freecad-cmake-disable-tests.patch
+
+Betrifft `CMakeLists.txt`. `ENABLE_DEVELOPER_TESTS` zieht `add_subdirectory(tests)`
+nach, was `find_package(GTest REQUIRED)` voraussetzt. GTest ist auf dieser
+Maschine nicht installiert, daher schlägt die CMake-Konfiguration sonst fehl.
+Kommentiert `add_subdirectory(tests)` aus.
+
+## freecad-navigation-qbytearray-fix.patch
+
+Betrifft `src/Gui/PreferencePages/DlgSettingsNavigation.cpp` und
+`src/Mod/Start/Gui/GeneralSettingsWidget.cpp`. `QByteArray data(style.first.getName())`
+ist mit dem hier verwendeten Compiler/Qt6 mehrdeutig, weil `Base::Type::getName()`
+kein `const char*` mehr direkt liefert, das eindeutig auf einen der
+`QByteArray`-Konstruktoren passt. Fix: explizit `.data()` und `.size()`
+übergeben.
+
+## freecad-propertyeditor-qstring-fix.patch
+
+Betrifft `src/Gui/propertyeditor/PropertyEditor.cpp`. `QString::operator+=`
+mit einem `std::string`-Argument (Rückgabe der lokalen `indent()`-Hilfsfunktion)
+ist mit dem hier verwendeten Qt6/Compiler nicht eindeutig auflösbar
+(`error: no match for 'operator+=' (operand types are 'QString' and 'std::string')`).
+Fix: explizit über `QString::fromStdString(...)` konvertieren. Trat erstmals
+beim Umstieg von 1.2.0dev auf 26.3.0dev auf (neuer Code in `getPropUses`/
+`getPropUsesObj`/`getPropUsesDoc`).
+
+### Anwenden (alle Patches, nach frischem Checkout/Pull)
+
+```bash
+cd /home/maxx/freecad/freecad-source
+git apply /home/maxx/Documents/FreeCAD-Development/FCProject/patches/freecad-assembly-jointobject.patch
+git apply /home/maxx/Documents/FreeCAD-Development/FCProject/patches/freecad-cmake-disable-tests.patch
+git apply /home/maxx/Documents/FreeCAD-Development/FCProject/patches/freecad-navigation-qbytearray-fix.patch
+git apply /home/maxx/Documents/FreeCAD-Development/FCProject/patches/freecad-propertyeditor-qstring-fix.patch
+cp src/Mod/Assembly/JointObject.py /home/maxx/freecad/install/Mod/Assembly/JointObject.py
+```

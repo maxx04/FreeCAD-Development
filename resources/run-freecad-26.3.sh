@@ -1,5 +1,5 @@
 #!/bin/bash
-# Startet die selbst gebaute FreeCAD 1.2 mit den Qt-Bibliotheken/Plugins aus dem PySide6-venv,
+# Startet die selbst gebaute FreeCAD 26.3 mit den Qt-Bibliotheken/Plugins aus dem PySide6-venv,
 # damit keine Qt-Plattform-Plugin-Fehler durch eine inkompatible System-Qt-Version auftreten.
 
 # Gleiches venv-Setup wie in ~/.bashrc, damit FreeCAD

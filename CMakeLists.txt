@@ -22,9 +22,11 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 # --- FreeCAD Include Pfade manuell (da wir keine Config-Datei haben) ---
 # --- Pfade für FreeCAD (überschreibbar per CMakePresets.json je Rechner) ---
 set(FC_SOURCE_DIR "/home/maxx/freecad/freecad-source" CACHE PATH "FreeCAD source checkout (headers)")
+set(FC_BUILD_DIR "${FC_SOURCE_DIR}/build" CACHE PATH "FreeCAD build directory (generated headers, z.B. QtCore.h)")
 set(FC_LIB_DIR "/home/maxx/freecad/install/lib" CACHE PATH "Directory containing FreeCAD's shared libraries (Spreadsheet.so, libFreeCADApp.so, ...)")
 
 include_directories(
+    "${FC_BUILD_DIR}/src"                 # Generierte Header, z.B. QtCore.h (siehe SetGlobalCompilerAndLinkerSettings.cmake)
     "${FC_SOURCE_DIR}/src"                # Hier findet er <Gui/Application.h>
     "${FC_SOURCE_DIR}/src/App"
     "${FC_SOURCE_DIR}/src/Gui"
@@ -65,7 +67,7 @@ set_target_properties(FCProjectCore PROPERTIES
 # 4. Inklusionspfade & Features
 # FreeCAD_INCLUDE_DIRS wird durch find_package automatisch befüllt!
 find_package(pybind11 REQUIRED)
-find_package(fmt REQUIRED) # für um beide Versionen benutzen 1.1.1 und 1.2
+find_package(fmt REQUIRED)
 
 target_include_directories(FCProjectCore PUBLIC
     include
@@ -94,18 +96,13 @@ target_link_libraries(FCProjectCore
 set_target_properties(FCProjectCore PROPERTIES PREFIX "")
 
 # FC_MOD_DIR kann direkt per Preset gesetzt werden (Nutzerprofil-Ordnername
-# unterscheidet sich je FreeCAD-Version/Rechner, z.B. v1-2 vs. v26-3).
-# Ohne Preset-Vorgabe wird anhand CMAKE_PRES_DEV ein Fallback gewählt.
+# unterscheidet sich je FreeCAD-Version/Rechner, z.B. v26-3).
+# Ohne Preset-Vorgabe wird dieser Fallback benutzt.
 set(FC_MOD_DIR "" CACHE PATH "FreeCAD Mod-Verzeichnis, in das installiert wird")
 
 if(NOT FC_MOD_DIR)
-    if(NOT CMAKE_PRES_DEV)
-        set(FC_MOD_DIR "/home/maxx/.local/share/FreeCAD/v1-1/Mod/FCProject")
-        message(STATUS "Post-Build: Target für FreeCAD 1.1.1.")
-    else()
-        set(FC_MOD_DIR "/home/maxx/.local/share/FreeCAD/v1-2/Mod/FCProject")
-        message(STATUS "Post-Build: Target für FreeCAD dev.")
-    endif()
+    set(FC_MOD_DIR "/home/maxx/.local/share/FreeCAD/v26-3/Mod/FCProject")
+    message(STATUS "Post-Build: Target für FreeCAD 26.3dev.")
 else()
     message(STATUS "Post-Build: Target ${FC_MOD_DIR} (aus Preset).")
 endif()
@@ -133,12 +130,12 @@ install(DIRECTORY python/
 )
 
 # Startskript nach ~/freecad/ installieren (PROGRAMS setzt automatisch +x)
-install(PROGRAMS resources/run-freecad-1.2.sh
+install(PROGRAMS resources/run-freecad-26.3.sh
     DESTINATION "/home/maxx/freecad"
 )
 
 # Desktop-Eintrag nach ~/.local/share/applications/ installieren
 install(FILES resources/freecaad.desktop
     DESTINATION "/home/maxx/.local/share/applications"
-    RENAME "freecad-1-2.desktop"
+    RENAME "freecad-26-3.desktop"
 )

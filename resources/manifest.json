@@ -48,7 +48,7 @@
     "maintainer": "maxx",
     "license": "LGPL-2.1-or-later",
     "url": "https://github.com/maxx04/FreeCAD-Development.git",
-    "freecad_version": [1, 1, 1],
+    "freecad_version": [26, 3, 0],
     "branch_display_name": "main",
     "tags": ["Assembly", "BOM", "Management", "Workflow"],
     "content": {
