@@ -53,8 +53,8 @@ class EntityCreator:
         """Generiert den Basisnamen und delegiert die Erstellung an die Ziel-Klasse."""
         
         # 1. Die REINE PDM-ID ohne jeglichen Text berechnen (Der Kern für die BOM!)
-        base_pdm_id = f"{self.project_name}_{comp_num}_{comp_type}_"
-        
+        base_pdm_id = f"{self.project_name}_{comp_num}_{comp_type}"
+
         # 2. Das Suffix für den physischen Dateinamen ermitteln
         bezeichnung_suffix = ""
         if comp_type in ["P", "A", "B"] and "Bezeichnung" in user_properties and user_properties["Bezeichnung"]:
@@ -63,12 +63,14 @@ class EntityCreator:
             bezeichnung_suffix = f"_{user_properties['ProfilTyp']}"
 
         # Dateiname bleibt für das Auge lang und beschreibend
+        # KORREKTUR: Kein angehängter Unterstrich mehr - FreeCAD darf jetzt gleiche
+        # Labels haben (Option aktiviert), das automatische 001/002-Suffix entfällt,
+        # daher war der künstliche Trenn-Unterstrich am Ende nicht mehr nötig.
         pdm_base_name = f"{self.project_name}_{comp_num}_{comp_type}{bezeichnung_suffix}"
-        filename_with_trailing = f"{pdm_base_name}_"
-        new_file_path = os.path.join(self.project_dir, f"{filename_with_trailing}.FCStd")
-        
+        new_file_path = os.path.join(self.project_dir, f"{pdm_base_name}.FCStd")
+
         if os.path.exists(new_file_path):
-            raise FileExistsError(f"Die Datei {filename_with_trailing}.FCStd existiert bereits!")
+            raise FileExistsError(f"Die Datei {pdm_base_name}.FCStd existiert bereits!")
 
         # Wir packen die reine, saubere ID als Steuerungs-Variable in die Properties!
         user_properties["__PureArticleID__"] = base_pdm_id
@@ -96,6 +98,6 @@ class EntityCreator:
                 raise ValueError(f"Unbekannter PDM-Komponenten-Typ: {comp_type}")
 
         # Den Creator ausführen
-        creator.create(new_file_path, pdm_base_name, filename_with_trailing, entity_config, user_properties)
-        
-        return filename_with_trailing
+        creator.create(new_file_path, pdm_base_name, pdm_base_name, entity_config, user_properties)
+
+        return pdm_base_name

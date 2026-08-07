@@ -77,9 +77,12 @@ def _build_expected_stem(obj):
     article_id = str(obj.ArticleID).strip()
     if not article_id:
         return None
+    # rstrip("_") bleibt als Kompatibilität für ArticleIDs aus vor der Umstellung
+    # gespeicherten Dokumenten - neue IDs haben keinen Unterstrich am Ende mehr.
+    article_id = article_id.rstrip("_")
     bezeichnung = str(getattr(obj, "Bezeichnung", "") or "").strip()
     if bezeichnung:
-        return article_id.rstrip("_") + "_" + bezeichnung + "_"
+        return f"{article_id}_{bezeichnung}"
     return article_id
 
 
