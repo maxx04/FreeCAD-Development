@@ -29,6 +29,16 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
    verbinden, das `QuantitySpinBox` an derselben Stelle direkt nach dem
    internen Value-Update emittiert (`QuantitySpinBox::updateFromCache`).
 
+3. **Gleiches Problem bei den Limit-Spinboxen** (2026-08-08 nachgetragen,
+   gemeldet als Bug in der Gleitverbindung/"Slider"-Joint):
+   `limitLenMinSpinbox`/`limitLenMaxSpinbox`/`limitRotMinSpinbox`/
+   `limitRotMaxSpinbox` (Weg-/Winkel-Begrenzung bei Cylindrical/Slider/
+   Revolute-Joints) wurden beim ursprünglichen Fix übersehen und hingen noch
+   am kaputten `valueChanged` - gleicher Fehler
+   (`onLimitLenMinChanged`/`onLimitLenMaxChanged` etc. wurden nie aufgerufen,
+   Weg-Limits gingen verloren). Gleicher Fix: `textChanged` statt
+   `valueChanged`.
+
 ### Anwenden
 
 Nach einem frischen Checkout/Build von FreeCAD:

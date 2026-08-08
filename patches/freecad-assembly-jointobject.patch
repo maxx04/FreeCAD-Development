@@ -1,8 +1,8 @@
 diff --git a/src/Mod/Assembly/JointObject.py b/src/Mod/Assembly/JointObject.py
-index adfda12e86..b90c0896d3 100644
+index 79752c46d5..435766f3d9 100644
 --- a/src/Mod/Assembly/JointObject.py
 +++ b/src/Mod/Assembly/JointObject.py
-@@ -1532,7 +1532,15 @@ class MakeJointSelGate:
+@@ -1540,7 +1540,15 @@ class MakeJointSelGate:
                  if parent.isDerivedFrom("App::LocalCoordinateSystem"):
                      datum = parent
  
@@ -19,7 +19,7 @@ index adfda12e86..b90c0896d3 100644
                  # accept only datum that are not attached
                  return datum.MapMode == "Deactivated"
  
-@@ -1627,11 +1635,18 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+@@ -1635,11 +1643,18 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
              self.createJointObject()
              self.visibilityBackup = False
  
@@ -43,3 +43,20 @@ index adfda12e86..b90c0896d3 100644
          bind = Gui.ExpressionBinding(self.jForm.angleSpinbox).bind(self.joint, "Angle")
          bind = Gui.ExpressionBinding(self.jForm.distanceSpinbox).bind(self.joint, "Distance")
          bind = Gui.ExpressionBinding(self.jForm.distanceSpinbox2).bind(self.joint, "Distance2")
+@@ -1663,10 +1678,12 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+         self.jForm.limitCheckbox3.stateChanged.connect(self.adaptUi)
+         self.jForm.limitCheckbox4.stateChanged.connect(self.adaptUi)
+ 
+-        self.jForm.limitLenMinSpinbox.valueChanged.connect(self.onLimitLenMinChanged)
+-        self.jForm.limitLenMaxSpinbox.valueChanged.connect(self.onLimitLenMaxChanged)
+-        self.jForm.limitRotMinSpinbox.valueChanged.connect(self.onLimitRotMinChanged)
+-        self.jForm.limitRotMaxSpinbox.valueChanged.connect(self.onLimitRotMaxChanged)
++        # Gleicher valueChanged/Base::Quantity-Marshalling-Bug wie oben - textChanged statt
++        # valueChanged verwenden (siehe Kommentar weiter oben).
++        self.jForm.limitLenMinSpinbox.textChanged.connect(self.onLimitLenMinChanged)
++        self.jForm.limitLenMaxSpinbox.textChanged.connect(self.onLimitLenMaxChanged)
++        self.jForm.limitRotMinSpinbox.textChanged.connect(self.onLimitRotMinChanged)
++        self.jForm.limitRotMaxSpinbox.textChanged.connect(self.onLimitRotMaxChanged)
+         bind = Gui.ExpressionBinding(self.jForm.limitLenMinSpinbox).bind(self.joint, "LengthMin")
+         bind = Gui.ExpressionBinding(self.jForm.limitLenMaxSpinbox).bind(self.joint, "LengthMax")
+         bind = Gui.ExpressionBinding(self.jForm.limitRotMinSpinbox).bind(self.joint, "AngleMin")
