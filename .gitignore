@@ -14,4 +14,7 @@ __pycache__/
 build*/**
 
 TODO.md
-LEARNINGS.md 
+LEARNINGS.md
+
+# Maschinenspezifische Claude-Code-Einstellungen (additionalDirectories etc.)
+.claude/settings.json 
