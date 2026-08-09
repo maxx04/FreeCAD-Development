@@ -11,6 +11,28 @@ ein reiner No-Op für alle Objekte in der betroffenen Datei (`ElementCount=0` be
 die Funktion greift laut Quellcode nur bei `ElementCount>0`). Isoliert bestätigt in
 `repro_trigger1_doubleclick.py` und `repro_trigger2_setactiveobject.py`.
 
+## ✅ Eigenständiges, portables Reproduktionspaket (`standalone_repro/`)
+
+`standalone_repro/` enthält ein **funktionierendes, ortsunabhängiges** Repro-Paket:
+`Assembly_repro.FCStd` + die zwei referenzierten Quelldateien (`CNC_M1_010_G.FCStd`,
+`CNC_M1_011_P_Panel.FCStd`), plus `repro_run.py` zum automatischen Auslösen. Getestet von
+einem komplett neuen Dateipfad aus (`/tmp/...`), reproduziert zuverlässig.
+
+**Wichtige Erkenntnis beim Bauen dieses Pakets:** Ein `App::Link.LinkedObject`-Neuverweis +
+`recompute()` (z. B. um Links auf lokale Kopien umzubiegen) **heilt den Bug unabsichtlich** -
+vermutlich weil dabei die intern zwischengespeicherten Joint-`Placement1`/`Placement2`-Werte
+neu berechnet und dadurch wieder konsistent mit der aktuellen Geometrie werden. Eine **reine
+Byte-Kopie** der Originaldateien (kein Öffnen, kein Neuverknüpfen, kein Speichern) ist daher der
+einzig zuverlässige Weg, das Bug-auslösende Datei-Innenleben unverändert zu übertragen - zum
+Glück speichert FreeCAD hier ohnehin schon einfache, ordner-relative Pfade
+(`file="CNC_M1_010_G.FCStd"`), sodass eine reine Kopie aller 3 Dateien in einen neuen,
+gemeinsamen Ordner ausreicht.
+
+Das spricht übrigens auch für die Ursachen-Hypothese: die zwischengespeicherten
+Joint-Placement-Werte im Original scheinen mit der aktuellen Geometrie **absichtlich
+inkonsistent** zu sein (weil sie seit dem letzten interaktiven Ziehen nie neu berechnet wurden)
+- genau das bringt der Kalt-Solve durcheinander.
+
 ## Symptom
 
 Beim Bearbeiten/Erstellen eines Joints (z. B. einer Gleitverbindung) in einer Baugruppe mit
@@ -91,61 +113,60 @@ laufen lassen.
 
 **Environment:** Ubuntu 24.04 (kernel 7.0.0), self-built from source (CMake), Qt6/PySide6.
 
-**Steps to reproduce** (using an assembly with the same structural pattern as our production
-file - one part per external `.FCStd` document, linked via `App::Link`, chained by Slider
-joints with no explicit Distance/Offset driving the slide position):
+**Steps to reproduce (attached files, confirmed reliable):**
 
-1. Create 3 separate documents: `Ground.FCStd`, `Panel.FCStd` (a simple body), and an
-   `Assembly.FCStd` containing an `Assembly::AssemblyObject`.
-2. In the assembly, add `App::Link` instances: one linking to `Ground`'s body, and (at least)
-   two linking to `Panel`'s body - call them `Panel0` and `Panel1`.
-3. Ground `Panel0` to `Ground` fully (3 orthogonal `Distance` joints on the XY/YZ/XZ origin
-   planes, or equivalent), so `Panel0` has 0 remaining DOF relative to `Ground`.
-4. Create a `Slider` joint between `Panel0` and `Panel1` (`Origin.Y_Axis.` on both sides),
-   leaving `Offset2` at its default (0) - i.e. do **not** give the joint any numeric value
-   that determines the sliding position.
-5. Manually position `Panel1` along the slide axis by setting its `Placement` directly
-   (simulating interactive dragging in the 3D view) to a value distinct from `Panel0`'s, e.g.
-   `Panel0.Placement.Base.y = -85`, `Panel1.Placement.Base.y = -50`.
-6. Save and close the document, then reopen it. Confirm `Panel1` is still at Y=-50.
-7. Trigger **any** of the following, all of which force a full recompute of the previously
-   up-to-date assembly graph without the user dragging anything:
-   - Double-click the Assembly object in the tree to enter Edit mode, or
-   - `Gui.ActiveDocument.ActiveView.setActiveObject('Assembly', assemblyObj)` followed by
-     `assembly.recompute(True)`, or
-   - Delete an unrelated object in the document and call `doc.recompute()`.
+1. Download and unzip the attached `standalone_repro.zip` anywhere.
+2. Open `Assembly_repro.FCStd` in FreeCAD.
+3. Note the 7 `...Panel...` parts each have a distinct Y position (-85, -50, -15, 20, 55, 90,
+   125 mm).
+4. Double-click the `CNC_M1_009_A_Y_Abstreifer` assembly object in the tree to enter Edit mode
+   (or run the included `repro_run.py` with `FreeCAD -l repro_run.py`, which does the same
+   thing headlessly and prints before/after positions).
 
-**Expected behaviour:** `Panel1` stays at Y=-50 (its last known/saved, still-valid position -
-the Slider joint has no numeric property that says otherwise, so its previously solved
-position should be treated as a valid equilibrium and preserved).
+No joint dialog needs to be opened and nothing needs to be dragged - entering Edit mode alone
+is enough to trigger it.
 
-**Actual behaviour:** `Panel1`'s position collapses onto `Panel0`'s position on the slide axis
-(here: Y jumps from -50 to -85) as soon as any of the triggers above forces a "cold" recompute
-of the assembly - even though nothing was dragged and no joint property was changed. In a chain
-of N such Slider joints, every downstream part collapses onto the position of the first
-(grounded) part in the chain; the axis perpendicular to the slide (Z in our real file) is
-unaffected.
+**Expected behaviour:** all 7 panels keep their distinct, previously-saved Y positions - none
+of the Slider joints between them have an explicit Distance/Offset value, so their last-saved
+`Placement` (from earlier interactive dragging) should be treated as a valid, stable
+equilibrium.
 
-Symptom as originally observed by an end user: finishing a Joint-creation/edit dialog (OK)
-snapped the two jointed parts to this collapsed state; Cancel snapped the *entire* assembly
-(all parts in the chain) to it - both are instances of the same "forced cold recompute after
-the dialog's transaction commit/abort" trigger.
+**Actual behaviour:** all 7 panels' Y position collapses onto -85 (the position of the first,
+fully-grounded panel in the chain) as soon as Edit mode is entered - even though nothing was
+dragged and no joint property was changed. The axis perpendicular to the slide (Z in this file)
+is unaffected. We also confirmed two other, independent triggers produce the byte-identical
+result: `Gui.ActiveDocument.ActiveView.setActiveObject('Assembly', assemblyObj)` followed by
+`assembly.recompute(True)`; and deleting an unrelated object in the document and calling
+`doc.recompute()`.
+
+Symptom as originally observed by an end user (before we reduced it to the attached file):
+finishing a Joint-creation/edit dialog with OK snapped the two jointed parts to this collapsed
+state; Cancel snapped the *entire* assembly (all parts in the chain) to it - both are instances
+of the same "forced cold recompute after the dialog's transaction commit/abort" trigger.
 
 **Reproduced with:**
-- A reduced 2-panel extract of a real production assembly (Ground + 2 App::Link parts + 4
-  joints) - 100% reliable, no GUI required (plain `App::Document.recompute()` after
-  `removeObject()` on an unrelated object is sufficient).
-- Isolated at the API level to two independent trigger mechanisms
-  (`Gui::MDIView::setActiveObject` + recompute; `App::Document::removeObject` + recompute)
-  that share nothing except "the assembly's dependency graph gets marked dirty and then fully
-  re-solved".
+- The attached `standalone_repro.zip` (real production part geometry, reduced project) - 100%
+  reliable across 3 independent trigger mechanisms, confirmed from multiple different
+  filesystem locations.
+- A reduced 2-panel extract of the same assembly (Ground + 2 `App::Link` parts + 4 joints) -
+  100% reliable, no GUI required (plain `App::Document.recompute()` after `removeObject()` on
+  an unrelated object is sufficient).
+
+**Important finding while preparing this report:** re-linking the `App::Link` objects to local
+copies of their source files and recomputing **silently "heals" the bug** - the re-saved file
+no longer reproduces, even with identical topology and identical `Placement` values. Only an
+untouched, byte-for-byte copy of the original files (no re-open, no re-link, no re-save)
+preserves whatever triggers it. This suggests the affected joints' cached `Placement1`/
+`Placement2` values are stale relative to the current part positions in the *original* file
+(never refreshed since an earlier interactive drag), and it's specifically that staleness a
+cold re-solve trips over - but we could not confirm this mechanism at the source level (see
+below).
 
 **Not yet reproduced:** a fully synthetic, from-scratch file using only generic
 `Part::Box`/plain `PartDesign::Body` geometry (same joint topology, same cross-document
-`App::Link` architecture) - several attempts with matching topology did not trigger the
-collapse, so some additional detail of the real part geometry/references (possibly the use of
-a custom datum plane rather than an `Origin` plane for the anchoring joint) appears to matter
-and hasn't been isolated yet.
+`App::Link` architecture, manually set `Placement` values) did **not** trigger the collapse in
+several attempts - consistent with the "stale cache" theory above (a freshly-built file's joint
+caches are never stale to begin with), but not confirmed as the actual mechanism.
 
 **Suspected area:** `src/Mod/Assembly/App/AssemblyObject.cpp`, `solve()` and its helpers
 (`jointParts()`, `fixGroundedParts()`), and/or the underlying `OndselSolver`
@@ -165,9 +186,13 @@ seeded/resolved on a full re-solve versus how it was left by an interactive drag
   `repro_control_minimal_synthetic.py` - Kontrollen aus der ersten Runde, weiterhin gültig
 - `repro_real_file.py` - **historisch**, ursprünglicher (fehlgeleiteter) Reproduktionsversuch,
   siehe Korrektur-Hinweis oben und im Datei-Header
+- `standalone_repro/` (+ `standalone_repro.zip`) - das einzige **wirklich eigenständige** Paket,
+  siehe eigener Abschnitt oben. **Das ist die Datei, die an den GitHub-Issue angehängt werden
+  sollte** - alle anderen Skripte hier brauchen weiterhin den privaten Originalpfad.
 
-Alle Skripte, die auf echte Panels/Joints zugreifen, brauchen die private Nutzerdatei
-`3_Panels_aus_6_auswalbar.FCStd` (nicht im Repo enthalten) - Pfad im Skript anpassen.
+Alle Skripte AUSSER denen in `standalone_repro/` greifen auf die private Nutzerdatei
+`3_Panels_aus_6_auswalbar.FCStd` zu (nicht im Repo enthalten) - Pfad im Skript anpassen, falls
+du sie selbst nachvollziehen willst.
 
 ## Umgebung zum Ausführen
 
