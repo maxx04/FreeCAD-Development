@@ -81,6 +81,22 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
    beim nächsten Event neu). Zusätzlich `Gui.updateGui()` danach aufgerufen -
    gleiches Muster bereits in `CommandCreateSimulation.py` verwendet.
 
+6. **Bauteile springen kurz auf Placement (0,0,0)** (2026-08-09, direkt beim
+   Live-Test von Fix 5 aufgefallen): der erste Versuch, `Gui.updateGui()`
+   direkt nach `clearIsolate()` in `deactivate()` aufzurufen, saß an der
+   falschen Stelle - `deactivate()` läuft in `accept()`/`reject()` **vor**
+   der eigentlichen Commit-/Recompute-Sequenz
+   (`generatePropertySettings()`/`Gui.doCommand()`/`recompute()` in
+   `accept()`, `abortCommand()`/`recompute()` in `reject()`). Das sofortige
+   Durchpumpen der Qt-Eventqueue an dieser frühen Stelle löste einen
+   verfrühten Redraw/Recompute mit dem noch nicht fertig committeten
+   Joint-Zwischenzustand aus - sichtbar als kurzes Zurückspringen der
+   Bauteile auf Placement (0,0,0), bei "Abbrechen" betraf es alle Bauteile.
+   Fix: `Gui.updateGui()` aus `deactivate()` entfernt, stattdessen ganz am
+   Ende von `accept()` (nach `commitCommand()`) und `reject()` (nach dem
+   finalen `recompute()`) aufgerufen - erst wenn der Joint-Zustand
+   vollständig fertig ist.
+
 ### Anwenden
 
 Nach einem frischen Checkout/Build von FreeCAD:
