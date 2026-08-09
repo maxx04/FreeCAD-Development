@@ -1,5 +1,5 @@
 diff --git a/src/Mod/Assembly/JointObject.py b/src/Mod/Assembly/JointObject.py
-index 79752c46d5..e03db48c6d 100644
+index 79752c46d5..fa11fe0d8b 100644
 --- a/src/Mod/Assembly/JointObject.py
 +++ b/src/Mod/Assembly/JointObject.py
 @@ -1540,7 +1540,15 @@ class MakeJointSelGate:
@@ -104,7 +104,7 @@ index 79752c46d5..e03db48c6d 100644
          Gui.ActiveDocument.commitCommand()
          return True
  
-@@ -1745,6 +1799,17 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+@@ -1745,6 +1799,24 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
              self.assembly.ViewObject.MoveOnlyPreselected = False
              self.assembly.ViewObject.MoveInCommand = True
  
@@ -118,6 +118,13 @@ index 79752c46d5..e03db48c6d 100644
 +            # Joint-Dialogs aufrufen statt nur beim manuellen Umschalten auf "Disabled".
 +            if hasattr(self.assembly.ViewObject, "clearIsolate"):
 +                self.assembly.ViewObject.clearIsolate()
++                # clearIsolate() aendert Visibility/Selectable mehrerer Objekte auf einmal
++                # synchron beim Schliessen des Dialogs - ohne expliziten Redraw bleiben die
++                # betroffenen Bauteile in der 3D-Ansicht bis zur naechsten Mausbewegung
++                # unsichtbar (Coin3D zeichnet erst beim naechsten Event neu). Gleiches Muster
++                # bereits in CommandCreateSimulation.py verwendet ("Ensure the 3D view is
++                # redrawn").
++                Gui.updateGui()
 +
          Gui.Selection.removeSelectionGate()
          Gui.Selection.removeObserver(self)

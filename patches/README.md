@@ -74,7 +74,12 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
    waren nur noch 3 der 7 Panels auswählbar. Fix: `deactivate()` (wird von
    sowohl `accept()` als auch `reject()` aufgerufen) ruft jetzt unbedingt
    `assembly.ViewObject.clearIsolate()` auf - sicherer No-Op, wenn ohnehin
-   keine Isolation aktiv war.
+   keine Isolation aktiv war. Nebenbefund beim Live-Test: `clearIsolate()`
+   ändert Visibility/Selectable mehrerer Objekte synchron beim Schließen des
+   Dialogs - ohne expliziten Redraw blieben die betroffenen Bauteile in der
+   3D-Ansicht bis zur nächsten Mausbewegung unsichtbar (Coin3D zeichnet erst
+   beim nächsten Event neu). Zusätzlich `Gui.updateGui()` danach aufgerufen -
+   gleiches Muster bereits in `CommandCreateSimulation.py` verwendet.
 
 ### Anwenden
 
