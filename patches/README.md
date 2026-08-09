@@ -57,6 +57,25 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
    FreeCAD-Konsole (`PrintWarning` beim Auto-Fix-Versuch, `PrintError` falls
    auch der zweite Anlauf fehlschlägt - dann muss manuell geprüft werden).
 
+5. **Bauteile bleiben nach Joint-Bearbeitung dauerhaft nicht mehr auswählbar**
+   (2026-08-09, `TaskAssemblyCreateJoint.deactivate()`): der Joint-Dialog hat
+   ein "Isolate"-Feature (Dropdown Transparent/Wireframe/Hidden/Disabled), das
+   beim Bearbeiten eines Joints alle Bauteile außer den zwei gerade
+   referenzierten unauswählbar/ausgeblendet macht (`Selectable = False`), um
+   die Positionierung zu erleichtern. Das Zurücksetzen (`clearIsolate()`)
+   wurde bisher nur ausgelöst, wenn man die Dropdown manuell auf "Disabled"
+   zurückstellte - schloss man den Dialog per OK/Abbrechen während Isolate
+   noch aktiv war, blieb `Selectable = False` auf den nicht isolierten
+   Bauteilen für immer hängen (der Wiederherstellungs-Backup existiert nur im
+   RAM des ViewProviders und geht beim Schließen/Speichern des Dokuments
+   verloren - `Selectable = False` wird dann fest in die `.FCStd`-Datei
+   geschrieben). Nutzer-Repro: Baugruppe mit 7 kettenartig über
+   Gleitverbindungen verbundenen Panels, nach mehreren Joint-Bearbeitungen
+   waren nur noch 3 der 7 Panels auswählbar. Fix: `deactivate()` (wird von
+   sowohl `accept()` als auch `reject()` aufgerufen) ruft jetzt unbedingt
+   `assembly.ViewObject.clearIsolate()` auf - sicherer No-Op, wenn ohnehin
+   keine Isolation aktiv war.
+
 ### Anwenden
 
 Nach einem frischen Checkout/Build von FreeCAD:

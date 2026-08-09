@@ -1,5 +1,5 @@
 diff --git a/src/Mod/Assembly/JointObject.py b/src/Mod/Assembly/JointObject.py
-index 79752c46d5..463735b3f6 100644
+index 79752c46d5..e03db48c6d 100644
 --- a/src/Mod/Assembly/JointObject.py
 +++ b/src/Mod/Assembly/JointObject.py
 @@ -1540,7 +1540,15 @@ class MakeJointSelGate:
@@ -104,3 +104,21 @@ index 79752c46d5..463735b3f6 100644
          Gui.ActiveDocument.commitCommand()
          return True
  
+@@ -1745,6 +1799,17 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+             self.assembly.ViewObject.MoveOnlyPreselected = False
+             self.assembly.ViewObject.MoveInCommand = True
+ 
++            # FCProject-Patch: Falls der Nutzer die "Isolate"-Anzeige (Transparent/Wireframe/
++            # Hidden) waehrend der Joint-Bearbeitung aktiv gelassen hat, statt sie manuell auf
++            # "Disabled" zurueckzustellen, blieb Selectable=False auf den nicht isolierten
++            # Bauteilen dauerhaft haengen - inklusive Speichern in die Datei, da der
++            # Wiederherstellungs-Backup nur im RAM existiert und mit dem Dokument verloren geht.
++            # clearIsolate() ist ein sicherer No-Op, wenn keine Isolation aktiv ist (iteriert nur
++            # ueber ein ggf. leeres Backup), daher hier unbedingt bei jedem Verlassen des
++            # Joint-Dialogs aufrufen statt nur beim manuellen Umschalten auf "Disabled".
++            if hasattr(self.assembly.ViewObject, "clearIsolate"):
++                self.assembly.ViewObject.clearIsolate()
++
+         Gui.Selection.removeSelectionGate()
+         Gui.Selection.removeObserver(self)
+         Gui.Selection.setSelectionStyle(Gui.Selection.SelectionStyle.NormalSelection)
