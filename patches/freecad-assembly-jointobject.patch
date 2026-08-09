@@ -1,5 +1,5 @@
 diff --git a/src/Mod/Assembly/JointObject.py b/src/Mod/Assembly/JointObject.py
-index 79752c46d5..435766f3d9 100644
+index 79752c46d5..463735b3f6 100644
 --- a/src/Mod/Assembly/JointObject.py
 +++ b/src/Mod/Assembly/JointObject.py
 @@ -1540,7 +1540,15 @@ class MakeJointSelGate:
@@ -60,3 +60,47 @@ index 79752c46d5..435766f3d9 100644
          bind = Gui.ExpressionBinding(self.jForm.limitLenMinSpinbox).bind(self.joint, "LengthMin")
          bind = Gui.ExpressionBinding(self.jForm.limitLenMaxSpinbox).bind(self.joint, "LengthMax")
          bind = Gui.ExpressionBinding(self.jForm.limitRotMinSpinbox).bind(self.joint, "AngleMin")
+@@ -1716,6 +1733,43 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+ 
+         self.assembly.recompute(True)
+ 
++        # WORKAROUND (FCProject-Patch, siehe patches/freecad-assembly-jointobject.patch):
++        # bei Baugruppen mit dokumentuebergreifenden Referenzen (jedes Bauteil sein eigenes
++        # .FCStd-Dokument, per App::Link eingebunden) kann die persistente Element-Referenz
++        # (Reference1/Reference2) direkt nach dem ersten Recompute noch nicht aufloesbar sein
++        # ("?" im Elementnamen, siehe execute()s "Broken link"-Check oben) - der Joint faellt
++        # dadurch in execute() mit einer Exception in den Fehlerzustand und wird von
++        # AssemblyObject::getJoints() komplett aus dem Verbindungsgraphen entfernt, wodurch das
++        # zweite Bauteil sich danach lautlos nicht mehr ziehen laesst (kein Fehler in der UI).
++        # Ein Suppress/Unsuppress-Zyklus zwingt eine erneute Aufloesung, die im zweiten Anlauf
++        # i. d. R. gelingt (nur der zweite Recompute-Durchlauf ueber beide Dokumente hinweg
++        # scheint die Namensaufloesung "heilen" zu koennen).
++        # Bewusst KEIN stiller Fallback: nur ausfuehren, wenn der Fehlerfall tatsaechlich
++        # eingetreten ist, und immer eine Konsolen-Meldung dazu - damit das nicht unbemerkt
++        # durchlaeuft und man es im Log wiederfindet.
++        if self.activeType == "Assembly" and "Invalid" in self.joint.State:
++            App.Console.PrintWarning(
++                translate(
++                    "Assembly",
++                    "FCProject-Workaround: Joint '{}' war nach dem Erstellen ungueltig"
++                    " (vermutlich dokumentuebergreifende TNP-Referenz) - erzwinge Neuaufloesung"
++                    " via Suppress/Unsuppress.\n",
++                ).format(self.joint.Label)
++            )
++            self.joint.Suppressed = True
++            self.assembly.recompute(True)
++            self.joint.Suppressed = False
++            self.assembly.recompute(True)
++
++            if "Invalid" in self.joint.State:
++                App.Console.PrintError(
++                    translate(
++                        "Assembly",
++                        "FCProject-Workaround: Neuaufloesung von Joint '{}' fehlgeschlagen -"
++                        " bitte Referenzen manuell pruefen!\n",
++                    ).format(self.joint.Label)
++                )
++
+         Gui.ActiveDocument.commitCommand()
+         return True
+ 

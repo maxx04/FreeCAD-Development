@@ -39,6 +39,24 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
    Weg-Limits gingen verloren). Gleicher Fix: `textChanged` statt
    `valueChanged`.
 
+4. **Zweites Bauteil nach Joint-Erstellung nicht mehr ziehbar** (2026-08-08,
+   `TaskAssemblyCreateJoint.accept()`): bei einer dokumentübergreifenden
+   Referenz (PDM-Standardfall: Teil = eigenes `.FCStd`, per `App::Link`
+   eingebunden) kann die persistente Element-Referenz (`Reference1`/
+   `Reference2`) direkt nach dem ersten Recompute noch nicht auflösbar sein
+   (`"?"` im Elementnamen). `execute()` wirft dafür bewusst eine Exception
+   ("Broken link in..."), der Joint geht in den Fehlerzustand
+   (`"Invalid" in joint.State`) und wird von
+   `AssemblyObject::getJoints()` komplett aus dem Verbindungsgraphen entfernt
+   - das zweite Bauteil lässt sich danach lautlos nicht mehr ziehen, ohne
+   sichtbaren Fehler in der Oberfläche. Nutzer-Workaround war manuelles
+   Suppress/Unsuppress des Joints (erzwingt eine erneute Referenz-Auflösung,
+   die im zweiten Anlauf meist gelingt). Fix automatisiert genau das **nur
+   wenn der Fehlerfall tatsächlich eintritt** (kein blinder Fallback bei
+   jeder Joint-Erstellung) und protokolliert es immer sichtbar über die
+   FreeCAD-Konsole (`PrintWarning` beim Auto-Fix-Versuch, `PrintError` falls
+   auch der zweite Anlauf fehlschlägt - dann muss manuell geprüft werden).
+
 ### Anwenden
 
 Nach einem frischen Checkout/Build von FreeCAD:
