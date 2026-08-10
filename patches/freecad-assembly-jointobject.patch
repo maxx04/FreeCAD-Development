@@ -1,8 +1,34 @@
 diff --git a/src/Mod/Assembly/JointObject.py b/src/Mod/Assembly/JointObject.py
-index 79752c46d5..7a69bce637 100644
+index 79752c46d5..593599ef2e 100644
 --- a/src/Mod/Assembly/JointObject.py
 +++ b/src/Mod/Assembly/JointObject.py
-@@ -1540,7 +1540,15 @@ class MakeJointSelGate:
+@@ -973,7 +973,24 @@ class Joint:
+         if not sameDir:
+             moving_part_global_jcs = UtilsAssembly.flipPlacement(moving_part_global_jcs)
+ 
+-        transform_plc = fixed_part_global_jcs * moving_part_global_jcs.inverse()
++        if joint.JointType == "Slider":
++            # A Slider joint has one free translational DOF along the JCS's local Z axis
++            # (see e.g. offsetSpinbox binding to Offset2.Base.z). Fully matching the JCS
++            # here - as done below for other joint types - would collapse that free DOF
++            # onto the fixed part's position instead of preserving the part's own position
++            # along the slide axis. This matters specifically because preSolve()/matchJCS()
++            # can run before the mbD solver considers this joint "connected" - e.g. on the
++            # very first recompute after loading a file, triggered indirectly by an
++            # ExpressionEngine-bound Offset property re-evaluating - in which case this used
++            # to snap the whole downstream chain onto the fixed part's slide position
++            # (issue: chained Slider joints collapse to the grounded part's position on a
++            # cold recompute).
++            local = fixed_part_global_jcs.inverse() * moving_part_global_jcs
++            correctedLocal = App.Placement(App.Vector(0, 0, local.Base.z), App.Rotation())
++            correctedMovingGlobalJcs = fixed_part_global_jcs * correctedLocal
++            transform_plc = correctedMovingGlobalJcs * moving_part_global_jcs.inverse()
++        else:
++            transform_plc = fixed_part_global_jcs * moving_part_global_jcs.inverse()
+ 
+         for part in parts_to_move:
+             part.Placement = transform_plc * part.Placement
+@@ -1540,7 +1557,15 @@ class MakeJointSelGate:
                  if parent.isDerivedFrom("App::LocalCoordinateSystem"):
                      datum = parent
  
@@ -19,7 +45,7 @@ index 79752c46d5..7a69bce637 100644
                  # accept only datum that are not attached
                  return datum.MapMode == "Deactivated"
  
-@@ -1635,11 +1643,18 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+@@ -1635,11 +1660,18 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
              self.createJointObject()
              self.visibilityBackup = False
  
@@ -43,7 +69,7 @@ index 79752c46d5..7a69bce637 100644
          bind = Gui.ExpressionBinding(self.jForm.angleSpinbox).bind(self.joint, "Angle")
          bind = Gui.ExpressionBinding(self.jForm.distanceSpinbox).bind(self.joint, "Distance")
          bind = Gui.ExpressionBinding(self.jForm.distanceSpinbox2).bind(self.joint, "Distance2")
-@@ -1663,10 +1678,12 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+@@ -1663,10 +1695,12 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
          self.jForm.limitCheckbox3.stateChanged.connect(self.adaptUi)
          self.jForm.limitCheckbox4.stateChanged.connect(self.adaptUi)
  
@@ -60,7 +86,7 @@ index 79752c46d5..7a69bce637 100644
          bind = Gui.ExpressionBinding(self.jForm.limitLenMinSpinbox).bind(self.joint, "LengthMin")
          bind = Gui.ExpressionBinding(self.jForm.limitLenMaxSpinbox).bind(self.joint, "LengthMax")
          bind = Gui.ExpressionBinding(self.jForm.limitRotMinSpinbox).bind(self.joint, "AngleMin")
-@@ -1716,13 +1733,65 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+@@ -1716,13 +1750,65 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
  
          self.assembly.recompute(True)
  
@@ -126,7 +152,7 @@ index 79752c46d5..7a69bce637 100644
          return True
  
      def autoClosedOnTransactionChange(self):
-@@ -1745,6 +1814,25 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+@@ -1745,6 +1831,25 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
              self.assembly.ViewObject.MoveOnlyPreselected = False
              self.assembly.ViewObject.MoveInCommand = True
  

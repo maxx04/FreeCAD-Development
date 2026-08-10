@@ -97,6 +97,46 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
    finalen `recompute()`) aufgerufen - erst wenn der Joint-Zustand
    vollständig fertig ist.
 
+7. **Slider-Ketten kollabieren beim ersten Recompute nach dem Laden**
+   (2026-08-10, `Joint.matchJCS()`): eine Baugruppe mit mehreren Panels, über
+   Gleitverbindungen (Slider) kettenartig verbunden (PDM-Standardfall: jedes
+   Panel = eigenes `.FCStd`, per `App::Link` eingebunden, typischerweise mit
+   individuellen, zuvor interaktiv gezogenen Y-Positionen), verlor beim ersten
+   `recompute()` nach dem Öffnen der Datei alle individuellen Positionen -
+   jedes Panel sprang auf die Position des geerdeten ersten Panels der Kette.
+   Ursache: beim ersten Recompute hat `AssemblyObject::solve()` (C++,
+   `jointParts()`) noch keinen einzigen Joint beim mbD-Solver registriert. In
+   der parallel laufenden normalen Dokument-Rekompute-Kaskade wertet aber
+   jeder Slider-Joint seine per `ExpressionEngine` gebundene `Offset2`-
+   Property neu aus, was `onChanged(joint, "Offset2")` auslöst - und weil
+   `"Slider"` in `JointUsingPreSolve` steht, ruft das `preSolve()`/
+   `matchJCS()` auf. `matchJCS()` fragt `assembly.isPartConnected()` ab; da
+   der Solver den Joint noch nirgends als "verbunden" führt, wird das zweite
+   Panel als frei behandelt und per **vollem 6-DOF-Snap** exakt auf das
+   Koordinatensystem des ersten Panels gelegt - inklusive der Schiebeachse,
+   die bei einem Slider aber gerade *frei* bleiben muss (das ist die einzige
+   erlaubte Bewegungsrichtung des Joints). Der Fehler pflanzt sich Joint für
+   Joint die ganze Kette entlang fort. Diagnostiziert per echter
+   C++-Instrumentierung im selbstgebauten FreeCAD (Base::Console-Checkpoints
+   in `AssemblyObject.cpp`/`OndselSolver`, zurückverfolgt bis vor
+   `AssemblyObject::execute()`) plus einer zweiten, tieferen Fable-Recherche,
+   die den exakten Python-Mechanismus in `matchJCS()` fand - der Ondsel-Solver
+   selbst (Newton-Raphson) ist nachweislich unschuldig, er bekommt nur schon
+   ein kaputtes Ausgangsmodell.
+   Fix: für `JointType == "Slider"` wird `transform_plc` nicht mehr aus der
+   vollen JCS-Differenz berechnet, sondern nur aus Rotation + den beiden
+   Achsen senkrecht zur lokalen Z-Achse (der Schiebeachse) - die
+   Z-Komponente (aktueller Schiebe-Versatz) bleibt unangetastet erhalten,
+   statt auf 0 relativ zum fixierten Teil gezwungen zu werden. Betrifft nur
+   den Slider-Zweig; alle anderen Joint-Typen verhalten sich unverändert.
+   Live gegen den selbstgebauten FreeCAD 26.3 getestet mit dem 7-Panel-Repro
+   aus `patches/bugreport-ensureIdentityPlacements/standalone_repro/` -
+   alle Y-Positionen bleiben nach `recompute(True)` erhalten.
+   (Cylindrical hat dieselbe freie Z-Translation und ist vom selben
+   Mechanismus vermutlich ebenfalls betroffen, wurde aber bewusst NICHT
+   mitgefixt - kein bestätigter Repro-Fall dafür, Scope absichtlich auf
+   Slider beschränkt.)
+
 ### Anwenden
 
 Nach einem frischen Checkout/Build von FreeCAD:
