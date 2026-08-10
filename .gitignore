@@ -17,4 +17,6 @@ TODO.md
 LEARNINGS.md
 
 # Maschinenspezifische Claude-Code-Einstellungen (additionalDirectories etc.)
-.claude/settings.json 
+.claude/settings.json
+.claude/settings.local.json
+patches/update-logs/
