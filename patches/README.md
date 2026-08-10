@@ -6,6 +6,38 @@ Arbeiten mit FCProject aufgefallen sind. Sie gehören nicht zu FCProject selbst,
 sondern zu FreeCAD - werden hier nur abgelegt, damit sie nach einem `git pull`,
 `git stash` oder einer Neuinstallation von FreeCAD nicht verloren gehen.
 
+## Periodisches Update (`update-and-rebuild-freecad.sh`)
+
+Zieht die neuesten Commits von `github.com/FreeCAD/FreeCAD` (main), wendet
+alle Patches aus diesem Ordner in der richtigen Reihenfolge neu an, baut neu
+und installiert - automatisiert genau den Ablauf, der weiter unten unter
+"Anwenden" beschrieben ist, plus `git pull`. Bricht bei jedem unerwarteten
+Zustand (unbekannte lokale Änderungen, Patch passt nicht mehr, Build
+scheitert) sofort ab, statt etwas stillschweigend zu überschreiben oder zu
+ignorieren.
+
+```bash
+./patches/update-and-rebuild-freecad.sh            # echt ausführen
+./patches/update-and-rebuild-freecad.sh --dry-run   # nur anzeigen, was passieren würde
+```
+
+Nutzt dafür den CMake-Preset `FC-dev` aus
+`freecad-source/CMakeUserPresets.json` (zeigt bewusst auf den bestehenden
+`build/`-Ordner, von dem FCProjects `CMakeLists.txt` selbst abhängt - nicht
+auf `build/debug`/`build/release` wie FreeCADs eigene Standard-Presets, die
+sonst einen zweiten, abweichenden Build-Baum anlegen würden). Derselbe
+Preset funktioniert auch in VS Codes CMake-Tools-Panel, falls dort statt per
+Skript gebaut werden soll - beide arbeiten dann auf demselben Stand.
+
+Logs landen unter `patches/update-logs/` (git-ignoriert).
+
+`freecad-CMakeUserPresets.json` ist eine reine Sicherungskopie von
+`freecad-source/CMakeUserPresets.json` - die Datei ist von FreeCADs eigenem
+`.gitignore` ausgeschlossen (Standard-CMake-Konvention, "lokal, nicht fürs
+Repo gedacht") und würde sonst genauso unbemerkt verlorengehen wie die
+Umgebungs-Patches vorhin. Das Skript stellt sie bei Bedarf automatisch
+wieder her.
+
 ## freecad-assembly-jointobject.patch
 
 Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):

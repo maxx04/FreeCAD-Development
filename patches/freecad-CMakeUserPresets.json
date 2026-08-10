@@ -1,0 +1,30 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 16,
+    "patch": 3
+  },
+  "configurePresets": [
+    {
+      "name": "FC-dev",
+      "displayName": "FC-dev (der real genutzte Build)",
+      "description": "Zeigt auf den bestehenden build/-Ordner, von dem FCProject (FC_BUILD_DIR) und update-and-rebuild-freecad.sh abhaengen - bewusst nicht build/debug oder build/release wie die Standard-Presets, um keinen zweiten, abweichenden Build-Baum zu erzeugen.",
+      "binaryDir": "${sourceDir}/build",
+      "generator": "Unix Makefiles",
+      "inherits": ["common"],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": { "type": "STRING", "value": "Release" },
+        "CMAKE_INSTALL_PREFIX": { "type": "PATH", "value": "/home/maxx/freecad/install" },
+        "FREECAD_USE_EXTERNAL_COIN_PIVY": { "type": "BOOL", "value": "ON" }
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "FC-dev",
+      "configurePreset": "FC-dev",
+      "jobs": 0
+    }
+  ]
+}
