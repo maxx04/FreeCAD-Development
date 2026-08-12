@@ -33,8 +33,19 @@
 # Aufruf:
 #   ./patches/update-and-rebuild-freecad.sh            # echt ausfuehren
 #   ./patches/update-and-rebuild-freecad.sh --dry-run   # nur anzeigen, was passieren wuerde
+#   JOBS=6 ./patches/update-and-rebuild-freecad.sh      # Parallelitaet manuell uebersteuern
 #
 # Log landet unter patches/update-logs/update-<Zeitstempel>.log
+#
+# WICHTIG zur Parallelitaet: NICHT einfach nproc nehmen. FreeCAD/OpenCASCADE-
+# C++-Uebersetzungseinheiten sind sehr speicherhungrig (oft 1-2+ GB je
+# cc1plus-Prozess); bei 12 Kernen und 15 GB RAM auf dieser Maschine hat ein
+# -j12-Build zusammen mit VS Codes eigener IntelliSense-Indizierung schon
+# einmal den gesamten verfuegbaren Speicher gesprengt - systemd-oomd hat
+# daraufhin die komplette VS-Code-Prozessgruppe getoetet (inkl. der laufenden
+# Claude-Code-Session/diesem Skript, da Claude Code selbst als VS-Code-
+# Extension laeuft). Deshalb unten eine RAM-basierte, konservative
+# Job-Obergrenze statt naiv $(nproc).
 
 set -euo pipefail
 
@@ -43,6 +54,20 @@ FC_INSTALL="/home/maxx/freecad/install"
 PATCHES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="${PATCHES_DIR}/update-logs"
 TS="$(date +%Y%m%d-%H%M%S)"
+
+# Grobe Faustregel: ~2 GB RAM pro parallelem Compile-Job einplanen, dabei
+# 4 GB Luft fuer VS Code (inkl. dessen eigener C++-IntelliSense-Indizierung,
+# die genau beim letzten Crash mit reinspielte) und den Rest des Systems
+# lassen. Auf dieser 15-GB-Maschine ergibt das JOBS=5 statt der urspruenglich
+# genutzten 12 (= nproc). Per JOBS=<n> env var uebersteuerbar.
+if [[ -z "${JOBS:-}" ]]; then
+  MEM_KB="$(awk '/MemTotal/ {print $2}' /proc/meminfo)"
+  MEM_GB=$(( MEM_KB / 1024 / 1024 ))
+  JOBS=$(( (MEM_GB - 4) / 2 ))
+  [[ $JOBS -lt 2 ]] && JOBS=2
+  CPU_JOBS="$(nproc)"
+  [[ $JOBS -gt $CPU_JOBS ]] && JOBS=$CPU_JOBS
+fi
 LOG_FILE="${LOG_DIR}/update-${TS}.log"
 
 # Reine Build-Umgebungs-Patches: muessen VOR dem ersten Konfigurieren/Bauen
@@ -51,6 +76,16 @@ ENV_PATCHES=(
   "freecad-cmake-disable-tests.patch"
   "freecad-navigation-qbytearray-fix.patch"
   "freecad-propertyeditor-qstring-fix.patch"
+)
+# Dateien, die die obigen Umgebungs-Patches beruehren - bleiben waehrend des
+# gesamten Laufs absichtlich angewendet (siehe Schritt 4), duerfen dem
+# Sicherheitscheck in Schritt 1 also nicht als "unerwartete Aenderung"
+# auffallen, auch nicht bei einem Resume nach einem Abbruch.
+ENV_PATCHED_FILES=(
+  "CMakeLists.txt"
+  "src/Gui/PreferencePages/DlgSettingsNavigation.cpp"
+  "src/Mod/Start/Gui/GeneralSettingsWidget.cpp"
+  "src/Gui/propertyeditor/PropertyEditor.cpp"
 )
 
 # Feature-/Bugfix-Patches: nur relevant fuer FCProjects eigenen Workflow,
@@ -90,6 +125,7 @@ if [[ ! -f "${FC_SRC}/CMakeUserPresets.json" ]]; then
 fi
 
 log "Start. Aktueller Stand: $(git log -1 --format='%h %cd %s' --date=short)"
+echo "Parallelitaet: JOBS=${JOBS} (nproc=$(nproc), RAM=${MEM_GB:-?}GB) - via JOBS=<n> env var uebersteuerbar."
 
 log "Schritt 1/7: eigene Feature-Patches aus freecad-source entfernen"
 for f in "${FEATURE_PATCHED_FILES[@]}"; do
@@ -98,17 +134,28 @@ done
 
 # Alles, was jetzt noch als lokale Aenderung dasteht, kennt dieses Skript
 # nicht - lieber abbrechen als es stillschweigend zu verlieren. Bekannte,
-# harmlose Submodul-Eintraege (git zeigt sie je nach Inhalt mal als "M" mal
-# als "??" an, daher auf den Pfad matchen statt auf einen festen Status-Code)
-# werden ausgefiltert.
+# erwartete Eintraege werden ausgefiltert: die harmlosen Submodule (git zeigt
+# sie je nach Inhalt mal als "M" mal als "??" an) sowie die Dateien der
+# Umgebungs-Patches - die bleiben waehrend des ganzen Laufs absichtlich
+# angewendet (Schritt 4), duerfen also auch bei einem Resume nach einem
+# Abbruch nicht als "unerwartet" durchfallen.
 if [[ $DRY_RUN -eq 0 ]]; then
-  UNEXPECTED="$(git status --porcelain \
-    | grep -v 'src/3rdParty/OndselSolver$' \
-    | grep -v 'src/Mod/AddonManager$' \
-    || true)"
+  KNOWN_DIRTY=("src/3rdParty/OndselSolver" "src/Mod/AddonManager" "${ENV_PATCHED_FILES[@]}")
+  UNEXPECTED=""
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    is_known=0
+    for f in "${KNOWN_DIRTY[@]}"; do
+      if [[ "$line" == *"$f" ]]; then
+        is_known=1
+        break
+      fi
+    done
+    [[ $is_known -eq 0 ]] && UNEXPECTED+="${line}"$'\n'
+  done < <(git status --porcelain)
   if [[ -n "$UNEXPECTED" ]]; then
     echo "FEHLER: unerwartete lokale Aenderungen in ${FC_SRC}, breche ab:"
-    echo "$UNEXPECTED"
+    printf '%s' "$UNEXPECTED"
     echo "(Diese erst manuell klaeren/sichern, dann das Skript erneut starten.)"
     exit 1
   fi
@@ -141,7 +188,7 @@ log "Schritt 5/7: CMake reconfigure + voller Vanilla-Build (nur Umgebungs-Patche
 # FCProject (FC_BUILD_DIR) tatsaechlich abhaengt. Gleicher Preset auch fuer
 # VS Codes CMake-Tools-Panel nutzbar, damit beide auf demselben Stand bauen.
 run cmake --preset FC-dev
-run cmake --build --preset FC-dev
+run cmake --build --preset FC-dev --parallel "$JOBS"
 
 log "Vanilla-Build gruen. Schritt 6/7: eigene Feature-Patches wieder anwenden"
 for p in "${FEATURE_PATCHES[@]}"; do
@@ -150,7 +197,7 @@ for p in "${FEATURE_PATCHES[@]}"; do
 done
 
 echo "Feature-Patches drauf, nochmal inkrementell bauen"
-run cmake --build --preset FC-dev
+run cmake --build --preset FC-dev --parallel "$JOBS"
 
 log "Schritt 7/7: installieren"
 run cmake --install "${FC_SRC}/build"

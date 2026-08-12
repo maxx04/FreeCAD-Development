@@ -16,4 +16,18 @@ export PYTHONPATH="${VIRTUAL_ENV}/lib/python3.12/site-packages"
 # nach Mutter-Update 46.2-16 werden Apps sonst nativ-Wayland gestartet, was crasht.
 export QT_QPA_PLATFORM=xcb
 
-exec /home/maxx/freecad/install/bin/FreeCAD -l "$@"
+LOG_DIR="$HOME/freecad/logs"
+TS="$(date +%Y%m%d-%H%M%S)"
+LOG_FILE="${LOG_DIR}/freecad-compiled-${TS}.log"
+
+echo "Starte FreeCAD 26.3 mit Qt aus venv, Logfile: $LOG_FILE"
+
+exec /home/maxx/freecad/install/bin/FreeCAD -l --log-file "$LOG_FILE" "$@"
+
+status=$?
+
+if [ "$status" -eq 0 ] && [ -n "$LOG_FILE" ] && [ -f "$LOG_FILE" ]; then
+##    rm -f -- "$LOG_FILE"
+fi
+
+exit "$status"
