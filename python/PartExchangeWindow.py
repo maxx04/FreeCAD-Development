@@ -620,7 +620,11 @@ class PartExchangeWindow(QtWidgets.QDialog):
             except Exception:
                 pass
             try:
-                Gui.SendMsgToActiveView("ViewFit")
+                # Direkt über das View-Objekt statt Gui.SendMsgToActiveView("ViewFit") - Letzteres
+                # ist seit FreeCAD 26.3 deprecated und wird in 27.2 entfernt.
+                gui_doc = Gui.getDocument(doc.Name)
+                if gui_doc and gui_doc.ActiveView:
+                    gui_doc.ActiveView.fitAll()
             except Exception:
                 pass
 
