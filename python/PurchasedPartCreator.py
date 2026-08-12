@@ -3,11 +3,100 @@ import os
 import FreeCAD as App
 import Utils as Utils
 
+
+def _solids_from_shape(shape):
+    """Liefert möglichst echte Volumenkörper aus einem beliebigen Shape - mit zunehmend
+    aggressiven Fallbacks, damit auch STEP-Importe ohne fertig verbaute Solids (nur geschlossene
+    Schalen oder lose, abgrenzende Flächen) noch zu PartDesign::Body-tauglichen Körpern werden.
+    Gibt eine leere Liste zurück, wenn sich wirklich kein Volumen bilden lässt."""
+    import Part # type: ignore
+
+    if shape.Solids:
+        return list(shape.Solids)
+
+    # Keine fertigen Solids: lose Flächen erst zu Schalen vernähen (auf einer Kopie, damit
+    # das Original-Importobjekt unangetastet bleibt)
+    work_shape = shape
+    if not work_shape.Shells and work_shape.Faces:
+        work_shape = shape.copy()
+        try:
+            work_shape.sewShape()
+        except Exception:
+            pass
+
+    if work_shape.Shells:
+        try:
+            solidified = Part.makeSolid(work_shape)
+            if solidified.Solids:
+                return list(solidified.Solids)
+        except Exception:
+            pass
+
+    return []
+
+
+def _build_single_body(new_doc, base_name, trailing_name, solid, src_label):
+    """Baut aus genau einem Solid einen Body direkt als Root-Objekt (kein App::Part-Wrapper) -
+    gemeinsam genutzt vom einzelnen STEP-Objekt-Fall und von der Multi-Solid-Baugruppen-Zerlegung
+    (dort bekommt jedes Teildokument über EntityCreator._create_step_assembly denselben Weg, nur mit
+    einem bereits fertig aufgelösten Solid statt einer Baum-Auswahl)."""
+    import_feat = new_doc.addObject("Part::Feature", f"{base_name}_ImportGeo")
+    import_feat.Shape = solid
+    import_feat.Label = f"{src_label}_Geometrie"
+    import_feat.Visibility = False
+
+    body = new_doc.addObject("PartDesign::Body", base_name)
+    body.Label = trailing_name
+    body.BaseFeature = import_feat
+    return body
+
+
+def _collect_solids_from_refs(step_source_refs):
+    """Löst (Dokument, Objekt)-Referenzen aus der Baum-Auswahl auf und sammelt alle enthaltenen
+    Volumenkörper. Objekte, aus denen sich wirklich kein Volumen bilden lässt, werden mit ihrem
+    kompletten Shape als Fallback-Körper übernommen, statt sie stillschweigend zu verwerfen."""
+    collected = []  # Liste von (Shape, Quell-Label)
+    for doc_name, obj_name in step_source_refs or []:
+        src_doc = App.getDocument(doc_name) if doc_name else None
+        src_obj = src_doc.getObject(obj_name) if src_doc else None
+        if not src_obj or not hasattr(src_obj, "Shape") or src_obj.Shape is None or src_obj.Shape.isNull():
+            App.Console.PrintWarning(f"FCProject: STEP-Quellobjekt '{obj_name}' nicht auffindbar oder ohne Shape - übersprungen.\n")
+            continue
+
+        solids = _solids_from_shape(src_obj.Shape)
+        if solids:
+            for solid in solids:
+                collected.append((solid, src_obj.Label))
+        else:
+            App.Console.PrintWarning(
+                f"FCProject: '{src_obj.Label}' enthält auch nach dem Vernähen der Flächen keinen "
+                f"schließbaren Volumenkörper - Shape wird unverändert als einzelner Körper übernommen.\n"
+            )
+            collected.append((src_obj.Shape.copy(), src_obj.Label))
+    return collected
+
+
 class PurchasedPartCreator:
     """
-    FCProject: Spezialisierter PurchasedPartCreator für Kaufteile (Typ B) 
+    FCProject: Spezialisierter PurchasedPartCreator für Kaufteile (Typ B)
     PDM-Logik für Kaufteile (Typ B). Integriert CAD-Imports als Basis-Komponente
     mit CAD-Import als Basis. Integriert Material-Expressions und PDM-Metadaten.
+
+    Drei Wege zur Basis-Geometrie:
+    - __SingleSolidShape__/__SingleSolidLabel__: ein bereits fertig aufgelöstes Einzel-Solid, direkt
+      als Body übernommen. Wird von EntityCreator._create_step_assembly für "ein Körper pro Dokument"
+      genutzt (Multi-Solid-STEP -> mehrere Kaufteil-Dokumente + 1 verlinkendes Assembly-Dokument).
+    - __StepSourceRefs__: direkt aus dem Baum übernommene, bereits importierte STEP-Objekte. Bei genau
+      1 Solid identisch zum obigen Weg; bei mehreren Solids historischer Fallback (alle Bodies flach
+      in einem Dokument unter einem App::Part) - wird für Typ B inzwischen von EntityCreator schon vor
+      dem Aufruf abgefangen und in einzelne Dokumente + Assembly aufgelöst.
+    - __LinkedRawProfilePath__: klassisches Klonen eines Body/Part aus einer Vorlagendatei.
+
+    Der App::Part-Behälter wird NUR angelegt, wenn er wirklich gebraucht wird (mehrere Bodies,
+    oder gar keine Geometrie-Quelle). Ergibt sich am Ende genau EIN Körper (1 Solid, oder ein
+    einzelnes geklontes Objekt aus der Vorlage), wird dieser direkt als Root-PDM-Objekt verwendet -
+    analog zu PartCreator.py (Typ P), das für Einzelteile aus demselben Grund auf den Wrapper
+    verzichtet ("Body direkt als Root-Objekt").
     """
 
     def create(self, file_path, base_name, trailing_name, config, properties):
@@ -16,27 +105,97 @@ class PurchasedPartCreator:
         bestell_val = properties.get("Bestellnummer", "000-000")
         material_target = properties.get("__TargetMaterialName__", "Steel")
         profile_path = properties.get("__LinkedRawProfilePath__", None) # Optional gewählte Basis-Datei
+        step_source_refs = properties.get("__StepSourceRefs__", None)   # Optional: Baum-Auswahl aus STEP-Import
+        # Optional: bereits fertig aufgelöstes Einzel-Solid (Multi-Solid-Baugruppen-Zerlegung, siehe
+        # EntityCreator._create_step_assembly - "ein Körper pro Dokument")
+        single_solid_shape = properties.get("__SingleSolidShape__", None)
+        single_solid_label = properties.get("__SingleSolidLabel__", trailing_name)
         price_val = Utils.floatGerman(properties.get("Preis", 0.0))
 
         new_doc = App.newDocument(trailing_name)
         App.setActiveDocument(new_doc.Name)
-        
-        # Kaufteile nutzen App::Part als sauberen Container
-        core_obj = new_doc.addObject(config.get("FreeCADType", "App::Part"), base_name)
-        core_obj.Label = trailing_name
 
-        # Falls ein Basis-Kaufteil (z.B. ein roher Zylinder-Rohling) geladen werden soll
-        if profile_path and os.path.exists(profile_path):
+        core_obj = None  # wird unten je nach Geometrie-Quelle bestimmt
+
+        # STRATEGIE-WEICHE 0: Fertig aufgelöstes Einzel-Solid direkt übergeben - höchste Priorität,
+        # da dieser Weg gezielt von EntityCreator für "ein Teil pro Dokument" genutzt wird.
+        if single_solid_shape is not None:
+            try:
+                import PartDesign # type: ignore
+                core_obj = _build_single_body(new_doc, base_name, trailing_name, single_solid_shape, single_solid_label)
+            except Exception as e:
+                App.Console.PrintWarning(f"FCProject: Fehler beim direkten Solid-Aufbau: {str(e)}\n")
+
+        # STRATEGIE-WEICHE 1: Aus dem Baum übernommene STEP-Geometrie - hat Vorrang, da konkreter
+        # und aktueller als eine generische Halbzeug-Vorlagendatei.
+        elif step_source_refs:
+            try:
+                import PartDesign # type: ignore
+                solids = _collect_solids_from_refs(step_source_refs)
+
+                if len(solids) == 1:
+                    # Genau ein Volumenkörper -> der Body IST das Kaufteil, kein zusätzlicher
+                    # App::Part-Behälter drumherum nötig.
+                    solid, src_label = solids[0]
+                    core_obj = _build_single_body(new_doc, base_name, trailing_name, solid, src_label)
+
+                    App.Console.PrintMessage(
+                        f"FCProject: 1 Volumenkörper aus {len(step_source_refs)} STEP-Objekt(en) direkt "
+                        f"als Body übernommen (ohne App::Part-Behälter).\n"
+                    )
+
+                elif len(solids) > 1:
+                    # Mehrere Volumenkörper -> "Assembly"-artige Struktur: App::Part-Behälter mit
+                    # je einem eigenen Body pro Solid - hier braucht es den Container wirklich.
+                    core_obj = new_doc.addObject(config.get("FreeCADType", "App::Part"), base_name)
+                    core_obj.Label = trailing_name
+
+                    for idx, (solid, src_label) in enumerate(solids, start=1):
+                        suffix = f"_{idx:02d}"
+                        import_feat = new_doc.addObject("Part::Feature", f"{base_name}_ImportGeo{suffix}")
+                        import_feat.Shape = solid
+                        import_feat.Label = f"{src_label}_Geometrie{suffix}"
+                        import_feat.Visibility = False
+
+                        body = new_doc.addObject("PartDesign::Body", f"{base_name}_Body{suffix}")
+                        body.Label = f"{trailing_name}{suffix}"
+                        body.BaseFeature = import_feat
+                        core_obj.addObject(body)
+
+                    App.Console.PrintMessage(
+                        f"FCProject: {len(solids)} Volumenkörper aus {len(step_source_refs)} STEP-Objekt(en) "
+                        f"als PartDesign::Body-Struktur übernommen.\n"
+                    )
+                else:
+                    App.Console.PrintWarning("FCProject: Keine gültige Geometrie in der STEP-Auswahl gefunden.\n")
+            except Exception as e:
+                App.Console.PrintWarning(f"FCProject: Fehler bei STEP-Geometrie-Übernahme: {str(e)}\n")
+
+        # STRATEGIE-WEICHE 2: Falls ein Basis-Kaufteil (z.B. ein roher Zylinder-Rohling) geladen werden
+        # soll - nur wenn Weiche 1 nichts geliefert hat.
+        if core_obj is None and profile_path and os.path.exists(profile_path):
             try:
                 template_doc = App.openDocument(profile_path)
+                cloned_obj = None
                 for obj in template_doc.Objects:
                     if obj.isDerivedFrom("PartDesign::Body") or obj.isDerivedFrom("App::Part"):
                         cloned_obj = new_doc.copyObject(obj, True)
-                        core_obj.addObject(cloned_obj) # In den App::Part Container schieben
                         break
                 App.closeDocument(template_doc.Name)
+
+                if cloned_obj is not None:
+                    # Genau ein geklontes Objekt -> direkt als Root übernehmen, egal ob die Vorlage
+                    # selbst schon ein Body oder ein Part ist - kein zusätzlicher Wrapper drumherum.
+                    core_obj = cloned_obj
+                    core_obj.Label = trailing_name
             except Exception as e:
                 App.Console.PrintWarning(f"FCProject: Fehler bei Kaufteil-Klonierung: {str(e)}\n")
+
+        # STRATEGIE-WEICHE 3: Keine Geometrie-Quelle (Radio "Leer") oder alle vorherigen Versuche sind
+        # fehlgeschlagen -> leerer App::Part-Behälter als Platzhalter, wie bisher.
+        if core_obj is None:
+            core_obj = new_doc.addObject(config.get("FreeCADType", "App::Part"), base_name)
+            core_obj.Label = trailing_name
 
         # Material-Expression setzen
         try:

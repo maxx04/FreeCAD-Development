@@ -19,7 +19,10 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         # Kontext direkt aus dem verifizierten System-Arbeitsverzeichnis laden!
         self.proj_name, self.proj_dir = self._get_project_context()
         self.config_data = self._load_config()
-        
+
+        # STEP-Baumauswahl für Kaufteile (Typ B): zuletzt erkannte (Dokument, Objekt)-Referenzen
+        self._step_source_refs = []
+
         if not self.config_data:
             QtWidgets.QMessageBox.critical(self, "FCProject", "Keine gültige Projekt-Konfiguration im aktiven Arbeitsverzeichnis gefunden!\n" \
             "Bitte nutze zuerst Button 1.")
@@ -66,12 +69,57 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         h_layout.addWidget(self.change_material_btn)
         mat_layout.addLayout(h_layout)
         self.main_layout.addWidget(self.material_widget)
-        
+
+        # 4b. GEOMETRIE-BASIS FÜR KAUFTEILE (Typ B) - direkt unter Material, nur für Typ B sichtbar
+        self.source_widget = QtWidgets.QWidget()
+        source_layout = QtWidgets.QVBoxLayout(self.source_widget)
+        source_layout.setContentsMargins(0, 0, 0, 0)
+        source_layout.addWidget(QtWidgets.QLabel("<b>Geometrie-Basis:</b>"))
+
+        radio_row = QtWidgets.QHBoxLayout()
+        self.source_profile_radio = QtWidgets.QRadioButton("Profil")
+        self.source_step_radio = QtWidgets.QRadioButton("STEP")
+        self.source_empty_radio = QtWidgets.QRadioButton("Leer")
+        self.source_empty_radio.setChecked(True)
+        for radio in (self.source_profile_radio, self.source_step_radio, self.source_empty_radio):
+            radio_row.addWidget(radio)
+            radio.toggled.connect(self._update_source_sub_visibility)
+        source_layout.addLayout(radio_row)
+
+        # Profil-Unterbereich: Datei wählen + Anzeige des gewählten Pfads
+        self.profile_sub_widget = QtWidgets.QWidget()
+        profile_sub_layout = QtWidgets.QHBoxLayout(self.profile_sub_widget)
+        profile_sub_layout.setContentsMargins(0, 0, 0, 0)
+        self.profile_path_display = QtWidgets.QLineEdit()
+        self.profile_path_display.setReadOnly(True)
+        self.profile_path_display.setPlaceholderText("Keine Datei gewählt…")
+        self.profile_browse_btn = QtWidgets.QPushButton("Datei wählen…")
+        self.profile_browse_btn.clicked.connect(self._on_browse_profile_file)
+        profile_sub_layout.addWidget(self.profile_path_display)
+        profile_sub_layout.addWidget(self.profile_browse_btn)
+        source_layout.addWidget(self.profile_sub_widget)
+
+        # STEP-Unterbereich: reine Live-Anzeige, was gerade im Baum ausgewählt ist
+        self.step_sub_widget = QtWidgets.QWidget()
+        step_sub_layout = QtWidgets.QVBoxLayout(self.step_sub_widget)
+        step_sub_layout.setContentsMargins(0, 0, 0, 0)
+        self.step_object_display = QtWidgets.QLineEdit()
+        self.step_object_display.setReadOnly(True)
+        self.step_object_display.setPlaceholderText("Bitte STEP-Objekt(e) im Baum auswählen…")
+        step_sub_layout.addWidget(self.step_object_display)
+        source_layout.addWidget(self.step_sub_widget)
+
+        self.main_layout.addWidget(self.source_widget)
+
+        # Timer, der bei aktivem STEP-Radio die Baum-Auswahl beobachtet und den Namen einträgt
+        self._step_watch_timer = QtCore.QTimer()
+        self._step_watch_timer.timeout.connect(self._poll_step_selection)
+
         self.inputs_map = {}
         self.timer = None
         self.type_combo.currentIndexChanged.connect(self.rebuild_dynamic_fields)
         self.rebuild_dynamic_fields()
-        
+
         # 5. Erstellen Button
         self.create_btn = QtWidgets.QPushButton("Neue Komponente & Datei erstellen")
         self.create_btn.clicked.connect(self.on_create_clicked)
@@ -83,13 +131,30 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         
         self.main_layout.addStretch()
 
+    @staticmethod
+    def _detect_step_source_selection():
+        """Filtert die aktuelle Baum-Auswahl auf verwertbare STEP-Import-Quellen: entweder rohe
+        Shape-Objekte, oder Struktur-Container (App::Part/Gruppe) mit Unterstruktur - z.B. ein
+        strukturiert importiertes STEP mit benannten Baugruppen-Knoten wie "Ze Carrige". Bereits
+        fertige FCProject-PDM-Objekte (Body/Assembly) werden ausgeschlossen - es geht nur um
+        frische, noch unverarbeitete Import-Geometrie/-Struktur."""
+        candidates = []
+        for obj in Gui.Selection.getSelection():
+            if obj.isDerivedFrom("PartDesign::Body") or obj.isDerivedFrom("Assembly::AssemblyObject"):
+                continue
+            is_leaf_shape = hasattr(obj, "Shape") and obj.Shape is not None and not obj.Shape.isNull()
+            is_structural = obj.isDerivedFrom("App::Part") or obj.isDerivedFrom("App::DocumentObjectGroup")
+            if is_leaf_shape or is_structural:
+                candidates.append(obj)
+        return candidates
+
     def rebuild_dynamic_fields(self):
         """Baut die dynamischen Felder auf. Erzeugt bei Typ R ein Dropdown für die Profile."""
         while self.dynamic_layout.count():
             item = self.dynamic_layout.takeAt(0)
-            if item.widget(): 
+            if item.widget():
                 item.widget().deleteLater()
-                
+
         self.inputs_map.clear()
         comp_type = self.type_combo.currentData()
         
@@ -98,7 +163,12 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
             self.material_widget.setVisible(True)
         else:
             self.material_widget.setVisible(False)
-            
+
+        # Geometrie-Basis-Bereich (Profil/STEP/Leer) nur für Kaufteile (Typ B) einblenden
+        if hasattr(self, "source_widget"):
+            self.source_widget.setVisible(comp_type == "B")
+            self._update_source_sub_visibility()
+
         entity_config = self.config_data.get("Entities", {}).get(comp_type, {})
         properties = entity_config.get("Properties", {})
         
@@ -263,10 +333,10 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
     def on_create_clicked(self):
         """Sammelt die Daten aus der GUI und triggert die Erstellung der PDM-Komponente und der zugehörigen CAD-Datei."""
         if not self.proj_dir: return
-        
+
         comp_type = self.type_combo.currentData()
         comp_num = self.number_input.text().strip()
-        
+
         # In deiner TaskPanel.py -> Innerhalb von on_create_clicked:
         # Werte aus der dynamischen GUI einsammeln (Unterstützt jetzt LineEdit und QComboBox)
         payload_properties = {}
@@ -277,7 +347,7 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
             else:
                 payload_properties[prop_name] = widget.text().strip()
 
-            
+
         if comp_type in ["P", "R", "B"]:
             payload_properties["__TargetMaterialName__"] = self.material_input.text().strip()
 
@@ -288,30 +358,134 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
             msg_box.setText("Basiert dieses Einzelteil auf einem bestehenden Halbzeug/Profil?")
             msg_box.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
             msg_box.setDefaultButton(QtWidgets.QMessageBox.No)
-            
+
             if msg_box.exec() == QtWidgets.QMessageBox.Yes:
                 # KORREKTUR: Wir zwingen den Dialog, exakt im aktiven Projektverzeichnis zu starten!
                 # self.proj_dir zeigt z.B. direkt in deinen aktuellen /PROJ_U20/ Ordner
                 start_dir = self.proj_dir if self.proj_dir and os.path.exists(self.proj_dir) else os.getcwd()
-                
+
                 # ECHTER DATEIAUSWAHL-DIALOG direkt im Projektordner öffnen
                 selected_file, _ = QtWidgets.QFileDialog.getOpenFileName(
-                    self, 
-                    "Halbzeug-Rohling aus Projekt auswählen...", 
-                    start_dir, 
+                    self,
+                    "Halbzeug-Rohling aus Projekt auswählen...",
+                    start_dir,
                     "FreeCAD Dokumente (*.FCStd)"
                 )
-                
+
                 if selected_file:
                     payload_properties["__LinkedRawProfilePath__"] = selected_file
 
+            self._finalize_creation(comp_type, comp_num, payload_properties)
+            return
 
+        # GEOMETRIE-QUELLE FÜR KAUFTEILE (TYP B): direkt aus der Radio-Auswahl im Dialog lesen -
+        # kein Popup mehr, alles ist schon im Hauptfenster sichtbar/gewählt.
+        if comp_type == "B":
+            if self.source_profile_radio.isChecked():
+                selected_path = self.profile_path_display.text().strip()
+                if not selected_path:
+                    QtWidgets.QMessageBox.warning(self, "FCProject", "Bitte zuerst eine Vorlagendatei wählen.")
+                    return
+                payload_properties["__LinkedRawProfilePath__"] = selected_path
+
+            elif self.source_step_radio.isChecked():
+                if not self._step_source_refs:
+                    QtWidgets.QMessageBox.warning(self, "FCProject", "Bitte zuerst ein STEP-Objekt im Baum auswählen.")
+                    return
+                payload_properties["__StepSourceRefs__"] = list(self._step_source_refs)
+
+            # source_empty_radio -> kein Zusatz, normales leeres App::Part
+
+        self._finalize_creation(comp_type, comp_num, payload_properties)
+
+    def _update_source_sub_visibility(self):
+        """Blendet je nach gewähltem Radio-Button den passenden Unterbereich (Profil-Datei-Auswahl
+        bzw. STEP-Live-Anzeige) ein/aus und startet/stoppt die Baum-Auswahl-Beobachtung."""
+        if not hasattr(self, "profile_sub_widget"):
+            return
+        self.profile_sub_widget.setVisible(self.source_profile_radio.isChecked())
+        self.step_sub_widget.setVisible(self.source_step_radio.isChecked())
+
+        is_step_active = self.type_combo.currentData() == "B" and self.source_step_radio.isChecked()
+        if is_step_active:
+            main_win = Gui.getMainWindow()
+            if main_win:
+                main_win.statusBar().showMessage(
+                    "FCProject: Bitte das importierte STEP-Objekt (bzw. mehrere) im Baum auswählen…", 0
+                )
+            if not self._step_watch_timer.isActive():
+                self._step_watch_timer.start(300)
+        else:
+            self._step_watch_timer.stop()
+
+    def _poll_step_selection(self):
+        """Läuft alle 300ms, solange STEP als Geometrie-Basis aktiv ist: übernimmt eine gültige
+        Baum-Auswahl live in die Anzeige, ohne selbst irgendetwas zu erstellen."""
+        candidates = self._detect_step_source_selection()
+        if not candidates:
+            return  # Alte Auswahl (falls vorhanden) bewusst stehen lassen, nicht löschen
+        self._step_source_refs = [(obj.Document.Name, obj.Name) for obj in candidates]
+        self.step_object_display.setText(", ".join(obj.Label for obj in candidates))
+
+    def _on_browse_profile_file(self):
+        """Öffnet den Dateidialog für die 'Profil'-Geometrie-Basis eines Kaufteils."""
+        start_dir = self.proj_dir if self.proj_dir and os.path.exists(self.proj_dir) else os.getcwd()
+        selected_file, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Vorlage/Halbzeug für Kaufteil auswählen...",
+            start_dir,
+            "FreeCAD Dokumente (*.FCStd)"
+        )
+        if selected_file:
+            self.profile_path_display.setText(selected_file)
+
+    def _finalize_creation(self, comp_type, comp_num, payload_properties):
+        """Letzter Schritt: PDM-Komponente inkl. CAD-Datei tatsächlich erstellen und Feedback geben."""
         try:
             creator = EntityCreator(self.proj_name, self.proj_dir)
             generated_name = creator.create_pdm_document(comp_type, comp_num, payload_properties)
+            self._fit_and_isometric_view(generated_name)
             QtWidgets.QMessageBox.information(self, "FCProject", f"Komponente {generated_name} erfolgreich erstellt!")
             self.number_input.setText(creator.get_next_available_number())
+            self._reset_source_selection()
         except Exception as e:
             QtWidgets.QMessageBox.critical(None, "FCProject", f"Fehler: {str(e)}")
+
+    @staticmethod
+    def _fit_and_isometric_view(doc_name):
+        """Nach dem Erstellen die neue Komponente direkt sichtbar machen: Alles einpassen + Isometrisch.
+
+        Bewusst NICHT über Gui.runCommand('Std_ViewFitAll'/'Std_ViewIsometric'): deren isActive()
+        prüft intern die aktuell als 'aktiv' registrierte 3D-View, und die frisch erzeugte
+        Dokument-View ist das im selben Python-Aufruf oft noch nicht - der Befehl tut dann
+        (fehlerfrei!) einfach gar nichts. Stattdessen direkt über das View-Objekt der neuen
+        Dokument-View, die immer existiert."""
+        try:
+            gui_doc = Gui.getDocument(doc_name) if doc_name else None
+            view = gui_doc.ActiveView if gui_doc else None
+            if view is None and Gui.ActiveDocument:
+                view = Gui.ActiveDocument.ActiveView
+            if view:
+                view.fitAll()
+                view.viewIsometric()
+        except Exception as e:
+            App.Console.PrintWarning(f"FCProject: Ansicht konnte nicht automatisch angepasst werden: {str(e)}\n")
+
+    def _reset_source_selection(self):
+        """Setzt die Geometrie-Basis nach erfolgreicher Erstellung zurück, damit nicht versehentlich
+        dieselbe STEP-Auswahl/Vorlagendatei für die nächste Komponente wiederverwendet wird."""
+        if not hasattr(self, "source_empty_radio"):
+            return
+        self.source_empty_radio.setChecked(True)
+        self.profile_path_display.clear()
+        self.step_object_display.clear()
+        self._step_source_refs = []
+
+    def closeEvent(self, event):
+        """Verhindert einen verwaisten Timer, falls der Dialog während der Baum-Auswahl-Beobachtung
+        geschlossen wird."""
+        if hasattr(self, "_step_watch_timer"):
+            self._step_watch_timer.stop()
+        super().closeEvent(event)
 
 

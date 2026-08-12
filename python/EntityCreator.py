@@ -51,7 +51,24 @@ class EntityCreator:
 
     def create_pdm_document(self, comp_type, comp_num, user_properties):
         """Generiert den Basisnamen und delegiert die Erstellung an die Ziel-Klasse."""
-        
+
+        # SONDERFALL Typ B mit STEP-Struktur-Auswahl: "ein Körper pro Dokument" einhalten - statt
+        # alle Bodies flach in einem Dokument zu sammeln, wird daraus eine echte (ggf. verschachtelte)
+        # Baugruppen-Hierarchie aus mehreren Kaufteil-Dokumenten + verlinkenden Assembly-Dokumenten.
+        # Bei einem einzelnen Objekt mit genau 1 Solid fällt das unten unverändert in den normalen
+        # Einzel-Dokument-Pfad durch.
+        if comp_type == "B" and user_properties.get("__StepSourceRefs__"):
+            from StepStructureImporter import build_step_tree, resolve_refs_to_objects
+            objs = resolve_refs_to_objects(user_properties["__StepSourceRefs__"])
+            nodes = build_step_tree(objs)
+            needs_structure = (
+                len(nodes) > 1
+                or (len(nodes) == 1 and nodes[0]["kind"] == "group")
+                or (len(nodes) == 1 and nodes[0]["kind"] == "leaf" and len(nodes[0]["solids"]) > 1)
+            )
+            if needs_structure:
+                return self._create_step_structure(nodes, comp_num, user_properties)
+
         # 1. Die REINE PDM-ID ohne jeglichen Text berechnen (Der Kern für die BOM!)
         base_pdm_id = f"{self.project_name}_{comp_num}_{comp_type}"
 
@@ -101,3 +118,195 @@ class EntityCreator:
         creator.create(new_file_path, pdm_base_name, pdm_base_name, entity_config, user_properties)
 
         return pdm_base_name
+
+    def _create_step_structure(self, nodes, comp_num, user_properties):
+        """Baut aus einer (ggf. mehrstufigen) STEP-Struktur-Beschreibung (siehe StepStructureImporter)
+        die passende PDM-Hierarchie: Leaf-Solids werden zu Kaufteilen (Typ B, "ein Körper pro
+        Dokument"), Struktur-Gruppen (App::Part-Container) zu Baugruppen (Typ A) mit Links auf ihre
+        Kind-Elemente - beliebig tief verschachtelt. Die absolute STEP-Position bleibt in der
+        jeweiligen Teil-Geometrie erhalten, Links bekommen Identity-Placement (die Anordnung stimmt
+        dadurch automatisch, ohne dass Platzierungen einzeln nachgerechnet werden müssen)."""
+        import FreeCAD as App
+
+        base_bezeichnung = user_properties.get("Bezeichnung", "Kaufteil")
+        # __StepSourceRefs__/__PureArticleID__/Bezeichnung gehören nur zum obersten Aufruf, nicht
+        # unverändert an jedes Kind weiterreichen (jedes Kind bekommt seine eigene Bezeichnung)
+        shared_props = {
+            k: v for k, v in user_properties.items()
+            if k not in ("__StepSourceRefs__", "__PureArticleID__", "Bezeichnung")
+        }
+
+        if len(nodes) == 1 and nodes[0]["kind"] == "group":
+            # Direkt eine Struktur-Gruppe ausgewählt (z.B. "Ze Carrige") -> deren eigener STEP-Name
+            # wird zur Baugruppen-Bezeichnung, das Dialogfeld wird hier bewusst ignoriert.
+            doc, root, comp_num = self._create_step_group(nodes[0], comp_num, shared_props)
+
+        elif len(nodes) == 1 and nodes[0]["kind"] == "leaf" and len(nodes[0]["solids"]) > 1:
+            # EIN Compound-Objekt ohne echte Unterstruktur/-namen -> die Dialog-Bezeichnung bildet
+            # die Basis, durchnummeriert (bewährtes Verhalten für den einfachen Multi-Solid-Fall).
+            part_infos = []
+            for idx, (solid, src_label) in enumerate(nodes[0]["solids"], start=1):
+                info, comp_num = self._create_step_part(
+                    solid, f"{base_bezeichnung}_{idx:02d}", src_label, comp_num, shared_props
+                )
+                if info:
+                    part_infos.append(info)
+            doc, root, comp_num = self._wrap_as_assembly(part_infos, base_bezeichnung, comp_num, shared_props)
+
+        else:
+            # Mehrere Top-Level-Elemente (Leaves und/oder Gruppen gemischt, kein gemeinsamer
+            # STEP-Gruppenname vorhanden) -> jedes Kind behält seinen eigenen Namen, die
+            # Dialog-Bezeichnung dient nur als äußere Klammer, falls mehr als 1 Kind übrig bleibt.
+            child_infos = []
+            for node in nodes:
+                child_doc, child_root, comp_num = self._create_step_node(node, comp_num, shared_props)
+                if child_root is not None:
+                    child_infos.append((child_doc, child_root))
+
+            if not child_infos:
+                raise RuntimeError("FCProject: Aus der STEP-Auswahl konnte keine verwertbare Geometrie erzeugt werden.")
+            if len(child_infos) == 1:
+                doc, root = child_infos[0]
+            else:
+                doc, root, comp_num = self._wrap_as_assembly(child_infos, base_bezeichnung, comp_num, shared_props)
+
+        App.Console.PrintMessage(f"FCProject: STEP-Struktur als '{root.Label}' erfolgreich erstellt.\n")
+        return doc.Name
+
+    def _create_step_node(self, node, comp_num, shared_props):
+        """Rekursiv: erzeugt aus einem Struktur-Knoten (Leaf-Objekt oder Gruppe) das passende
+        PDM-Dokument - verwendet dabei IMMER den eigenen STEP-Namen des Knotens (im Gegensatz zum
+        Sonderfall in _create_step_structure für ein einzelnes namenloses Compound-Objekt).
+        Gibt (Dokument, Root-Objekt, nächste Teilnummer) zurück."""
+        if node["kind"] == "group":
+            return self._create_step_group(node, comp_num, shared_props)
+
+        solids = node["solids"]
+        if len(solids) == 1:
+            solid, src_label = solids[0]
+            info, comp_num = self._create_step_part(solid, node["label"], src_label, comp_num, shared_props)
+            return (info[0], info[1], comp_num) if info else (None, None, comp_num)
+
+        part_infos = []
+        for idx, (solid, src_label) in enumerate(solids, start=1):
+            info, comp_num = self._create_step_part(
+                solid, f"{node['label']}_{idx:02d}", src_label, comp_num, shared_props
+            )
+            if info:
+                part_infos.append(info)
+        return self._wrap_as_assembly(part_infos, node["label"], comp_num, shared_props)
+
+    def _create_step_group(self, node, comp_num, shared_props):
+        """Erzeugt rekursiv alle Kinder einer Struktur-Gruppe und verlinkt sie in eine neue Baugruppe
+        (Typ A) mit dem eigenen STEP-Namen der Gruppe als Bezeichnung."""
+        children = node["children"]
+
+        # SONDERFALL: Genau ein Kind, und das ist ein Blatt (kein Unter-Assembly). In strukturierten
+        # STEP-Importen trägt oft die umschließende Gruppe den aussagekräftigen Namen, während ihr
+        # einzelnes Geometrie-Kind nur einen generischen/internen Namen hat - z.B. Gruppe "Fixed Motor
+        # Coupler 5x8 Y-Axis" mit einzigem Kind "Motor Coupler". Der Gruppen-Name gewinnt dann, statt
+        # ihn beim Zusammenfalten (kein unnötiger Zwischen-Container) zu verlieren.
+        if len(children) == 1 and children[0]["kind"] == "leaf":
+            solids = children[0]["solids"]
+            if len(solids) == 1:
+                solid, src_label = solids[0]
+                info, comp_num = self._create_step_part(solid, node["label"], src_label, comp_num, shared_props)
+                return (info[0], info[1], comp_num) if info else (None, None, comp_num)
+
+            part_infos = []
+            for idx, (solid, src_label) in enumerate(solids, start=1):
+                info, comp_num = self._create_step_part(
+                    solid, f"{node['label']}_{idx:02d}", src_label, comp_num, shared_props
+                )
+                if info:
+                    part_infos.append(info)
+            return self._wrap_as_assembly(part_infos, node["label"], comp_num, shared_props)
+
+        child_infos = []
+        for child in children:
+            child_doc, child_root, comp_num = self._create_step_node(child, comp_num, shared_props)
+            if child_root is not None:
+                child_infos.append((child_doc, child_root))
+
+        if not child_infos:
+            return None, None, comp_num
+        if len(child_infos) == 1:
+            # Übrig gebliebenes Einzel-Kind ist selbst schon ein fertiges (Unter-)Assembly/Teil ->
+            # keine unnötige weitere Zwischen-Baugruppe.
+            return child_infos[0][0], child_infos[0][1], comp_num
+
+        return self._wrap_as_assembly(child_infos, node["label"], comp_num, shared_props)
+
+    def _create_step_part(self, solid, bezeichnung, src_label, comp_num, shared_props):
+        """Erzeugt ein einzelnes Kaufteil-Dokument (Typ B) aus einem fertig aufgelösten Solid.
+        Gibt ((Dokument, Root-Objekt) oder None, nächste Teilnummer) zurück."""
+        import FreeCAD as App
+
+        part_props = dict(shared_props)
+        part_props["Bezeichnung"] = bezeichnung
+        part_props["__SingleSolidShape__"] = solid
+        part_props["__SingleSolidLabel__"] = src_label
+
+        # WICHTIG: Bezeichnungen aus echten STEP-Labels (z.B. "Motor Coupler") enthalten oft
+        # Leerzeichen. FreeCAD sanitisiert Leerzeichen im internen Document-/Objekt-Name automatisch
+        # weg, OHNE dass der von create_pdm_document zurückgegebene Anzeigename das widerspiegelt.
+        # Ein direktes App.getDocument(anzeigename) würde deshalb mit "Unknown document" fehlschlagen -
+        # stattdessen wird hier über die immer saubere ArticleID (PROJ_NNN_TYP) gesucht.
+        expected_article_id = f"{self.project_name}_{comp_num}_B"
+        self.create_pdm_document("B", comp_num, part_props)
+        doc, root = self._find_by_article_id(expected_article_id)
+        next_comp_num = self.get_next_available_number()
+
+        if root is None:
+            App.Console.PrintWarning(
+                f"FCProject: Teil '{bezeichnung}' (ArticleID '{expected_article_id}') nach dem Anlegen "
+                f"nicht gefunden - wird beim Verlinken übersprungen.\n"
+            )
+            return None, next_comp_num
+        return (doc, root), next_comp_num
+
+    def _wrap_as_assembly(self, part_infos, bezeichnung, comp_num, shared_props):
+        """Erzeugt eine neue Baugruppe (Typ A) und verlinkt die übergebenen Teile/Unterbaugruppen hinein.
+        Gibt (Dokument, Root-Objekt, nächste Teilnummer) zurück."""
+        import FreeCAD as App
+
+        asm_props = dict(shared_props)
+        asm_props["Bezeichnung"] = bezeichnung
+
+        expected_article_id = f"{self.project_name}_{comp_num}_A"
+        self.create_pdm_document("A", comp_num, asm_props)
+        asm_doc, asm_root = self._find_by_article_id(expected_article_id)
+        next_comp_num = self.get_next_available_number()
+
+        if asm_root is None:
+            raise RuntimeError(f"FCProject: Baugruppe '{bezeichnung}' (ArticleID '{expected_article_id}') nach dem Anlegen nicht auffindbar.")
+
+        self._link_parts_into_assembly(asm_doc, asm_root, part_infos)
+        return asm_doc, asm_root, next_comp_num
+
+    @staticmethod
+    def _find_by_article_id(article_id):
+        """Findet Dokument + Root-Objekt zu einer ArticleID robust über alle offenen Dokumente -
+        unabhängig davon, ob FreeCAD den internen Document-/Objekt-Namen wegen Sonderzeichen in der
+        Bezeichnung (z.B. Leerzeichen) automatisch umbenannt hat."""
+        import FreeCAD as App
+
+        for doc in App.listDocuments().values():
+            for obj in doc.Objects:
+                if getattr(obj, "ArticleID", None) == article_id:
+                    return doc, obj
+        return None, None
+
+    @staticmethod
+    def _link_parts_into_assembly(asm_doc, asm_root, part_infos):
+        """Hängt die Root-Objekte der übergebenen Teil-Dokumente per App::Link in die Baugruppe ein."""
+        import FreeCAD as App
+
+        for part_doc, part_root in part_infos:
+            link = asm_doc.addObject("App::Link", f"{part_root.Name}_Link")
+            link.Label = part_root.Label
+            link.LinkedObject = part_root
+            asm_root.addObject(link)
+
+        asm_doc.recompute()
+        asm_doc.save()
