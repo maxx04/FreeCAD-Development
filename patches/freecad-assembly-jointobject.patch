@@ -1,8 +1,34 @@
 diff --git a/src/Mod/Assembly/JointObject.py b/src/Mod/Assembly/JointObject.py
-index 79752c46d5..593599ef2e 100644
+index 79752c46d5..5af8ad8b23 100644
 --- a/src/Mod/Assembly/JointObject.py
 +++ b/src/Mod/Assembly/JointObject.py
-@@ -973,7 +973,24 @@ class Joint:
+@@ -151,13 +151,22 @@ def solveIfAllowed(assembly, storePrev=False):
+ 
+ 
+ def getContext(obj):
+-    """Fetch the context of an object."""
++    """Fetch the context of an object.
++
++    FCPROJECT-PATCH (8): benutzt den internen, eindeutigen Object.Name statt
++    des Labels. Labels sind in vielen realen Baugruppen alles andere als
++    eindeutig (z.B. hat FreeCAD's eigener "Distance"-Joint-Standardtext das
++    Label "Abstand" fuer JEDEN so erzeugten Joint), wodurch Diagnose-Meldungen
++    wie "Assembly joint 'Baugruppe.Abstand' has an invalid Reference1..." den
++    betroffenen Joint unter mehreren gleich benannten nicht identifizieren
++    liessen - der eindeutige Name (z.B. "Joint013") laesst sich dagegen direkt
++    per getObject() im Python-Konsolen/Report-View wiederfinden.
++    """
+     context = []
+     current = obj
+ 
+     while current:
+-        # Add the object's Label at the beginning or the Name if label is empty
+-        context.insert(0, current.Label if current.Label else current.Name)
++        context.insert(0, current.Name)
+         # Get the immediate parent object
+         parents = getattr(current, "InList", [])
+         current = parents[0] if parents else None
+@@ -973,7 +982,24 @@ class Joint:
          if not sameDir:
              moving_part_global_jcs = UtilsAssembly.flipPlacement(moving_part_global_jcs)
  
@@ -28,7 +54,7 @@ index 79752c46d5..593599ef2e 100644
  
          for part in parts_to_move:
              part.Placement = transform_plc * part.Placement
-@@ -1540,7 +1557,15 @@ class MakeJointSelGate:
+@@ -1540,7 +1566,15 @@ class MakeJointSelGate:
                  if parent.isDerivedFrom("App::LocalCoordinateSystem"):
                      datum = parent
  
@@ -45,7 +71,7 @@ index 79752c46d5..593599ef2e 100644
                  # accept only datum that are not attached
                  return datum.MapMode == "Deactivated"
  
-@@ -1635,11 +1660,18 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+@@ -1635,11 +1669,18 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
              self.createJointObject()
              self.visibilityBackup = False
  
@@ -69,7 +95,7 @@ index 79752c46d5..593599ef2e 100644
          bind = Gui.ExpressionBinding(self.jForm.angleSpinbox).bind(self.joint, "Angle")
          bind = Gui.ExpressionBinding(self.jForm.distanceSpinbox).bind(self.joint, "Distance")
          bind = Gui.ExpressionBinding(self.jForm.distanceSpinbox2).bind(self.joint, "Distance2")
-@@ -1663,10 +1695,12 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+@@ -1663,10 +1704,12 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
          self.jForm.limitCheckbox3.stateChanged.connect(self.adaptUi)
          self.jForm.limitCheckbox4.stateChanged.connect(self.adaptUi)
  
@@ -86,7 +112,7 @@ index 79752c46d5..593599ef2e 100644
          bind = Gui.ExpressionBinding(self.jForm.limitLenMinSpinbox).bind(self.joint, "LengthMin")
          bind = Gui.ExpressionBinding(self.jForm.limitLenMaxSpinbox).bind(self.joint, "LengthMax")
          bind = Gui.ExpressionBinding(self.jForm.limitRotMinSpinbox).bind(self.joint, "AngleMin")
-@@ -1716,13 +1750,65 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+@@ -1716,13 +1759,65 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
  
          self.assembly.recompute(True)
  
@@ -152,7 +178,7 @@ index 79752c46d5..593599ef2e 100644
          return True
  
      def autoClosedOnTransactionChange(self):
-@@ -1745,6 +1831,25 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+@@ -1745,6 +1840,25 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
              self.assembly.ViewObject.MoveOnlyPreselected = False
              self.assembly.ViewObject.MoveInCommand = True
  
@@ -178,3 +204,23 @@ index 79752c46d5..593599ef2e 100644
          Gui.Selection.removeSelectionGate()
          Gui.Selection.removeObserver(self)
          Gui.Selection.setSelectionStyle(Gui.Selection.SelectionStyle.NormalSelection)
+@@ -2309,5 +2423,19 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+         self.presel_ref = [comp, [new_sub]]
+ 
+     def clearSelection(self, doc_name):
++        # FCPROJECT-PATCH (9): Gui.Selection ruft diesen Observer-Callback bei JEDEM Leeren der
++        # globalen Auswahl auf - unabhaengig vom Grund (Klick auf leeren Raum in der 3D-Ansicht,
++        # ein anderes Tree-Element ausgewaehlt, ...). Ohne diese Absicherung wurde ein bereits
++        # vollstaendiger Joint (2 gueltige Referenzen, z.B. beim Oeffnen zum Bearbeiten aus
++        # updateTaskboxFromJoint() geladen und in der 3D-Ansicht markiert) durch einen einzigen,
++        # voellig harmlos wirkenden Klick daneben sofort zerstoert: self.refs wurde geleert und
++        # ueber updateJoint() -> setJointConnectors() SOFORT (noch vor OK/Accept) Reference1 und
++        # Reference2 auf None geschrieben - lautlos, ohne Bestaetigung. Ein bereits vollstaendiger
++        # Pick (>= 2 Referenzen) wird deshalb hier bewusst NICHT durch ein blosses Leeren der
++        # globalen Auswahl verworfen. Einzelne Referenzen lassen sich weiterhin gezielt durch
++        # erneutes Anklicken abwaehlen (removeSelection()); nur das komplette, unbeabsichtigte
++        # Leeren eines bereits fertigen Joints wird ignoriert.
++        if len(self.refs) >= 2:
++            return
+         self.refs.clear()
+         self.updateJoint()

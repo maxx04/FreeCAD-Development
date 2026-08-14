@@ -169,6 +169,51 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
    mitgefixt - kein bestätigter Repro-Fall dafür, Scope absichtlich auf
    Slider beschränkt.)
 
+8. **Diagnose-Meldung bei kaputter Joint-Referenz nennt keinen eindeutigen
+   Namen** (2026-08-14, `getContext()`): beim Öffnen eines Assembly-Dokuments
+   migrieren `migrationScript4`/`migrationScript2` alte/kaputte Joint-Referenzen
+   und protokollieren Fehlschläge über die Konsole, z.B.
+   `Assembly joint 'Baugruppe.Abstand' has an invalid 'Reference2' or related
+   attributes. 'NoneType' object is not subscriptable`. `getContext()` baute den
+   Objekt-Pfad in der Meldung bisher aus `Label` statt `Name` - das hilft aber
+   nicht beim Wiederfinden, weil FreeCADs Standard-Label für JEDEN so erzeugten
+   Distance-Joint identisch "Abstand" lautet (analog "Winkel", "Koinzident" etc.
+   bei anderen Typen) - bei mehreren kaputten Joints in derselben Baugruppe war
+   so nicht unterscheidbar, welcher gemeint ist (siehe Fix 9 - der eigentliche
+   Grund für die kaputte Referenz war ein separater Bug, keine unvollständige
+   Erstellung). Fix: `getContext()` nutzt jetzt durchgehend `Object.Name` (immer
+   eindeutig, z.B. `Joint013`) statt `Label` - direkt per
+   `App.ActiveDocument.getObject("Joint013")` wiederfindbar. Betrifft nur die
+   beiden Diagnose-Meldungen in `migrationScript2`/`migrationScript4` (einzige
+   Aufrufer von `getContext()`), keine Funktionsänderung an der eigentlichen
+   Migration/Joint-Logik.
+
+9. **Joint-Referenzen gehen durch bloßen Klick daneben verloren**
+   (2026-08-14, `TaskAssemblyCreateJoint.clearSelection()`): beim Bearbeiten
+   eines bestehenden Joints lädt `updateTaskboxFromJoint()` dessen 2 gespeicherte
+   Referenzen in `self.refs` und markiert sie in der 3D-Ansicht als Auswahl.
+   Solange der Dialog offen ist, lauscht ein Selection-Observer auf jeden
+   Auswahl-Wechsel; `clearSelection()` wird von `Gui.Selection` bei JEDEM Leeren
+   der globalen Auswahl aufgerufen - unabhängig vom Grund (Klick auf leeren Raum
+   in der 3D-Ansicht, ein anderes Tree-Element ausgewählt, ...). Der Handler
+   leerte bisher bedingungslos `self.refs` und rief darüber `updateJoint()` ->
+   `setJointConnectors()` auf, was sofort - noch vor OK/Accept, lautlos, ohne
+   Bestätigung - `Reference1`/`Reference2` auf `None` schrieb. Ein einziger,
+   völlig harmlos wirkender Klick neben ein bereits vollständiges Teil beim
+   bloßen Betrachten eines Joints zerstörte ihn also permanent, sobald das
+   Dokument danach gespeichert wurde. Nutzer-Repro: mehrere zuvor intakte
+   "Abstand"-Joints (`Reference1`/`Reference2` beide gültig gesetzt) hatten nach
+   einer Bearbeitungssitzung plötzlich beide Referenzen auf `None` - reproduziert
+   durch Vergleich des Dokumentzustands vor/nach der Sitzung
+   (`Reference1`/`Reference2` direkt per Skript ausgelesen). Fix: ein bereits
+   vollständiger Pick (>= 2 Referenzen) wird nicht mehr durch ein bloßes Leeren
+   der globalen Auswahl verworfen - einzelne Referenzen lassen sich weiterhin
+   gezielt durch erneutes Anklicken abwählen (`removeSelection()`), nur das
+   komplette, unbeabsichtigte Leeren eines bereits fertigen Joints wird jetzt
+   ignoriert. Noch nicht live in der GUI nachgetestet (nur durch Code-Analyse
+   verifiziert plus Vorher/Nachher-Vergleich der echten Projektdatei) - bitte
+   beim nächsten Bearbeiten eines Joints gegenprüfen.
+
 ### Anwenden
 
 Nach einem frischen Checkout/Build von FreeCAD:
