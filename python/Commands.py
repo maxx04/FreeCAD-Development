@@ -2,7 +2,7 @@
 
 import FreeCAD as App
 import FreeCADGui as Gui
-from TaskPanel import FCProjectTaskPanel
+from PySide6 import QtWidgets
 
 class PartCreatorCommand:
     """Befehl zum Öffnen des FCProject TaskPanels aus der Toolbar."""
@@ -16,14 +16,37 @@ class PartCreatorCommand:
         }
 
     def Activated(self):
-        # Altes Gui.Control.showDialog(panel) ERSETZEN durch:
+        # Läuft jetzt im Aufgabenbereich (Combo View) statt als freischwebendes Fenster -
+        # Gui.Control.showDialog() hängt das Panel am aktuell aktiven Dokument auf, ohne
+        # Dokument gibt es nichts zum Anhängen (stille Konsolen-Warnung, kein sichtbarer Fehler).
+        if not App.ActiveDocument:
+            QtWidgets.QMessageBox.warning(
+                Gui.getMainWindow(), "FCProject",
+                "Bitte öffne zuerst ein Dokument/Projekt (Button 1)."
+            )
+            return
+
+        self._close_active_task_dialog()
+
         from TaskPanel import FCProjectTaskPanel
         self.dialog = FCProjectTaskPanel()
-        self.dialog.show() # Öffnet das Fenster schwebend im Vordergrund
+        if not self.dialog.valid:
+            return  # Fehlermeldung (fehlende Projekt-Konfiguration) kam bereits aus dem Panel selbst
 
+        Gui.Control.showDialog(self.dialog)
 
-def IsActive(self):
-        # Extrem schneller Einzeiler ohne Imports – blockiert den Debugger nicht
+    @staticmethod
+    def _close_active_task_dialog():
+        """Schließt ein evtl. bereits offenes Task-Panel, bevor ein neues geöffnet wird - sonst
+        weist Gui.Control.showDialog() den Aufruf mit einer Konsolen-Warnung lautlos ab
+        ("already an active task dialog")."""
+        try:
+            if Gui.Control.activeDialog() is not None:
+                Gui.Control.closeDialog()
+        except Exception as e:
+            App.Console.PrintWarning(f"FCProject: Vorhandenes Task-Panel konnte nicht geschlossen werden: {str(e)}\n")
+
+    def IsActive(self):
         return App.ActiveDocument is not None
 
 Gui.addCommand('FCProject_CreatePart', PartCreatorCommand())

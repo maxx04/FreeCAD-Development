@@ -1,5 +1,4 @@
 
-import os
 import FreeCAD as App
 import Utils as Utils
 
@@ -82,7 +81,8 @@ class PurchasedPartCreator:
     PDM-Logik für Kaufteile (Typ B). Integriert CAD-Imports als Basis-Komponente
     mit CAD-Import als Basis. Integriert Material-Expressions und PDM-Metadaten.
 
-    Drei Wege zur Basis-Geometrie:
+    Zwei Wege zur Basis-Geometrie (kein Vorlagen-Klonen mehr - "Profil" ist konzeptionell Sache
+    von Halbzeugen/Typ R, ein Kaufteil kommt entweder importiert oder wird leer angelegt):
     - __SingleSolidShape__/__SingleSolidLabel__: ein bereits fertig aufgelöstes Einzel-Solid, direkt
       als Body übernommen. Wird von EntityCreator._create_step_assembly für "ein Körper pro Dokument"
       genutzt (Multi-Solid-STEP -> mehrere Kaufteil-Dokumente + 1 verlinkendes Assembly-Dokument).
@@ -90,7 +90,6 @@ class PurchasedPartCreator:
       1 Solid identisch zum obigen Weg; bei mehreren Solids historischer Fallback (alle Bodies flach
       in einem Dokument unter einem App::Part) - wird für Typ B inzwischen von EntityCreator schon vor
       dem Aufruf abgefangen und in einzelne Dokumente + Assembly aufgelöst.
-    - __LinkedRawProfilePath__: klassisches Klonen eines Body/Part aus einer Vorlagendatei.
 
     Der App::Part-Behälter wird NUR angelegt, wenn er wirklich gebraucht wird (mehrere Bodies,
     oder gar keine Geometrie-Quelle). Ergibt sich am Ende genau EIN Körper (1 Solid, oder ein
@@ -104,7 +103,6 @@ class PurchasedPartCreator:
         hersteller_val = properties.get("Hersteller", "TraceParts")
         bestell_val = properties.get("Bestellnummer", "000-000")
         material_target = properties.get("__TargetMaterialName__", "Steel")
-        profile_path = properties.get("__LinkedRawProfilePath__", None) # Optional gewählte Basis-Datei
         step_source_refs = properties.get("__StepSourceRefs__", None)   # Optional: Baum-Auswahl aus STEP-Import
         # Optional: bereits fertig aufgelöstes Einzel-Solid (Multi-Solid-Baugruppen-Zerlegung, siehe
         # EntityCreator._create_step_assembly - "ein Körper pro Dokument")
@@ -171,27 +169,7 @@ class PurchasedPartCreator:
             except Exception as e:
                 App.Console.PrintWarning(f"FCProject: Fehler bei STEP-Geometrie-Übernahme: {str(e)}\n")
 
-        # STRATEGIE-WEICHE 2: Falls ein Basis-Kaufteil (z.B. ein roher Zylinder-Rohling) geladen werden
-        # soll - nur wenn Weiche 1 nichts geliefert hat.
-        if core_obj is None and profile_path and os.path.exists(profile_path):
-            try:
-                template_doc = App.openDocument(profile_path)
-                cloned_obj = None
-                for obj in template_doc.Objects:
-                    if obj.isDerivedFrom("PartDesign::Body") or obj.isDerivedFrom("App::Part"):
-                        cloned_obj = new_doc.copyObject(obj, True)
-                        break
-                App.closeDocument(template_doc.Name)
-
-                if cloned_obj is not None:
-                    # Genau ein geklontes Objekt -> direkt als Root übernehmen, egal ob die Vorlage
-                    # selbst schon ein Body oder ein Part ist - kein zusätzlicher Wrapper drumherum.
-                    core_obj = cloned_obj
-                    core_obj.Label = trailing_name
-            except Exception as e:
-                App.Console.PrintWarning(f"FCProject: Fehler bei Kaufteil-Klonierung: {str(e)}\n")
-
-        # STRATEGIE-WEICHE 3: Keine Geometrie-Quelle (Radio "Leer") oder alle vorherigen Versuche sind
+        # STRATEGIE-WEICHE 2: Keine Geometrie-Quelle (Radio "Leer") oder der STEP-Versuch ist
         # fehlgeschlagen -> leerer App::Part-Behälter als Platzhalter, wie bisher.
         if core_obj is None:
             core_obj = new_doc.addObject(config.get("FreeCADType", "App::Part"), base_name)

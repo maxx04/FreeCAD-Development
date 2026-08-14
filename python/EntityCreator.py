@@ -52,12 +52,15 @@ class EntityCreator:
     def create_pdm_document(self, comp_type, comp_num, user_properties):
         """Generiert den Basisnamen und delegiert die Erstellung an die Ziel-Klasse."""
 
-        # SONDERFALL Typ B mit STEP-Struktur-Auswahl: "ein Körper pro Dokument" einhalten - statt
+        # SONDERFALL Typ B/R mit STEP-Struktur-Auswahl: "ein Körper pro Dokument" einhalten - statt
         # alle Bodies flach in einem Dokument zu sammeln, wird daraus eine echte (ggf. verschachtelte)
         # Baugruppen-Hierarchie aus mehreren Kaufteil-Dokumenten + verlinkenden Assembly-Dokumenten.
         # Bei einem einzelnen Objekt mit genau 1 Solid fällt das unten unverändert in den normalen
-        # Einzel-Dokument-Pfad durch.
-        if comp_type == "B" and user_properties.get("__StepSourceRefs__"):
+        # Einzel-Dokument-Pfad durch (der bei Typ R übliche Fall - ein Halbzeug ist meist ein
+        # einzelner Rohling, keine Mehrteil-Struktur). Kommt der seltene Mehrteil-Fall doch bei R
+        # vor, werden die Einzelteile - wie bei B - als Kaufteil-Dokumente angelegt; eine eigene
+        # "Halbzeug-Baugruppe"-Semantik gibt es dafür (noch) nicht.
+        if comp_type in ("B", "R") and user_properties.get("__StepSourceRefs__"):
             from StepStructureImporter import build_step_tree, resolve_refs_to_objects
             objs = resolve_refs_to_objects(user_properties["__StepSourceRefs__"])
             nodes = build_step_tree(objs)

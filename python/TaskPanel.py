@@ -1,4 +1,4 @@
-# Macro Version: 2.8.0 - FCProject: TaskPanel mit automatischer Arbeitsverzeichnis-JSON-Abfrage
+# Macro Version: 3.0.0 - FCProject: TaskPanel im Aufgabenbereich (Combo View), nicht mehr freischwebend
 import os
 import json
 import FreeCAD as App
@@ -6,27 +6,47 @@ import FreeCADGui as Gui
 from PySide6 import QtWidgets, QtCore
 from EntityCreator import EntityCreator
 
-class FCProjectTaskPanel(QtWidgets.QDialog):
+class FCProjectTaskPanel:
+    """FreeCAD-Task-Panel-Controller (kein QDialog mehr) - wird über Gui.Control.showDialog()
+    im Aufgabenbereich (Combo View) angezeigt. self.form ist das eigentliche Inhalts-Widget;
+    eigene Erstellen-/Schließen-Buttons statt der Standard-OK/Abbrechen-Buttons, damit sich
+    mehrere Komponenten nacheinander erstellen lassen, ohne das Panel jedes Mal neu zu öffnen
+    (getStandardButtons() liefert deshalb bewusst keine Standard-Buttons)."""
+
+    # Welche Geometrie-Basis-Radios pro Komponenten-Typ angeboten werden, in dieser Reihenfolge.
+    # "Profil" (Katalog+Länge) bleibt exklusiv bei R, "Halbzeug" (auf einem R-Teil basieren)
+    # exklusiv bei P, "STEP" gibt es bei R und B - siehe Absprache mit dem User 2026-08-14.
+    _SOURCE_OPTIONS_BY_TYPE = {
+        "P": ("halbzeug", "empty"),
+        "R": ("profile", "step", "empty"),
+        "B": ("step", "empty"),
+    }
+
     def __init__(self):
-        super().__init__(Gui.getMainWindow())
-        
-        self.setWindowTitle("FCProject: PDM-Creator")
-        self.resize(350, 420)
-        
-        self.main_layout = QtWidgets.QVBoxLayout(self)
+        self.form = QtWidgets.QWidget()
+        self.form.setWindowTitle("FCProject: PDM-Creator")
+
+        self.main_layout = QtWidgets.QVBoxLayout(self.form)
         self.main_layout.addWidget(QtWidgets.QLabel("<h3>FCProject: PDM-Creator</h3>"))
-        
+
         # Kontext direkt aus dem verifizierten System-Arbeitsverzeichnis laden!
         self.proj_name, self.proj_dir = self._get_project_context()
         self.config_data = self._load_config()
 
         # STEP-Baumauswahl für Kaufteile (Typ B): zuletzt erkannte (Dokument, Objekt)-Referenzen
         self._step_source_refs = []
+        self._step_watch_timer = None
 
-        if not self.config_data:
-            QtWidgets.QMessageBox.critical(self, "FCProject", "Keine gültige Projekt-Konfiguration im aktiven Arbeitsverzeichnis gefunden!\n" \
-            "Bitte nutze zuerst Button 1.")
-            QtCore.QTimer.singleShot(10, self.close)
+        # Wird von Commands.py VOR Gui.Control.showDialog() geprüft - bei ungültiger Projekt-
+        # Konfiguration gibt es kein Aufgabenbereich-Panel zum Selbst-Schließen mehr (anders als
+        # frueher als freischwebender QDialog per QTimer.singleShot(self.close)).
+        self.valid = bool(self.config_data)
+        if not self.valid:
+            QtWidgets.QMessageBox.critical(
+                Gui.getMainWindow(), "FCProject",
+                "Keine gültige Projekt-Konfiguration im aktiven Arbeitsverzeichnis gefunden!\n"
+                "Bitte nutze zuerst Button 1."
+            )
             return
 
         # 1. Typ-Auswahl
@@ -38,7 +58,7 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         for key, entity_data in entities.items():
             self.type_combo.addItem(entity_data.get("Label", key), key)
         self.main_layout.addWidget(self.type_combo)
-        
+
         # 2. Teilnummer
         suggested_num = "001"
         if self.proj_name and self.proj_dir:
@@ -47,57 +67,64 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         self.main_layout.addWidget(QtWidgets.QLabel("<b>Teilnummer:</b>"))
         self.number_input = QtWidgets.QLineEdit(suggested_num)
         self.main_layout.addWidget(self.number_input)
-        
+
         # 3. DYNAMISCHE FELDER
         self.dynamic_widget = QtWidgets.QWidget()
         self.dynamic_layout = QtWidgets.QVBoxLayout(self.dynamic_widget)
         self.dynamic_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.addWidget(self.dynamic_widget)
-        
+
         # 4. INTERAKTIVER MATERIAL-BEREICH
         self.material_widget = QtWidgets.QWidget()
         mat_layout = QtWidgets.QVBoxLayout(self.material_widget)
         mat_layout.setContentsMargins(0, 0, 0, 0)
         mat_layout.addWidget(QtWidgets.QLabel("<b>Material (CAD-Standard):</b>"))
-        
+
         h_layout = QtWidgets.QHBoxLayout()
         self.material_input = QtWidgets.QLineEdit("Aluminum")
         self.change_material_btn = QtWidgets.QPushButton("Material ändern...")
         self.change_material_btn.clicked.connect(self.open_material_gui_via_dummy_object)
-        
+
         h_layout.addWidget(self.material_input)
         h_layout.addWidget(self.change_material_btn)
         mat_layout.addLayout(h_layout)
         self.main_layout.addWidget(self.material_widget)
 
-        # 4b. GEOMETRIE-BASIS FÜR KAUFTEILE (Typ B) - direkt unter Material, nur für Typ B sichtbar
+        # 4b. GEOMETRIE-BASIS - direkt unter Material, welche Radios sichtbar sind hängt vom Typ ab
+        # (siehe _SOURCE_OPTIONS_BY_TYPE): P -> Halbzeug/Leer, R -> Profil/STEP/Leer, B -> STEP/Leer.
+        # Alle vier Radios werden hier einmal angelegt (Qt gruppiert sie über den gemeinsamen
+        # Eltern-Layout automatisch gegenseitig exklusiv, auch wenn einzelne unsichtbar sind) -
+        # rebuild_dynamic_fields() blendet pro Typ nur die passende Teilmenge ein.
         self.source_widget = QtWidgets.QWidget()
         source_layout = QtWidgets.QVBoxLayout(self.source_widget)
         source_layout.setContentsMargins(0, 0, 0, 0)
         source_layout.addWidget(QtWidgets.QLabel("<b>Geometrie-Basis:</b>"))
 
         radio_row = QtWidgets.QHBoxLayout()
-        self.source_profile_radio = QtWidgets.QRadioButton("Profil")
-        self.source_step_radio = QtWidgets.QRadioButton("STEP")
-        self.source_empty_radio = QtWidgets.QRadioButton("Leer")
+        self.source_halbzeug_radio = QtWidgets.QRadioButton("Halbzeug")  # Typ P: auf einem R-Teil basieren
+        self.source_profile_radio = QtWidgets.QRadioButton("Profil")    # Typ R: Katalog-Profil + Länge
+        self.source_step_radio = QtWidgets.QRadioButton("STEP")         # Typ R, B
+        self.source_empty_radio = QtWidgets.QRadioButton("Leer")        # P, R, B
         self.source_empty_radio.setChecked(True)
-        for radio in (self.source_profile_radio, self.source_step_radio, self.source_empty_radio):
+        for radio in (self.source_halbzeug_radio, self.source_profile_radio, self.source_step_radio, self.source_empty_radio):
             radio_row.addWidget(radio)
             radio.toggled.connect(self._update_source_sub_visibility)
         source_layout.addLayout(radio_row)
 
-        # Profil-Unterbereich: Datei wählen + Anzeige des gewählten Pfads
-        self.profile_sub_widget = QtWidgets.QWidget()
-        profile_sub_layout = QtWidgets.QHBoxLayout(self.profile_sub_widget)
-        profile_sub_layout.setContentsMargins(0, 0, 0, 0)
+        # Halbzeug-Unterbereich (Typ P): Datei wählen + Anzeige des gewählten Pfads. Mechanisch
+        # identisch zur früheren "Profil"-Option bei Kaufteilen - beliebige bestehende .FCStd
+        # klonen -, jetzt aber inhaltlich auf "P basiert auf einem R-Halbzeug" gemünzt.
+        self.file_sub_widget = QtWidgets.QWidget()
+        file_sub_layout = QtWidgets.QHBoxLayout(self.file_sub_widget)
+        file_sub_layout.setContentsMargins(0, 0, 0, 0)
         self.profile_path_display = QtWidgets.QLineEdit()
         self.profile_path_display.setReadOnly(True)
         self.profile_path_display.setPlaceholderText("Keine Datei gewählt…")
         self.profile_browse_btn = QtWidgets.QPushButton("Datei wählen…")
         self.profile_browse_btn.clicked.connect(self._on_browse_profile_file)
-        profile_sub_layout.addWidget(self.profile_path_display)
-        profile_sub_layout.addWidget(self.profile_browse_btn)
-        source_layout.addWidget(self.profile_sub_widget)
+        file_sub_layout.addWidget(self.profile_path_display)
+        file_sub_layout.addWidget(self.profile_browse_btn)
+        source_layout.addWidget(self.file_sub_widget)
 
         # STEP-Unterbereich: reine Live-Anzeige, was gerade im Baum ausgewählt ist
         self.step_sub_widget = QtWidgets.QWidget()
@@ -108,6 +135,10 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         self.step_object_display.setPlaceholderText("Bitte STEP-Objekt(e) im Baum auswählen…")
         step_sub_layout.addWidget(self.step_object_display)
         source_layout.addWidget(self.step_sub_widget)
+
+        # Profil-Unterbereich (Typ R) braucht kein eigenes Widget - das ProfilTyp-Dropdown +
+        # Length-Feld werden von rebuild_dynamic_fields() wie gehabt im dynamic_layout gerendert;
+        # _update_source_sub_visibility() blendet die beiden nur je nach Radio-Wahl ein/aus.
 
         self.main_layout.addWidget(self.source_widget)
 
@@ -120,16 +151,41 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         self.type_combo.currentIndexChanged.connect(self.rebuild_dynamic_fields)
         self.rebuild_dynamic_fields()
 
-        # 5. Erstellen Button
+        # 5. Erstellen Button (kein Standard-OK - siehe getStandardButtons())
         self.create_btn = QtWidgets.QPushButton("Neue Komponente & Datei erstellen")
         self.create_btn.clicked.connect(self.on_create_clicked)
         self.main_layout.addWidget(self.create_btn)
-        
+
         self.close_btn = QtWidgets.QPushButton("Schließen")
-        self.close_btn.clicked.connect(self.close)
+        self.close_btn.clicked.connect(self._on_close_clicked)
         self.main_layout.addWidget(self.close_btn)
-        
+
         self.main_layout.addStretch()
+
+    # --- FreeCAD-Task-Panel-Protokoll (Gui.Control) ---
+
+    def getStandardButtons(self):
+        """Keine Standard-OK/Abbrechen-Buttons - eigene Erstellen-/Schließen-Buttons oben im
+        Formular übernehmen das, damit 'Erstellen' das Panel NICHT automatisch schließt
+        (mehrere Komponenten nacheinander erstellen, ohne den Dialog neu zu öffnen)."""
+        return QtWidgets.QDialogButtonBox.NoButton
+
+    def accept(self):
+        # Wird ohne Standard-OK-Button nie vom Framework aufgerufen; nur der Vollständigkeit
+        # halber implementiert (Teil des FreeCAD-Task-Panel-Protokolls).
+        return True
+
+    def reject(self):
+        """Wird von Gui.Control.reject() aufgerufen (siehe _on_close_clicked) - Aufräumen, bevor
+        das Panel aus dem Aufgabenbereich entfernt wird."""
+        if self._step_watch_timer is not None:
+            self._step_watch_timer.stop()
+        return True
+
+    def _on_close_clicked(self):
+        Gui.Control.reject()
+
+    # --- Ab hier: unverändert gegenüber der freischwebenden Dialog-Version ---
 
     @staticmethod
     def _detect_step_source_selection():
@@ -156,48 +212,62 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
                 item.widget().deleteLater()
 
         self.inputs_map.clear()
+        self.field_labels_map = {}  # prop_name -> zugehöriges <b>Label</b>-Widget (fürs Ein-/Ausblenden)
         comp_type = self.type_combo.currentData()
-        
+
         # Material-Bereich ein- oder ausblenden
         if comp_type in ["P", "R", "B"]:
             self.material_widget.setVisible(True)
         else:
             self.material_widget.setVisible(False)
 
-        # Geometrie-Basis-Bereich (Profil/STEP/Leer) nur für Kaufteile (Typ B) einblenden
+        # Geometrie-Basis-Bereich: welche Radios angeboten werden, hängt vom Typ ab (siehe
+        # _SOURCE_OPTIONS_BY_TYPE); bei Typwechsel immer auf "Leer" zurücksetzen, damit keine
+        # unsichtbare Auswahl (z.B. "Profil" von R) beim Wechsel zu B aktiv/angehakt bleibt.
         if hasattr(self, "source_widget"):
-            self.source_widget.setVisible(comp_type == "B")
-            self._update_source_sub_visibility()
+            allowed = self._SOURCE_OPTIONS_BY_TYPE.get(comp_type, ())
+            self.source_widget.setVisible(bool(allowed))
+            radio_by_key = {
+                "halbzeug": self.source_halbzeug_radio,
+                "profile": self.source_profile_radio,
+                "step": self.source_step_radio,
+                "empty": self.source_empty_radio,
+            }
+            for key, radio in radio_by_key.items():
+                radio.setVisible(key in allowed)
+            self.source_empty_radio.setChecked(True)
 
         entity_config = self.config_data.get("Entities", {}).get(comp_type, {})
         properties = entity_config.get("Properties", {})
-        
+
         for prop_name, prop_meta in properties.items():
-            self.dynamic_layout.addWidget(QtWidgets.QLabel(f"<b>{prop_name}:</b>"))
+            label_widget = QtWidgets.QLabel(f"<b>{prop_name}:</b>")
+            self.dynamic_layout.addWidget(label_widget)
+            self.field_labels_map[prop_name] = label_widget
             default_val = str(prop_meta.get("Default", ""))
-            
+
             # KORREKTUR: Wenn wir ein Halbzeug (R) erstellen und beim Feld 'ProfilTyp' sind
             if comp_type == "R" and prop_name == "ProfilTyp":
                 combo_field = QtWidgets.QComboBox()
-                
+
                 # Pfad zum GLOBALEN Ressourcen-Profilordner ermitteln
                 # self.proj_dir ist z.B. .../Arbeitsordner/PROJ_U20
                 # Der gemeinsame Ordner liegt eine Ebene höher unter _Common_Resources/Profiles
                 if self.proj_dir:
                     base_cad_dir = os.path.dirname(self.proj_dir)
                     global_profiles_dir = os.path.join(base_cad_dir, "_Common_Resources", "Profiles")
-                    
+
                     if os.path.exists(global_profiles_dir):
                         # Scanne den globalen Ordner nach echten Master-Skizzen
                         for file in os.listdir(global_profiles_dir):
                             if file.endswith(".FCStd"):
                                 clean_name = os.path.splitext(file)[0]
                                 combo_field.addItem(clean_name, clean_name)
-                
+
                 # Falls der Ordner noch komplett leer ist, einen Hinweis einfügen
                 if combo_field.count() == 0:
                     combo_field.addItem("Keine Vorlagen in _Common_Resources gefunden", "None")
-                    
+
                 combo_field.currentIndexChanged.connect(self._update_material_from_profile)
                 self.dynamic_layout.addWidget(combo_field)
                 self.inputs_map[prop_name] = combo_field
@@ -208,6 +278,11 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
                 input_field = QtWidgets.QLineEdit(default_val)
                 self.dynamic_layout.addWidget(input_field)
                 self.inputs_map[prop_name] = input_field
+
+        # Erst jetzt, wo ProfilTyp/Length (falls Typ R) tatsächlich existieren, die
+        # Geometrie-Basis-Sichtbarkeit anwenden (blendet sie ggf. wieder aus, bis "Profil" gewählt ist).
+        if hasattr(self, "source_widget"):
+            self._update_source_sub_visibility()
 
     def _update_material_from_profile(self):
         """Liest das ShapeMaterial aus der gewählten Profildatei und trägt es ins Material-Feld ein."""
@@ -259,21 +334,26 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
             App.Console.PrintWarning(f"FCProject: Material aus Profil '{profile_name}' konnte nicht gelesen werden: {str(e)}\n")
 
     def open_material_gui_via_dummy_object(self):
+        # ACHTUNG: Gui.runCommand('Std_SetMaterial', 0) öffnet selbst ein Gui.Control-Task-Panel.
+        # Solange DIESES Panel (FCProjectTaskPanel) im Aufgabenbereich aktiv ist, belegt es den
+        # Task-Panel-Slot des aktiven Dokuments bereits - Std_SetMaterial kann dann sein eigenes
+        # Panel nicht öffnen (FreeCAD gibt nur eine Konsolen-Warnung aus, kein Absturz). Bekannter,
+        # noch offener Punkt - siehe [[project_fcproject_kaufteil_step_workflow]] Punkt 2.
         active_doc = App.ActiveDocument
         if not active_doc:
-            QtWidgets.QMessageBox.warning(self, "FCProject", "Bitte öffne zuerst ein Dokument!")
+            QtWidgets.QMessageBox.warning(self.form, "FCProject", "Bitte öffne zuerst ein Dokument!")
             return
 
         try:
             dummy_obj = active_doc.addObject("PartDesign::Body", "FCProject_DummyMaterialBody")
             active_doc.recompute()
-            
+
             Gui.Selection.clearSelection()
             Gui.Selection.addSelection(active_doc.Name, dummy_obj.Name)
             QtWidgets.QApplication.processEvents()
-            
+
             Gui.runCommand('Std_SetMaterial', 0)
-            
+
             def check_dummy_selection():
                 if dummy_obj and hasattr(dummy_obj, "ShapeMaterial") and dummy_obj.ShapeMaterial:
                     detected_mat = dummy_obj.ShapeMaterial.Name
@@ -283,7 +363,7 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
                         Gui.Control.closeDialog()
                         active_doc.removeObject(dummy_obj.Name)
                         active_doc.recompute()
-                        
+
             self.timer = QtCore.QTimer()
             self.timer.timeout.connect(check_dummy_selection)
             self.timer.start(300)
@@ -304,12 +384,12 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         """Ermittelt den Kontext aus dem System-Arbeitsverzeichnis oder dem aktiven Dokument."""
         current_dir = os.getcwd()
         folder_name = os.path.basename(current_dir)
-        
+
         # 1. Versuch: Über den Namen des Arbeitsverzeichnisses gehen
         if folder_name and folder_name.startswith("PROJ_"):
             proj_name = folder_name.replace("PROJ_", "")
             return proj_name, current_dir
-            
+
         # 2. Versuch: Wenn wir im falschen Verzeichnis stehen, nutze das aktive Dokument
         active_doc = App.ActiveDocument
         if active_doc:
@@ -319,16 +399,13 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
                 doc_folder = os.path.basename(doc_dir)
                 if doc_folder.startswith("PROJ_"):
                     return doc_folder.replace("PROJ_", ""), doc_dir
-            
+
             # Fallback: Nutze einfach den reinen Namen des Dokuments im RAM (z.B. "U15")
             if active_doc.Name:
                 return active_doc.Name, current_dir
-                
+
         # Ultimativer Rettungsanker, damit niemals 'None' übergeben wird
         return "PROJ", current_dir
-
-                
-        return None, None
 
     def on_create_clicked(self):
         """Sammelt die Daten aus der GUI und triggert die Erstellung der PDM-Komponente und der zugehörigen CAD-Datei."""
@@ -351,62 +428,71 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         if comp_type in ["P", "R", "B"]:
             payload_properties["__TargetMaterialName__"] = self.material_input.text().strip()
 
-        # DYNAMISCHE DATEIAUSWAHL FÜR HALBZEUGE (TYP P)
+        # GEOMETRIE-QUELLE: direkt aus der Radio-Auswahl im Dialog lesen - welche Radios es gibt,
+        # hängt vom Typ ab (siehe _SOURCE_OPTIONS_BY_TYPE).
         if comp_type == "P":
-            msg_box = QtWidgets.QMessageBox(self)
-            msg_box.setWindowTitle("FCProject: Halbzeug-Kopplung")
-            msg_box.setText("Basiert dieses Einzelteil auf einem bestehenden Halbzeug/Profil?")
-            msg_box.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
-            msg_box.setDefaultButton(QtWidgets.QMessageBox.No)
-
-            if msg_box.exec() == QtWidgets.QMessageBox.Yes:
-                # KORREKTUR: Wir zwingen den Dialog, exakt im aktiven Projektverzeichnis zu starten!
-                # self.proj_dir zeigt z.B. direkt in deinen aktuellen /PROJ_U20/ Ordner
-                start_dir = self.proj_dir if self.proj_dir and os.path.exists(self.proj_dir) else os.getcwd()
-
-                # ECHTER DATEIAUSWAHL-DIALOG direkt im Projektordner öffnen
-                selected_file, _ = QtWidgets.QFileDialog.getOpenFileName(
-                    self,
-                    "Halbzeug-Rohling aus Projekt auswählen...",
-                    start_dir,
-                    "FreeCAD Dokumente (*.FCStd)"
-                )
-
-                if selected_file:
-                    payload_properties["__LinkedRawProfilePath__"] = selected_file
-
-            self._finalize_creation(comp_type, comp_num, payload_properties)
-            return
-
-        # GEOMETRIE-QUELLE FÜR KAUFTEILE (TYP B): direkt aus der Radio-Auswahl im Dialog lesen -
-        # kein Popup mehr, alles ist schon im Hauptfenster sichtbar/gewählt.
-        if comp_type == "B":
-            if self.source_profile_radio.isChecked():
+            if self.source_halbzeug_radio.isChecked():
                 selected_path = self.profile_path_display.text().strip()
                 if not selected_path:
-                    QtWidgets.QMessageBox.warning(self, "FCProject", "Bitte zuerst eine Vorlagendatei wählen.")
+                    QtWidgets.QMessageBox.warning(self.form, "FCProject", "Bitte zuerst eine Halbzeug-Datei wählen.")
                     return
                 payload_properties["__LinkedRawProfilePath__"] = selected_path
+            # source_empty_radio -> kein Zusatz, leerer Body zum freien Konstruieren
 
-            elif self.source_step_radio.isChecked():
+        elif comp_type == "R":
+            if self.source_profile_radio.isChecked():
+                # Profil+Länge: ProfilTyp/Length kommen schon aus inputs_map (oben eingesammelt) -
+                # hier nur validieren, dass wirklich ein Profil gewählt wurde.
+                if not payload_properties.get("ProfilTyp") or payload_properties["ProfilTyp"] == "None":
+                    QtWidgets.QMessageBox.warning(self.form, "FCProject", "Bitte zuerst ein Profil wählen.")
+                    return
+            else:
+                # STEP/Leer -> ProfilTyp/Length sind hier irrelevant, nicht mitschicken (sonst
+                # würde RAWCreator sie fälschlich als Profil-Auswahl interpretieren).
+                payload_properties.pop("ProfilTyp", None)
+                payload_properties.pop("Length", None)
+
+                if self.source_step_radio.isChecked():
+                    if not self._step_source_refs:
+                        QtWidgets.QMessageBox.warning(self.form, "FCProject", "Bitte zuerst ein STEP-Objekt im Baum auswählen.")
+                        return
+                    payload_properties["__StepSourceRefs__"] = list(self._step_source_refs)
+                # source_empty_radio -> kein Zusatz, leerer Platzhalter-Body
+
+        elif comp_type == "B":
+            if self.source_step_radio.isChecked():
                 if not self._step_source_refs:
-                    QtWidgets.QMessageBox.warning(self, "FCProject", "Bitte zuerst ein STEP-Objekt im Baum auswählen.")
+                    QtWidgets.QMessageBox.warning(self.form, "FCProject", "Bitte zuerst ein STEP-Objekt im Baum auswählen.")
                     return
                 payload_properties["__StepSourceRefs__"] = list(self._step_source_refs)
-
             # source_empty_radio -> kein Zusatz, normales leeres App::Part
 
         self._finalize_creation(comp_type, comp_num, payload_properties)
 
     def _update_source_sub_visibility(self):
-        """Blendet je nach gewähltem Radio-Button den passenden Unterbereich (Profil-Datei-Auswahl
-        bzw. STEP-Live-Anzeige) ein/aus und startet/stoppt die Baum-Auswahl-Beobachtung."""
-        if not hasattr(self, "profile_sub_widget"):
+        """Blendet je nach gewähltem Radio-Button den passenden Unterbereich ein/aus (Halbzeug-
+        Datei-Auswahl, STEP-Live-Anzeige, bei Typ R die ProfilTyp/Length-Felder) und
+        startet/stoppt die Baum-Auswahl-Beobachtung."""
+        if not hasattr(self, "file_sub_widget"):
             return
-        self.profile_sub_widget.setVisible(self.source_profile_radio.isChecked())
+        comp_type = self.type_combo.currentData()
+
+        self.file_sub_widget.setVisible(self.source_halbzeug_radio.isChecked())
         self.step_sub_widget.setVisible(self.source_step_radio.isChecked())
 
-        is_step_active = self.type_combo.currentData() == "B" and self.source_step_radio.isChecked()
+        # Bei Typ R gehören ProfilTyp/Length zu "Profil" - nur zeigen, wenn das auch die aktive
+        # Geometrie-Basis ist (die Felder selbst leben im dynamic_layout, siehe rebuild_dynamic_fields).
+        if comp_type == "R":
+            show_profile_fields = self.source_profile_radio.isChecked()
+            for name in ("ProfilTyp", "Length"):
+                field = self.inputs_map.get(name)
+                label = self.field_labels_map.get(name)
+                if field is not None:
+                    field.setVisible(show_profile_fields)
+                if label is not None:
+                    label.setVisible(show_profile_fields)
+
+        is_step_active = comp_type in ("R", "B") and self.source_step_radio.isChecked()
         if is_step_active:
             main_win = Gui.getMainWindow()
             if main_win:
@@ -428,11 +514,11 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         self.step_object_display.setText(", ".join(obj.Label for obj in candidates))
 
     def _on_browse_profile_file(self):
-        """Öffnet den Dateidialog für die 'Profil'-Geometrie-Basis eines Kaufteils."""
+        """Öffnet den Dateidialog für die 'Halbzeug'-Geometrie-Basis eines Einzelteils (Typ P)."""
         start_dir = self.proj_dir if self.proj_dir and os.path.exists(self.proj_dir) else os.getcwd()
         selected_file, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self,
-            "Vorlage/Halbzeug für Kaufteil auswählen...",
+            self.form,
+            "Halbzeug für Einzelteil auswählen...",
             start_dir,
             "FreeCAD Dokumente (*.FCStd)"
         )
@@ -445,11 +531,11 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
             creator = EntityCreator(self.proj_name, self.proj_dir)
             generated_name = creator.create_pdm_document(comp_type, comp_num, payload_properties)
             self._fit_and_isometric_view(generated_name)
-            QtWidgets.QMessageBox.information(self, "FCProject", f"Komponente {generated_name} erfolgreich erstellt!")
+            QtWidgets.QMessageBox.information(self.form, "FCProject", f"Komponente {generated_name} erfolgreich erstellt!")
             self.number_input.setText(creator.get_next_available_number())
             self._reset_source_selection()
         except Exception as e:
-            QtWidgets.QMessageBox.critical(None, "FCProject", f"Fehler: {str(e)}")
+            QtWidgets.QMessageBox.critical(self.form, "FCProject", f"Fehler: {str(e)}")
 
     @staticmethod
     def _fit_and_isometric_view(doc_name):
@@ -480,12 +566,3 @@ class FCProjectTaskPanel(QtWidgets.QDialog):
         self.profile_path_display.clear()
         self.step_object_display.clear()
         self._step_source_refs = []
-
-    def closeEvent(self, event):
-        """Verhindert einen verwaisten Timer, falls der Dialog während der Baum-Auswahl-Beobachtung
-        geschlossen wird."""
-        if hasattr(self, "_step_watch_timer"):
-            self._step_watch_timer.stop()
-        super().closeEvent(event)
-
-
