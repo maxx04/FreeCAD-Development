@@ -1,6 +1,7 @@
 # Macro Version: 3.0.0 - FCProject: TaskPanel im Aufgabenbereich (Combo View), nicht mehr freischwebend
 import os
 import json
+import traceback
 import FreeCAD as App
 import FreeCADGui as Gui
 from PySide6 import QtWidgets, QtCore
@@ -11,6 +12,13 @@ from EntityCreator import EntityCreator
 # ob GERADE UNSER Panel im Aufgabenbereich offen ist, statt versehentlich ein fremdes Task-Panel
 # (Sketch-Editor o.ä.) zu schließen.
 _active_panel = None
+
+# Zwischenspeicher für den "kurz zur Material-Workbench wechseln"-Ablauf (siehe
+# open_material_gui_via_dummy_object): das alte Panel-Objekt wird beim Wechsel zerstört, der
+# Formular-Zustand muss deshalb modul-weit überleben, bis das neue Panel danach wieder aufgebaut
+# wird. _material_watch_timer läuft dabei außerhalb jeder Panel-Instanz.
+_pending_material_state = None
+_material_watch_timer = None
 
 class FCProjectTaskPanel:
     """FreeCAD-Task-Panel-Controller (kein QDialog mehr) - wird über Gui.Control.showDialog()
@@ -353,16 +361,26 @@ class FCProjectTaskPanel:
 
     def open_material_gui_via_dummy_object(self):
         # ACHTUNG: Gui.runCommand('Std_SetMaterial', 0) öffnet selbst ein Gui.Control-Task-Panel.
-        # Solange DIESES Panel (FCProjectTaskPanel) im Aufgabenbereich aktiv ist, belegt es den
-        # Task-Panel-Slot des aktiven Dokuments bereits - Std_SetMaterial kann dann sein eigenes
-        # Panel nicht öffnen (FreeCAD gibt nur eine Konsolen-Warnung aus, kein Absturz). Bekannter,
-        # noch offener Punkt - siehe [[project_fcproject_kaufteil_step_workflow]] Punkt 2.
+        # Dessen isActive() ist im FreeCAD-Quellcode (Material/Gui/Command.cpp) direkt an
+        # Control().activeDialog()==nullptr gekoppelt - der Befehl bleibt also komplett INAKTIV,
+        # solange DIESES Panel (FCProjectTaskPanel) im Aufgabenbereich offen ist (belegt denselben
+        # Task-Panel-Slot des aktiven Dokuments). Lösung (mit dem User abgesprochen, siehe
+        # [[project_fcproject_kaufteil_step_workflow]]): eigenes Panel schließen, kurz zur echten
+        # "Material"-Workbench (interner Name "MaterialWorkbench", verifiziert über
+        # Gui.addWorkbench()'s Namensvergabe = Python-Klassenname) wechseln - das gibt den Slot
+        # frei -, Material auswählen lassen, danach zurück zu FCProject wechseln und ein neues
+        # FCProjectTaskPanel mit dem hier gesicherten Formular-Zustand wieder öffnen.
         active_doc = App.ActiveDocument
         if not active_doc:
             QtWidgets.QMessageBox.warning(self.form, "FCProject", "Bitte öffne zuerst ein Dokument!")
             return
 
         try:
+            # Selbstheilung: falls von einem vorherigen Durchlauf (z.B. durch einen noch nicht
+            # gefundenen Fehler in _watch_material_selection) ein Dummy-Body liegen geblieben ist,
+            # zuerst aufräumen statt einen weiteren daneben zu erzeugen.
+            _cleanup_stray_dummy_bodies(active_doc)
+
             dummy_obj = active_doc.addObject("PartDesign::Body", "FCProject_DummyMaterialBody")
             active_doc.recompute()
 
@@ -370,23 +388,98 @@ class FCProjectTaskPanel:
             Gui.Selection.addSelection(active_doc.Name, dummy_obj.Name)
             QtWidgets.QApplication.processEvents()
 
+            global _pending_material_state, _material_watch_timer
+            _pending_material_state = {
+                "state": self._capture_state(),
+                "doc_name": active_doc.Name,
+                "dummy_name": dummy_obj.Name,
+            }
+
+            # Eigenes Panel VOR dem Werkbench-Wechsel selbst schließen (nicht auf
+            # FCProjectWorkbench.Deactivated() verlassen - der Slot muss schon vor
+            # activateWorkbench() frei sein, sonst bleibt Std_SetMaterial weiter inaktiv).
+            self.reject()
+            Gui.Control.closeDialog()
+
+            Gui.activateWorkbench("MaterialWorkbench")
             Gui.runCommand('Std_SetMaterial', 0)
 
-            def check_dummy_selection():
-                if dummy_obj and hasattr(dummy_obj, "ShapeMaterial") and dummy_obj.ShapeMaterial:
-                    detected_mat = dummy_obj.ShapeMaterial.Name
-                    if detected_mat and detected_mat != "Default":
-                        self.material_input.setText(detected_mat)
-                        self.timer.stop()
-                        Gui.Control.closeDialog()
-                        active_doc.removeObject(dummy_obj.Name)
-                        active_doc.recompute()
-
-            self.timer = QtCore.QTimer()
-            self.timer.timeout.connect(check_dummy_selection)
-            self.timer.start(300)
+            _material_watch_timer = QtCore.QTimer()
+            _material_watch_timer.timeout.connect(_watch_material_selection)
+            _material_watch_timer.start(300)
         except Exception as e:
             App.Console.PrintError(f"FCProject: Fehler beim Material-Dialog: {str(e)}\n")
+
+    def _capture_state(self):
+        """Sichert den aktuellen Formular-Zustand als reines Datenwörterbuch. Nötig, weil dieses
+        Panel-Objekt beim Wechsel zur Material-Workbench zerstört wird (siehe
+        open_material_gui_via_dummy_object) - das danach neu erzeugte FCProjectTaskPanel kennt
+        den alten Stand sonst nicht mehr."""
+        prop_values = {}
+        for name, widget in self.inputs_map.items():
+            if isinstance(widget, QtWidgets.QComboBox):
+                prop_values[name] = widget.currentData()
+            else:
+                prop_values[name] = widget.text()
+
+        source_choice = "empty"
+        for key, radio in self._source_radio_by_key().items():
+            if radio.isChecked():
+                source_choice = key
+                break
+
+        return {
+            "comp_type": self.type_combo.currentData(),
+            "number": self.number_input.text(),
+            "prop_values": prop_values,
+            "material": self.material_input.text(),
+            "source_choice": source_choice,
+            "profile_path": self.profile_path_display.text(),
+            "step_refs": list(self._step_source_refs),
+            "step_display": self.step_object_display.text(),
+        }
+
+    def _restore_state(self, state):
+        """Gegenstück zu _capture_state() - füllt ein frisch erzeugtes Panel wieder mit dem vorher
+        gesicherten Formular-Zustand."""
+        if not state:
+            return
+
+        idx = self.type_combo.findData(state.get("comp_type"))
+        if idx >= 0:
+            self.type_combo.setCurrentIndex(idx)
+        self.rebuild_dynamic_fields()  # unabhängig davon aufrufen, ob obiges Signal schon gefeuert hat
+
+        for name, value in state.get("prop_values", {}).items():
+            widget = self.inputs_map.get(name)
+            if widget is None:
+                continue
+            if isinstance(widget, QtWidgets.QComboBox):
+                found = widget.findData(value)
+                if found >= 0:
+                    widget.setCurrentIndex(found)
+            else:
+                widget.setText(value or "")
+
+        self.number_input.setText(state.get("number", self.number_input.text()))
+        self.material_input.setText(state.get("material", self.material_input.text()))
+
+        radio = self._source_radio_by_key().get(state.get("source_choice"))
+        if radio is not None and radio.isVisible():
+            radio.setChecked(True)
+
+        self.profile_path_display.setText(state.get("profile_path", ""))
+        self._step_source_refs = list(state.get("step_refs", []))
+        self.step_object_display.setText(state.get("step_display", ""))
+        self._update_source_sub_visibility()
+
+    def _source_radio_by_key(self):
+        return {
+            "halbzeug": self.source_halbzeug_radio,
+            "profile": self.source_profile_radio,
+            "step": self.source_step_radio,
+            "empty": self.source_empty_radio,
+        }
 
     def _load_config(self):
         """Lädt die Konfiguration aus der JSON, die exakt wie der Projektordner benannt ist (z.B. PROJ_U20.json)."""
@@ -587,3 +680,75 @@ class FCProjectTaskPanel:
         self.profile_path_display.clear()
         self.step_object_display.clear()
         self._step_source_refs = []
+
+
+def _cleanup_stray_dummy_bodies(doc):
+    """Entfernt liegen gebliebene FCProject_DummyMaterialBody-Objekte (Name kann durch FreeCADs
+    Sanitizing bei Mehrfach-Anlage z.B. '...001' o.ä. werden) - Sicherheitsnetz, falls
+    _watch_material_selection einmal nicht zum eigenen Aufräumen kommt."""
+    for obj in list(doc.Objects):
+        if obj.Name.startswith("FCProject_DummyMaterialBody"):
+            try:
+                doc.removeObject(obj.Name)
+            except Exception as e:
+                App.Console.PrintWarning(f"FCProject: Liegen gebliebenes Dummy-Objekt '{obj.Name}' konnte nicht entfernt werden: {str(e)}\n")
+    doc.recompute()
+
+
+def _watch_material_selection():
+    """Modul-weiter Poll-Timer (siehe FCProjectTaskPanel.open_material_gui_via_dummy_object) -
+    läuft bewusst außerhalb jeder Panel-Instanz, weil das ursprüngliche Panel-Objekt während des
+    Werkbench-Wechsels bereits zerstört ist. Beendet, sobald entweder ein Material gewählt wurde
+    (ShapeMaterial != 'Default' auf dem Dummy-Objekt) ODER der Material-Dialog selbst geschlossen
+    wurde (z.B. Abbrechen/X - dann eben ohne Materialänderung übernehmen, statt für immer zu
+    warten). Öffnet danach zurück in FCProject ein neues FCProjectTaskPanel mit dem zuvor
+    gesicherten Formular-Zustand.
+
+    Läuft komplett in try/except mit vollem Traceback-Log: eine Ausnahme hier würde sonst nur
+    lautlos von Qt geschluckt (Timer-Callback) und das Aufräumen/Panel-Neuaufbau würde je nach
+    Fehlerstelle nie fertig laufen - siehe [[project_fcproject_kaufteil_step_workflow]]."""
+    global _pending_material_state, _material_watch_timer
+    pending = _pending_material_state
+    if pending is None:
+        if _material_watch_timer is not None:
+            _material_watch_timer.stop()
+        return
+
+    try:
+        doc = App.getDocument(pending["doc_name"]) if pending["doc_name"] in App.listDocuments() else None
+        dummy_obj = doc.getObject(pending["dummy_name"]) if doc else None
+
+        dialog_open = bool(Gui.Control.activeDialog())
+        chosen_material = None
+        if dummy_obj is not None and hasattr(dummy_obj, "ShapeMaterial") and dummy_obj.ShapeMaterial:
+            mat_name = dummy_obj.ShapeMaterial.Name
+            if mat_name and mat_name != "Default":
+                chosen_material = mat_name
+
+        if chosen_material is None and dialog_open:
+            return  # weiter warten - noch keine Auswahl, Dialog noch offen
+
+        _material_watch_timer.stop()
+        if dialog_open:
+            Gui.Control.closeDialog()
+        if doc is not None and dummy_obj is not None:
+            doc.removeObject(dummy_obj.Name)
+            doc.recompute()
+
+        state = pending["state"]
+        if chosen_material:
+            state["material"] = chosen_material
+        _pending_material_state = None
+
+        Gui.activateWorkbench("FCProjectWorkbench")
+        new_panel = FCProjectTaskPanel()
+        if new_panel.valid:
+            new_panel._restore_state(state)
+            Gui.Control.showDialog(new_panel)
+    except Exception:
+        if _material_watch_timer is not None:
+            _material_watch_timer.stop()
+        _pending_material_state = None
+        App.Console.PrintError(
+            "FCProject: Fehler beim Zurückkehren aus dem Material-Dialog:\n" + traceback.format_exc()
+        )
