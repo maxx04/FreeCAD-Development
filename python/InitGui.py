@@ -27,6 +27,7 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         import AssemblyPatternCommand as AssemblyPatternCommand
         import PatternFeatures as PatternFeatures
         import PartExchangeCommand as PartExchangeCommand
+        import SelectableRepairCommand as SelectableRepairCommand
         import DocObserver
         DocObserver.register()
 
@@ -35,7 +36,8 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
             "FCProject_CreatePart",
             "FCProject_ExportBOM",
             "FCProject_PatternGroup",
-            "FCProject_PartExchange"
+            "FCProject_PartExchange",
+            "FCProject_RepairSelectable"
         ])
 
 
@@ -94,6 +96,25 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         else:
             if main_win: 
                 main_win.statusBar().showMessage("FCProject: Uninitialisiertes Verzeichnis (Nutze Button 1).", 5000)
+
+    def Deactivated(self):
+        """Wird von FreeCAD aufgerufen, sobald zu einer ANDEREN Werkbench gewechselt wird
+        (verifiziert in Application::activateWorkbench im FreeCAD-C++-Kern: die 'Deactivated'-
+        Methode der zuvor aktiven Werkbench wird ohne Argumente aufgerufen, bevor die neue aktiv
+        wird). Schließt unser eigenes PDM-Creator-Panel automatisch, falls es gerade offen ist -
+        außerhalb dieser Werkbench ist es nicht mehr sinnvoll nutzbar und blieb bisher dauerhaft
+        im Aufgabenbereich hängen, auch nach dem Wechsel in eine andere Werkbench."""
+        try:
+            import TaskPanel
+            panel = TaskPanel._active_panel
+            if panel is not None:
+                # Gui.Control kennt in Python kein reject()/accept() (nur showDialog/
+                # activeDialog/activeTaskDialog/closeDialog) - eigenes Aufräumen deshalb selbst
+                # anstoßen, dann erst das Panel tatsächlich entfernen.
+                panel.reject()
+                FreeCADGui.Control.closeDialog()
+        except Exception as e:
+            App.Console.PrintWarning(f"FCProject: Panel konnte beim Werkbench-Wechsel nicht geschlossen werden: {str(e)}\n")
 
     def GetClassName(self):
         return "Gui::PythonWorkbench"

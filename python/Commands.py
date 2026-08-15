@@ -39,9 +39,17 @@ class PartCreatorCommand:
     def _close_active_task_dialog():
         """Schließt ein evtl. bereits offenes Task-Panel, bevor ein neues geöffnet wird - sonst
         weist Gui.Control.showDialog() den Aufruf mit einer Konsolen-Warnung lautlos ab
-        ("already an active task dialog")."""
+        ("already an active task dialog"). Gui.Control.activeDialog() liefert in Python (anders
+        als der Name vermuten lässt) ein bool zurück, kein Objekt - siehe FreeCADGui._Control.pyi -
+        deshalb direkt als Wahrheitswert prüfen statt gegen None."""
         try:
-            if Gui.Control.activeDialog() is not None:
+            if Gui.Control.activeDialog():
+                # Falls es UNSER eigenes Panel ist: dessen reject() zuerst selbst aufrufen (stoppt
+                # z.B. den STEP-Beobachtungs-Timer) - Gui.Control kennt in Python kein reject(),
+                # closeDialog() allein würde das Aufräumen sonst überspringen.
+                import TaskPanel
+                if TaskPanel._active_panel is not None:
+                    TaskPanel._active_panel.reject()
                 Gui.Control.closeDialog()
         except Exception as e:
             App.Console.PrintWarning(f"FCProject: Vorhandenes Task-Panel konnte nicht geschlossen werden: {str(e)}\n")

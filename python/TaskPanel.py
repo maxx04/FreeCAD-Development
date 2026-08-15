@@ -6,6 +6,12 @@ import FreeCADGui as Gui
 from PySide6 import QtWidgets, QtCore
 from EntityCreator import EntityCreator
 
+# Modul-weite Referenz aufs aktuell offene Panel (falls eins offen ist). Ermöglicht z.B.
+# FCProjectWorkbench.Deactivated() (InitGui.py), beim Werkbench-Wechsel zuverlässig zu erkennen,
+# ob GERADE UNSER Panel im Aufgabenbereich offen ist, statt versehentlich ein fremdes Task-Panel
+# (Sketch-Editor o.ä.) zu schließen.
+_active_panel = None
+
 class FCProjectTaskPanel:
     """FreeCAD-Task-Panel-Controller (kein QDialog mehr) - wird über Gui.Control.showDialog()
     im Aufgabenbereich (Combo View) angezeigt. self.form ist das eigentliche Inhalts-Widget;
@@ -162,6 +168,9 @@ class FCProjectTaskPanel:
 
         self.main_layout.addStretch()
 
+        global _active_panel
+        _active_panel = self
+
     # --- FreeCAD-Task-Panel-Protokoll (Gui.Control) ---
 
     def getStandardButtons(self):
@@ -176,14 +185,23 @@ class FCProjectTaskPanel:
         return True
 
     def reject(self):
-        """Wird von Gui.Control.reject() aufgerufen (siehe _on_close_clicked) - Aufräumen, bevor
-        das Panel aus dem Aufgabenbereich entfernt wird."""
+        """Aufräumen, bevor das Panel aus dem Aufgabenbereich entfernt wird. Teil des FreeCAD-
+        Task-Panel-Protokolls, wird aber NICHT automatisch von Gui.Control aufgerufen - anders
+        als die C++-Seite (ControlSingleton::reject) ist auf der Python-Seite (Gui.Control) kein
+        reject()/accept() exponiert (nur showDialog/activeDialog/activeTaskDialog/closeDialog,
+        siehe FreeCADGui._Control.pyi) - deshalb rufen _on_close_clicked() und
+        FCProjectWorkbench.Deactivated() (InitGui.py) diese Methode selbst auf, bevor sie
+        Gui.Control.closeDialog() zum eigentlichen Schließen aufrufen."""
+        global _active_panel
+        if _active_panel is self:
+            _active_panel = None
         if self._step_watch_timer is not None:
             self._step_watch_timer.stop()
         return True
 
     def _on_close_clicked(self):
-        Gui.Control.reject()
+        self.reject()
+        Gui.Control.closeDialog()
 
     # --- Ab hier: unverändert gegenüber der freischwebenden Dialog-Version ---
 
@@ -531,7 +549,10 @@ class FCProjectTaskPanel:
             creator = EntityCreator(self.proj_name, self.proj_dir)
             generated_name = creator.create_pdm_document(comp_type, comp_num, payload_properties)
             self._fit_and_isometric_view(generated_name)
-            QtWidgets.QMessageBox.information(self.form, "FCProject", f"Komponente {generated_name} erfolgreich erstellt!")
+            # Bewusst kein modaler Dialog mehr hier - beim Erstellen mehrerer Komponenten
+            # nacheinander (der Normalfall) musste sonst jedes Mal weggeklickt werden. Erfolg
+            # reicht als Log-Eintrag in der Report-Ansicht; Fehler bleiben unten ein echter Dialog.
+            App.Console.PrintMessage(f"FCProject: Komponente '{generated_name}' erfolgreich erstellt.\n")
             self.number_input.setText(creator.get_next_available_number())
             self._reset_source_selection()
         except Exception as e:

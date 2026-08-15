@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Selectable-Repair-Icon: offenes Schloss (wieder "entsperrt"/auswaehlbar) + Cursor -->
+  <defs>
+    <linearGradient id="srgrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#5CB85C;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#3D8B3D;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" fill="white" opacity="0"/>
+
+  <!-- Offener Schloss-Buegel -->
+  <path d="M 22 26 L 22 18 A 10 10 0 0 1 41 14" fill="none" stroke="#3D8B3D" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- Schloss-Koerper -->
+  <rect x="14" y="26" width="24" height="20" rx="3" fill="url(#srgrad1)" stroke="#2C6B2C" stroke-width="1.5"/>
+  <circle cx="26" cy="34" r="3" fill="#F0FFF0"/>
+  <rect x="24.5" y="34" width="3" height="7" fill="#F0FFF0"/>
+
+  <!-- Auswahl-Cursor daneben, deutet "wieder anklickbar" an -->
+  <polygon points="42,34 42,54 47,49 50,56 54,54 51,47 58,47" fill="#FFFFFF" stroke="#333333" stroke-width="1.5" stroke-linejoin="round"/>
+</svg>

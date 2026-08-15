@@ -120,7 +120,16 @@ class EntityCreator:
         # Den Creator ausführen
         creator.create(new_file_path, pdm_base_name, pdm_base_name, entity_config, user_properties)
 
-        return pdm_base_name
+        # WICHTIG: FreeCAD sanitisiert Sonderzeichen (Leerzeichen, Bindestriche, ...) im internen
+        # Document-Namen automatisch weg (z.B. "...M4x14-Schraube" -> "..._M4x14_Schraube" als
+        # echter .Name) - der angefragte pdm_base_name spiegelt das nicht wider. Gäbe man ihn
+        # unverändert zurück, würden nachgelagerte App.getDocument(name)-Aufrufe (z.B.
+        # TaskPanel._fit_and_isometric_view) mit "Unknown document" fehlschlagen, sobald eine
+        # Bezeichnung/ein ProfilTyp ein solches Zeichen enthält (Bezeichnungen mit Bindestrich sind
+        # im Maschinenbau eher die Regel als die Ausnahme). Stattdessen robust über die immer
+        # saubere ArticleID nach dem echten Namen suchen.
+        real_doc, _real_obj = self._find_by_article_id(base_pdm_id)
+        return real_doc.Name if real_doc else pdm_base_name
 
     def _create_step_structure(self, nodes, comp_num, user_properties):
         """Baut aus einer (ggf. mehrstufigen) STEP-Struktur-Beschreibung (siehe StepStructureImporter)

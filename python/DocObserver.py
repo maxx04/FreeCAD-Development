@@ -8,7 +8,9 @@ except ImportError:
 
 
 class FCProjectDocObserver:
-    """Prüft beim Öffnen/Speichern ob der Dateiname mit dem PDM-Objekt übereinstimmt."""
+    """Prüft beim Öffnen/Speichern ob der Dateiname mit dem PDM-Objekt übereinstimmt, und repariert
+    vor jedem Speichern automatisch hängengebliebenes Selectable=False (Joint-Isolate-Bug, siehe
+    SelectableRepairCommand.py)."""
 
     def slotOpenDocument(self, doc):
         # Objekte sind beim Open-Signal noch nicht geladen — kurz verzögern
@@ -16,6 +18,35 @@ class FCProjectDocObserver:
 
     def slotSavedDocument(self, doc):
         _check_doc(doc)
+
+    def slotStartSaveDocument(self, doc, filename):
+        # Läuft VOR dem eigentlichen Schreiben (App::Document.signalStartSave) - die Reparatur
+        # landet dadurch direkt im gerade laufenden Speichervorgang, statt erst beim nächsten.
+        _repair_stuck_selectable(doc)
+
+
+def _repair_stuck_selectable(doc):
+    """Repariert vor jedem Speichern automatisch hängengebliebenes Selectable=False (bekannter
+    FreeCAD-Bug beim Joint-Editor-'Isolate'-Feature, siehe patches/freecad-assembly-jointobject.patch
+    Fix 5 - der verhindert das nur für den EINEN dort gepatchten Ausstiegspfad; FreeCADs eigene
+    Sperre gegen Dokument-Schließen bei offenem Task-Dialog ist in diesem Build auskommentiert
+    (Document.cpp canClose()), es gibt also weitere, nicht einzeln patchbare Wege dahin). Statt
+    jeden möglichen FreeCAD-internen Ausstiegspfad einzeln zu jagen: verhindert direkt, dass der
+    kaputte Zustand überhaupt in die Datei geschrieben wird."""
+    try:
+        from SelectableRepairCommand import find_stuck_objects
+        stuck = find_stuck_objects(doc)
+        if not stuck:
+            return
+        for obj in stuck:
+            obj.ViewObject.Selectable = True
+        names = ", ".join(o.Label for o in stuck)
+        App.Console.PrintWarning(
+            f"FCProject DocObserver: {len(stuck)} Bauteil(e) hatten Selectable=False "
+            f"(Joint-Isolate-Bug) - vor dem Speichern automatisch repariert: {names}\n"
+        )
+    except Exception as e:
+        App.Console.PrintWarning(f"FCProject DocObserver: Selectable-Reparatur fehlgeschlagen: {str(e)}\n")
 
 
 def _check_doc(doc):
