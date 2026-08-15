@@ -148,6 +148,15 @@ class FCProjectTaskPanel:
         self.step_object_display.setReadOnly(True)
         self.step_object_display.setPlaceholderText("Bitte STEP-Objekt(e) im Baum auswählen…")
         step_sub_layout.addWidget(self.step_object_display)
+
+        # Ursprungs-Zentrierung: importierte Geometrie behält standardmäßig NICHT die rohe
+        # STEP-Weltkoordinate, sondern wird auf einen lokalen Ursprung zentriert (besser fürs
+        # spätere Alleine-Bearbeiten/Zeichnungen/Pattern-Features) - Baugruppen-Anordnung bleibt
+        # trotzdem korrekt, siehe EntityCreator._link_parts_into_assembly/ImportOriginOffset.
+        self.center_origin_checkbox = QtWidgets.QCheckBox("Teile automatisch auf lokalen Ursprung zentrieren")
+        self.center_origin_checkbox.setChecked(True)
+        step_sub_layout.addWidget(self.center_origin_checkbox)
+
         source_layout.addWidget(self.step_sub_widget)
 
         # Profil-Unterbereich (Typ R) braucht kein eigenes Widget - das ProfilTyp-Dropdown +
@@ -437,6 +446,7 @@ class FCProjectTaskPanel:
             "profile_path": self.profile_path_display.text(),
             "step_refs": list(self._step_source_refs),
             "step_display": self.step_object_display.text(),
+            "center_origin": self.center_origin_checkbox.isChecked(),
         }
 
     def _restore_state(self, state):
@@ -471,6 +481,7 @@ class FCProjectTaskPanel:
         self.profile_path_display.setText(state.get("profile_path", ""))
         self._step_source_refs = list(state.get("step_refs", []))
         self.step_object_display.setText(state.get("step_display", ""))
+        self.center_origin_checkbox.setChecked(state.get("center_origin", True))
         self._update_source_sub_visibility()
 
     def _source_radio_by_key(self):
@@ -568,6 +579,7 @@ class FCProjectTaskPanel:
                         QtWidgets.QMessageBox.warning(self.form, "FCProject", "Bitte zuerst ein STEP-Objekt im Baum auswählen.")
                         return
                     payload_properties["__StepSourceRefs__"] = list(self._step_source_refs)
+                    payload_properties["__CenterOrigin__"] = self.center_origin_checkbox.isChecked()
                 # source_empty_radio -> kein Zusatz, leerer Platzhalter-Body
 
         elif comp_type == "B":
@@ -576,6 +588,7 @@ class FCProjectTaskPanel:
                     QtWidgets.QMessageBox.warning(self.form, "FCProject", "Bitte zuerst ein STEP-Objekt im Baum auswählen.")
                     return
                 payload_properties["__StepSourceRefs__"] = list(self._step_source_refs)
+                payload_properties["__CenterOrigin__"] = self.center_origin_checkbox.isChecked()
             # source_empty_radio -> kein Zusatz, normales leeres App::Part
 
         self._finalize_creation(comp_type, comp_num, payload_properties)

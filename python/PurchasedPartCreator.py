@@ -34,19 +34,52 @@ def _solids_from_shape(shape):
     return []
 
 
-def _build_single_body(new_doc, base_name, trailing_name, solid, src_label):
+def _build_single_body(new_doc, base_name, trailing_name, solid, src_label, center_origin=True):
     """Baut aus genau einem Solid einen Body direkt als Root-Objekt (kein App::Part-Wrapper) -
     gemeinsam genutzt vom einzelnen STEP-Objekt-Fall und von der Multi-Solid-Baugruppen-Zerlegung
     (dort bekommt jedes Teildokument über EntityCreator._create_step_assembly denselben Weg, nur mit
-    einem bereits fertig aufgelösten Solid statt einer Baum-Auswahl)."""
+    einem bereits fertig aufgelösten Solid statt einer Baum-Auswahl).
+
+    center_origin=True (Standard, mit dem User abgesprochen): verschiebt die Geometrie von der
+    rohen STEP-Weltkoordinate auf einen lokalen Ursprung (Bounding-Box-Mitte in X/Y, Unterkante in
+    Z) - besser fürs spätere Alleine-Bearbeiten/Zeichnungen/Pattern-Features, die von einem
+    sinnvollen lokalen Ursprung ausgehen. Der dabei entstehende Versatz wird als
+    ImportOriginOffset-Property am Body gespeichert; EntityCreator._link_parts_into_assembly liest
+    ihn beim Verlinken in eine Baugruppe wieder aus und kompensiert ihn über das Link-Placement,
+    damit sich an der sichtbaren Anordnung der Baugruppe nichts ändert."""
+    offset = App.Vector(0, 0, 0)
+    work_solid = solid
+    if center_origin:
+        try:
+            bbox = solid.BoundBox
+            offset = App.Vector(bbox.Center.x, bbox.Center.y, bbox.ZMin)
+            if offset.Length > 1e-7:
+                work_solid = solid.copy()
+                work_solid.translate(App.Vector(-offset.x, -offset.y, -offset.z))
+        except Exception as e:
+            App.Console.PrintWarning(
+                f"FCProject: Automatische Ursprungs-Zentrierung für '{src_label}' fehlgeschlagen, "
+                f"STEP-Koordinate wird beibehalten: {str(e)}\n"
+            )
+            offset = App.Vector(0, 0, 0)
+            work_solid = solid
+
     import_feat = new_doc.addObject("Part::Feature", f"{base_name}_ImportGeo")
-    import_feat.Shape = solid
+    import_feat.Shape = work_solid
     import_feat.Label = f"{src_label}_Geometrie"
     import_feat.Visibility = False
 
     body = new_doc.addObject("PartDesign::Body", base_name)
     body.Label = trailing_name
     body.BaseFeature = import_feat
+
+    if offset.Length > 1e-7:
+        body.addProperty(
+            "App::PropertyVector", "ImportOriginOffset", "FCProject_Import",
+            "Versatz zur ursprünglichen STEP-Weltkoordinate (für Kompensation beim Verlinken in eine Baugruppe)"
+        )
+        body.ImportOriginOffset = offset
+
     return body
 
 
@@ -108,6 +141,9 @@ class PurchasedPartCreator:
         # EntityCreator._create_step_assembly - "ein Körper pro Dokument")
         single_solid_shape = properties.get("__SingleSolidShape__", None)
         single_solid_label = properties.get("__SingleSolidLabel__", trailing_name)
+        # Ob importierte STEP-Geometrie auf einen lokalen Ursprung zentriert wird (Standard: ja,
+        # siehe _build_single_body) - vom User im STEP-Bereich des TaskPanels umschaltbar.
+        center_origin = properties.get("__CenterOrigin__", True)
         price_val = Utils.floatGerman(properties.get("Preis", 0.0))
 
         new_doc = App.newDocument(trailing_name)
@@ -120,7 +156,7 @@ class PurchasedPartCreator:
         if single_solid_shape is not None:
             try:
                 import PartDesign # type: ignore
-                core_obj = _build_single_body(new_doc, base_name, trailing_name, single_solid_shape, single_solid_label)
+                core_obj = _build_single_body(new_doc, base_name, trailing_name, single_solid_shape, single_solid_label, center_origin=center_origin)
             except Exception as e:
                 App.Console.PrintWarning(f"FCProject: Fehler beim direkten Solid-Aufbau: {str(e)}\n")
 
@@ -135,7 +171,7 @@ class PurchasedPartCreator:
                     # Genau ein Volumenkörper -> der Body IST das Kaufteil, kein zusätzlicher
                     # App::Part-Behälter drumherum nötig.
                     solid, src_label = solids[0]
-                    core_obj = _build_single_body(new_doc, base_name, trailing_name, solid, src_label)
+                    core_obj = _build_single_body(new_doc, base_name, trailing_name, solid, src_label, center_origin=center_origin)
 
                     App.Console.PrintMessage(
                         f"FCProject: 1 Volumenkörper aus {len(step_source_refs)} STEP-Objekt(en) direkt "

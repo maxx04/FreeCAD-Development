@@ -23,6 +23,9 @@ class RAWCreator:
         # EntityCreator._create_step_structure - "ein Körper pro Dokument")
         single_solid_shape = properties.get("__SingleSolidShape__", None)
         single_solid_label = properties.get("__SingleSolidLabel__", trailing_name)
+        # Ob importierte STEP-Geometrie auf einen lokalen Ursprung zentriert wird - siehe
+        # PurchasedPartCreator._build_single_body.
+        center_origin = properties.get("__CenterOrigin__", True)
 
         price_val = Utils.floatGerman(properties.get("Preis", 0.0))
 
@@ -40,7 +43,7 @@ class RAWCreator:
         if single_solid_shape is not None:
             try:
                 from PurchasedPartCreator import _build_single_body
-                core_obj = _build_single_body(new_doc, base_name, trailing_name, single_solid_shape, single_solid_label)
+                core_obj = _build_single_body(new_doc, base_name, trailing_name, single_solid_shape, single_solid_label, center_origin=center_origin)
             except Exception as e:
                 App.Console.PrintWarning(f"FCProject: Fehler beim direkten Solid-Aufbau (Halbzeug): {str(e)}\n")
 
@@ -53,7 +56,7 @@ class RAWCreator:
                 solids = _collect_solids_from_refs(step_source_refs)
                 if len(solids) == 1:
                     solid, src_label = solids[0]
-                    core_obj = _build_single_body(new_doc, base_name, trailing_name, solid, src_label)
+                    core_obj = _build_single_body(new_doc, base_name, trailing_name, solid, src_label, center_origin=center_origin)
                 elif len(solids) > 1:
                     App.Console.PrintWarning(
                         "FCProject: Mehrere Volumenkörper in der STEP-Auswahl für ein Halbzeug - "

@@ -311,13 +311,22 @@ class EntityCreator:
 
     @staticmethod
     def _link_parts_into_assembly(asm_doc, asm_root, part_infos):
-        """Hängt die Root-Objekte der übergebenen Teil-Dokumente per App::Link in die Baugruppe ein."""
+        """Hängt die Root-Objekte der übergebenen Teil-Dokumente per App::Link in die Baugruppe ein.
+
+        Wurde die Teil-Geometrie beim Anlegen auf einen lokalen Ursprung zentriert (Standard, siehe
+        PurchasedPartCreator._build_single_body), trägt das Root-Objekt eine ImportOriginOffset-
+        Property mit dem dabei entstandenen Versatz zur ursprünglichen STEP-Weltkoordinate - der
+        Link bekommt genau diesen Versatz als Placement, damit die Baugruppe trotz zentrierter
+        Einzelteile weiterhin an der richtigen Stelle zusammengesetzt erscheint."""
         import FreeCAD as App
 
         for part_doc, part_root in part_infos:
             link = asm_doc.addObject("App::Link", f"{part_root.Name}_Link")
             link.Label = part_root.Label
             link.LinkedObject = part_root
+            offset = getattr(part_root, "ImportOriginOffset", None)
+            if offset is not None:
+                link.Placement = App.Placement(offset, App.Rotation())
             asm_root.addObject(link)
 
         asm_doc.recompute()
