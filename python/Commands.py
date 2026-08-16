@@ -33,24 +33,29 @@ class PartCreatorCommand:
         if not self.dialog.valid:
             return  # Fehlermeldung (fehlende Projekt-Konfiguration) kam bereits aus dem Panel selbst
 
-        Gui.Control.showDialog(self.dialog)
+        Gui.Control.showDialog(self.dialog, self.dialog._attached_doc)
 
     @staticmethod
     def _close_active_task_dialog():
-        """Schließt ein evtl. bereits offenes Task-Panel, bevor ein neues geöffnet wird - sonst
-        weist Gui.Control.showDialog() den Aufruf mit einer Konsolen-Warnung lautlos ab
-        ("already an active task dialog"). Gui.Control.activeDialog() liefert in Python (anders
-        als der Name vermuten lässt) ein bool zurück, kein Objekt - siehe FreeCADGui._Control.pyi -
-        deshalb direkt als Wahrheitswert prüfen statt gegen None."""
+        """Schließt ein evtl. bereits offenes eigenes Task-Panel, bevor ein neues geöffnet wird -
+        sonst weist Gui.Control.showDialog() den Aufruf mit einer Konsolen-Warnung lautlos ab
+        ("already an active task dialog").
+
+        Prüft dafür DIREKT TaskPanel._active_panel statt Gui.Control.activeDialog(): Letzteres
+        bezieht sich ohne explizites Dokument-Argument immer auf das GERADE aktive Dokument (siehe
+        [[project_fcproject_kaufteil_step_workflow]] bzw. Erklärung bei
+        FCProjectTaskPanel._attached_doc in TaskPanel.py) - ist das aktive Dokument seit dem Öffnen
+        unseres Panels gewechselt (z.B. durch die Kaufteil-/Baugruppen-Erstellung, die dabei über
+        mehrere App.newDocument()-Aufrufe läuft), fände activeDialog() fälschlich KEINEN offenen
+        Dialog, obwohl unser Panel tatsächlich noch (an einem anderen Dokument hängend) offen ist."""
         try:
-            if Gui.Control.activeDialog():
-                # Falls es UNSER eigenes Panel ist: dessen reject() zuerst selbst aufrufen (stoppt
-                # z.B. den STEP-Beobachtungs-Timer) - Gui.Control kennt in Python kein reject(),
-                # closeDialog() allein würde das Aufräumen sonst überspringen.
-                import TaskPanel
-                if TaskPanel._active_panel is not None:
-                    TaskPanel._active_panel.reject()
-                Gui.Control.closeDialog()
+            import TaskPanel
+            panel = TaskPanel._active_panel
+            if panel is not None:
+                # Erst reject() selbst aufrufen (stoppt z.B. den STEP-Beobachtungs-Timer) - Gui.Control
+                # kennt in Python kein reject(), closeDialog() allein würde das Aufräumen überspringen.
+                panel.reject()
+                Gui.Control.closeDialog(panel._attached_doc)
         except Exception as e:
             App.Console.PrintWarning(f"FCProject: Vorhandenes Task-Panel konnte nicht geschlossen werden: {str(e)}\n")
 

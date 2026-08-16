@@ -37,6 +37,21 @@ class FCProjectTaskPanel:
     }
 
     def __init__(self):
+        # Dokument, an das dieses Panel im Aufgabenbereich angehängt wird (Commands.py hängt es
+        # gleich danach per Gui.Control.showDialog() genau hier an). WICHTIG: alle
+        # Gui.Control.*Dialog()-Aufrufe unten geben dieses Dokument ab jetzt IMMER explizit mit -
+        # ohne Dokument-Argument löst Gui.Control es intern über das GERADE AKTIVE Dokument auf
+        # (FreeCAD-Kern: ControlSingleton::docOrDefault()), NICHT über das Dokument, an das der
+        # Dialog tatsächlich angehängt ist. Die Kaufteil-/Baugruppen-Erstellung (siehe
+        # PurchasedPartCreator.create()/EntityCreator._wrap_as_assembly) wechselt dabei über
+        # mehrere App.newDocument()/App.setActiveDocument()-Aufrufe unbemerkt das aktive Dokument -
+        # ein Gui.Control.closeDialog() ohne dieses Dokument würde danach am FALSCHEN (neuen)
+        # Dokument suchen und lautlos nichts finden (TaskView::removeDialog() vergleicht per
+        # Dokument-Zeiger exakt), statt unser Panel wirklich zu entfernen. Sichtbare Folge: das
+        # Panel blieb nach dem Erstellen eines Kaufteils beim nächsten Werkbench-Wechsel (z.B. in
+        # die Assembly-Werkbench für "Teil hinzufügen") weiterhin im Aufgabenbereich hängen.
+        self._attached_doc = Gui.ActiveDocument
+
         self.form = QtWidgets.QWidget()
         self.form.setWindowTitle("FCProject: PDM-Creator")
 
@@ -218,7 +233,7 @@ class FCProjectTaskPanel:
 
     def _on_close_clicked(self):
         self.reject()
-        Gui.Control.closeDialog()
+        Gui.Control.closeDialog(self._attached_doc)
 
     # --- Ab hier: unverändert gegenüber der freischwebenden Dialog-Version ---
 
@@ -408,7 +423,7 @@ class FCProjectTaskPanel:
             # FCProjectWorkbench.Deactivated() verlassen - der Slot muss schon vor
             # activateWorkbench() frei sein, sonst bleibt Std_SetMaterial weiter inaktiv).
             self.reject()
-            Gui.Control.closeDialog()
+            Gui.Control.closeDialog(self._attached_doc)
 
             Gui.activateWorkbench("MaterialWorkbench")
             Gui.runCommand('Std_SetMaterial', 0)
@@ -730,8 +745,14 @@ def _watch_material_selection():
     try:
         doc = App.getDocument(pending["doc_name"]) if pending["doc_name"] in App.listDocuments() else None
         dummy_obj = doc.getObject(pending["dummy_name"]) if doc else None
+        # Der Std_SetMaterial-Dialog hängt an GENAU diesem Dokument (es war beim Öffnen des
+        # Material-Dialogs das aktive) - explizit übergeben statt auf das implizit "gerade aktive"
+        # Dokument zu vertrauen (siehe Erklärung bei FCProjectTaskPanel._attached_doc oben), sonst
+        # würde activeDialog()/closeDialog() bei zwischenzeitlich gewechseltem aktivem Dokument am
+        # falschen Dokument vorbei ins Leere laufen.
+        gui_doc = Gui.getDocument(pending["doc_name"]) if doc is not None else None
 
-        dialog_open = bool(Gui.Control.activeDialog())
+        dialog_open = bool(Gui.Control.activeDialog(gui_doc))
         chosen_material = None
         if dummy_obj is not None and hasattr(dummy_obj, "ShapeMaterial") and dummy_obj.ShapeMaterial:
             mat_name = dummy_obj.ShapeMaterial.Name
@@ -743,7 +764,7 @@ def _watch_material_selection():
 
         _material_watch_timer.stop()
         if dialog_open:
-            Gui.Control.closeDialog()
+            Gui.Control.closeDialog(gui_doc)
         if doc is not None and dummy_obj is not None:
             doc.removeObject(dummy_obj.Name)
             doc.recompute()
@@ -757,7 +778,7 @@ def _watch_material_selection():
         new_panel = FCProjectTaskPanel()
         if new_panel.valid:
             new_panel._restore_state(state)
-            Gui.Control.showDialog(new_panel)
+            Gui.Control.showDialog(new_panel, new_panel._attached_doc)
     except Exception:
         if _material_watch_timer is not None:
             _material_watch_timer.stop()

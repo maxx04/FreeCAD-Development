@@ -103,7 +103,18 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         Methode der zuvor aktiven Werkbench wird ohne Argumente aufgerufen, bevor die neue aktiv
         wird). Schließt unser eigenes PDM-Creator-Panel automatisch, falls es gerade offen ist -
         außerhalb dieser Werkbench ist es nicht mehr sinnvoll nutzbar und blieb bisher dauerhaft
-        im Aufgabenbereich hängen, auch nach dem Wechsel in eine andere Werkbench."""
+        im Aufgabenbereich hängen, auch nach dem Wechsel in eine andere Werkbench.
+
+        WICHTIG: FreeCADGui.Control.closeDialog() OHNE Dokument-Argument schließt in Wirklichkeit
+        nur den Dialog des GERADE aktiven Dokuments (FreeCAD-Kern: ControlSingleton::docOrDefault()
+        fällt darauf zurück) - nicht zwingend das Dokument, an dem UNSER Panel tatsächlich hängt
+        (siehe FCProjectTaskPanel._attached_doc in TaskPanel.py). Nach dem Erstellen eines
+        Kaufteils/einer Baugruppe (PurchasedPartCreator.create()/EntityCreator - läuft über mehrere
+        App.newDocument()/App.setActiveDocument()-Aufrufe) zeigt das aktive Dokument oft schon auf
+        ein anderes Dokument als das, an dem das Panel angehängt ist - ein Aufruf ohne Dokument
+        würde dann lautlos ins Leere laufen und das Panel bliebe sichtbar im Aufgabenbereich hängen,
+        z.B. beim Wechsel in die Assembly-Werkbench für "Teil hinzufügen". Deshalb explizit
+        panel._attached_doc mitgeben statt uns auf das aktive Dokument zu verlassen."""
         try:
             import TaskPanel
             panel = TaskPanel._active_panel
@@ -112,7 +123,7 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
                 # activeDialog/activeTaskDialog/closeDialog) - eigenes Aufräumen deshalb selbst
                 # anstoßen, dann erst das Panel tatsächlich entfernen.
                 panel.reject()
-                FreeCADGui.Control.closeDialog()
+                FreeCADGui.Control.closeDialog(panel._attached_doc)
         except Exception as e:
             App.Console.PrintWarning(f"FCProject: Panel konnte beim Werkbench-Wechsel nicht geschlossen werden: {str(e)}\n")
 
