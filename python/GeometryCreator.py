@@ -1,6 +1,7 @@
 # Macro Version: 3.2.0 - FCProject: Spezialisierter GeometryCreator mit Assembly-Crash-Schutz
 import os
 import FreeCAD as App
+import Utils as Utils
 
 class GeometryCreator:
     """Zentrale PDM-Logik für das Erstellen von Geometrie-Skeletten (Typ G) / Referenzen."""
@@ -32,6 +33,10 @@ class GeometryCreator:
         
         # KORREKTUR: Es wird NUR noch die saubere, textfreie ID eingepflegt! [20:10]
         core_obj.ArticleID = pure_id
+
+        # 3b. Echtes LCS ergänzen (siehe CONSTRAINTS.md - Pattern/Joints brauchen eine verlässliche
+        # Referenz, der automatische App::Origin-Container zählt dafür bewusst nicht mehr).
+        Utils.add_local_coordinate_system(core_obj)
 
         # 4. Datei final auf der Festplatte sichern und berechnen
         new_doc.saveAs(file_path)

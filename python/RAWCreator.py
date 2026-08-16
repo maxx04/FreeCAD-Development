@@ -131,6 +131,10 @@ class RAWCreator:
         Utils._ensure_property(App, core_obj, "App::PropertyString", "ProfilTyp", "FCProject_PDM", "Verwendetes Vorlagenprofil", profile_template)
         Utils._ensure_property(App, core_obj, "App::PropertyFloat", "Preis", "FCProject_PDM", "Preis für das Halbzeug", price_val)
 
+        # Echtes LCS ergänzen (siehe CONSTRAINTS.md - Pattern/Joints brauchen eine verlässliche
+        # Referenz, der automatische App::Origin-Container zählt dafür bewusst nicht mehr).
+        Utils.add_local_coordinate_system(core_obj)
+
         # Datei final auf der Festplatte sichern
         new_doc.saveAs(file_path)
         new_doc.recompute()

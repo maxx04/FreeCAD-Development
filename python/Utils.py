@@ -7,6 +7,51 @@ def floatGerman(value, default=0.0):
     except (ValueError, TypeError):
         return default
 
+def add_local_coordinate_system(container, name="LCS"):
+    """Fügt dem übergebenen Container (App::Part/PartDesign::Body/Assembly::AssemblyObject) ein
+    ECHTES Part::LocalCoordinateSystem hinzu (Identity-Placement am lokalen Ursprung des
+    Containers, keine eigene Positionierung nötig) - siehe resources/docs/CONSTRAINTS.md: jedes
+    PDM-Objekt (P/A/R/G/B) soll ein echtes LCS besitzen. Der automatische App::Origin-Container ist
+    zwar technisch selbst auch ein App::LocalCoordinateSystem (App::Origin erbt in FreeCAD davon,
+    siehe App/Origin.h), zählt seit dem AssemblyPatternCreator-Fix aber bewusst NICHT mehr als
+    Pattern-/Joint-Referenz (siehe [[project_fcproject_assembly_pattern_origin_lcs_bug]]) - ohne
+    ein zusätzliches echtes LCS bekommt ein gepattertes Objekt sonst nur die Warnung "Keine
+    LCS-Referenz gefunden".
+
+    Part::LocalCoordinateSystem ist der Standard-Typ des Part-Werkbench-Befehls
+    "Part_CoordinateSystem" (Part/Gui/Command.cpp) - erbt von App::LocalCoordinateSystem und ist
+    laut PartDesign::Body::isAllowed() (Body.cpp) explizit auch in einen Body einfügbar, genau wie
+    in App::Part/Assembly::AssemblyObject (beide über GeoFeatureGroupExtension generell offen für
+    beliebige Kind-Objekte).
+
+    Scheitert rein defensiv (nur Konsolen-Warnung) - ein LCS-Problem soll nie die eigentliche
+    PDM-Erstellung blockieren."""
+    if container is None:
+        return None
+    try:
+        doc = container.Document
+        lcs = doc.addObject("Part::LocalCoordinateSystem", f"{container.Name}_LCS")
+        lcs.Label = name
+        if hasattr(container, "addObject"):
+            container.addObject(lcs)
+        # Sichtbarkeit bewusst AUS (Standard von Part::LocalCoordinateSystem ist ohnehin
+        # unsichtbar, siehe ViewProviderCoordinateSystem::ViewProviderCoordinateSystem() im
+        # FreeCAD-Kern - hier trotzdem explizit gesetzt statt sich nur auf den Kern-Default zu
+        # verlassen). Das LCS ist eine reine FCProject-interne Referenz für Pattern/Joints, kein
+        # Konstruktionselement, das im 3D-Fenster stören soll - wer's braucht, blendet es im Baum
+        # gezielt selbst ein.
+        try:
+            lcs.Visibility = False
+        except Exception:
+            pass
+        return lcs
+    except Exception as e:
+        App.Console.PrintWarning(
+            f"FCProject: Echtes LCS für '{getattr(container, 'Label', '?')}' konnte nicht angelegt werden: {str(e)}\n"
+        )
+        return None
+
+
 def _ensure_property(App, obj, prop_type, name, group, desc, default=None):
         try:
             if not hasattr(obj, name):

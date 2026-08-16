@@ -45,7 +45,12 @@ class AssemblyCreator:
         Utils._ensure_property(App, core_obj, "App::PropertyString", "ArticleID", "FCProject", "Eindeutige ID", pure_id)
         Utils._ensure_property(App, core_obj, "App::PropertyString", "Bezeichnung", "FCProject_PDM", "Logische Bauteilbenennung", bezeichnung_val)
         Utils._ensure_property(App, core_obj, "App::PropertyFloat", "Preis", "FCProject_PDM", "Preis für das Halbzeug", price_val)
- 
+
+        # 4b. Echtes LCS ergänzen (siehe CONSTRAINTS.md - Baugruppen haben zwar keine eigene
+        # Geometrie, sollen aber trotzdem patternbar sein; der automatische App::Origin-Container
+        # zählt dafür bewusst nicht mehr als Referenz).
+        Utils.add_local_coordinate_system(core_obj)
+
         # 5. Datei final auf der Festplatte sichern und berechnen
         try:
             dirpath = os.path.dirname(file_path)

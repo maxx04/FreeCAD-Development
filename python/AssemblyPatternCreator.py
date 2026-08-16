@@ -437,7 +437,16 @@ class AssemblyPatternCreator:
         return chosen
 
     def _get_sub_name_for_child(self, child, root):
-        """Ermittelt den Subnamen eines verschachtelten Objekts relativ zur Wurzel."""
+        """Ermittelt den Subnamen eines (ggf. verschachtelten) Objekts relativ zur Wurzel.
+
+        WICHTIG: `child.Parents` liefert pro Eintrag (parent_obj, path) bereits den
+        VOLLSTÄNDIGEN Pfad INKLUSIVE child.Name selbst (mit Punkt am Ende) - z.B.
+        "FuerungsBaugruppe330.FuerungsBaugruppe330_LCS." für ein LCS zwei Ebenen unter
+        `parent_obj`. Das gilt nachweislich (per FreeCADCmd verifiziert) auch im flachen,
+        NICHT verschachtelten Fall (direktes Kind -> path="ChildName."). child.Name hier
+        NICHT nochmal anhängen, sonst entsteht ein duplizierter, nicht auflösbarer Pfad wie
+        "...LCS.LCS" bzw. "...Origin.Origin" (siehe
+        [[project_fcproject_assembly_pattern_origin_lcs_bug]])."""
         if child is None or root is None:
             return None
 
@@ -450,9 +459,7 @@ class AssemblyPatternCreator:
                     continue
                 parent_obj, path = sel[0], sel[1]
                 if parent_obj == root or parent_obj.Name == root.Name:
-                    if path.endswith('.'):
-                        return f"{path}{child.Name}"
-                    return f"{path}.{child.Name}"
+                    return path[:-1] if path.endswith('.') else path
 
         return child.Name
 
@@ -475,7 +482,7 @@ class AssemblyPatternCreator:
         for child in candidates:
             if child is None:
                 App.Console.PrintUserError(f"FCProject: Keine Kinder für element '{element.Label}' gefunden.\n")
-            if getattr(child, 'TypeId', '') == 'App::LocalCoordinateSystem' or child.isDerivedFrom('App::LocalCoordinateSystem'):
+            if self._is_real_lcs(child):
                 sub_name = self._get_sub_name_for_child(child, element)
                 if sub_name:
                     names.append(sub_name)
@@ -485,6 +492,24 @@ class AssemblyPatternCreator:
                     names.append(sub_name)
 
         return names
+
+    @staticmethod
+    def _is_real_lcs(child):
+        """True nur für ein ECHTES, vom Nutzer angelegtes Local Coordinate System - NICHT für den
+        automatischen Origin-Container jedes App::Part/Body. App::Origin erbt in FreeCAD selbst
+        von App::LocalCoordinateSystem (siehe App/Origin.h), ein reines
+        `isDerivedFrom('App::LocalCoordinateSystem')` erwischt also fälschlich JEDEN Origin-
+        Container als "LCS-Referenz". Ein Origin-Objekt ist aber (a) meist nicht direktes Kind des
+        hier als `root`/`element` übergebenen, oft verschachtelten Pattern-Elements - wodurch
+        _get_sub_name_for_child() über child.Parents keinen Pfad findet und nur den blanken Namen
+        "Origin" zurückgibt - und (b) selbst kein wählbares Sub-Element, wodurch FreeCAD beim
+        späteren Joint-Aufbau vergeblich nach einem Sub-Objekt "...Origin.Origin" sucht (Konsolen-
+        Warnung "Selection.cpp: Sub-object ... not found") - siehe
+        [[project_fcproject_assembly_pattern_origin_lcs_bug]]."""
+        return (
+            child.isDerivedFrom('App::LocalCoordinateSystem')
+            and not child.isDerivedFrom('App::Origin')
+        )
 
     # def _select_lcs_name(self, names, direction=None):
     #     """Wählt eine LCS-Referenz entsprechend der Pattern-Richtung aus."""
@@ -520,7 +545,7 @@ class AssemblyPatternCreator:
             if child is None:
                 continue
 
-            if getattr(child, 'TypeId', '') == 'App::LocalCoordinateSystem' or child.isDerivedFrom('App::LocalCoordinateSystem'):
+            if self._is_real_lcs(child):
                 return self._get_sub_name_for_child(child, element)
 
             if child.isDerivedFrom('App::DatumElement'):

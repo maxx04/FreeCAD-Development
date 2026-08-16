@@ -127,27 +127,45 @@ def _get_assembly_joint_modules():
 
 
 def _sub_name_for_child(child, root):
-    """Ermittelt den Subnamen-Pfad von `child` relativ zu `root` (über Parents)."""
+    """Ermittelt den Subnamen-Pfad von `child` relativ zu `root` (über Parents).
+
+    WICHTIG: `child.Parents` liefert pro Eintrag (parent_obj, path) bereits den VOLLSTÄNDIGEN
+    Pfad INKLUSIVE child.Name selbst (mit Punkt am Ende) - per FreeCADCmd verifiziert, gilt auch
+    im flachen, nicht verschachtelten Fall. child.Name NICHT nochmal anhängen, sonst entsteht ein
+    duplizierter, nicht auflösbarer Pfad wie "...LCS.LCS" (siehe
+    [[project_fcproject_assembly_pattern_origin_lcs_bug]])."""
     if child is None or root is None or child == root:
         return None
     try:
         for parent_obj, path in (child.Parents or []):
             if parent_obj == root or parent_obj.Name == root.Name:
-                return f"{path}{child.Name}" if path.endswith('.') else f"{path}.{child.Name}"
+                return path[:-1] if path.endswith('.') else path
     except Exception:
         pass
     return child.Name
 
 
+def _is_real_lcs(child):
+    """True nur für ein ECHTES, vom Nutzer/Creator angelegtes Local Coordinate System - NICHT für
+    den automatischen Origin-Container jedes App::Part/Body. App::Origin erbt in FreeCAD selbst von
+    App::LocalCoordinateSystem (siehe App/Origin.h), ein reines
+    `isDerivedFrom('App::LocalCoordinateSystem')` erwischt also fälschlich JEDEN Origin-Container
+    als "LCS-Referenz" - führt zu bedeutungslosen Referenzen wie "Origin.Origin" und in der Folge
+    zu vom Assembly-Solver als "detached" markierten Teilen. Identische Logik wie
+    AssemblyPatternCreator._is_real_lcs() - siehe
+    [[project_fcproject_assembly_pattern_origin_lcs_bug]]."""
+    return child is not None and child.isDerivedFrom('App::LocalCoordinateSystem') and not child.isDerivedFrom('App::Origin')
+
+
 def _first_lcs_subname(element):
-    """Sucht das erste lokale Koordinatensystem (LCS) im tatsächlichen Teil-Objekt
+    """Sucht das erste ECHTE lokale Koordinatensystem (LCS) im tatsächlichen Teil-Objekt
     und gibt dessen Subnamen-Pfad zurück.
 
     Bei App::Link-Ketten (z.B. Pattern-Kopie → Quell-Link → eigentliches Teil) wird
     die gesamte LinkedObject-Kette durchlaufen, bis das eigentliche Teil erreicht ist.
     App::Link ist für Subnamen transparent: der Subname relativ zum letzten Glied der
     Kette funktioniert genauso beim Zugriff über die Kopie.
-    None, falls kein LCS gefunden wird.
+    None, falls kein echtes LCS gefunden wird.
     """
     if element is None:
         return None
@@ -168,7 +186,7 @@ def _first_lcs_subname(element):
         return None
 
     for child in children:
-        if child is not None and child.isDerivedFrom('App::LocalCoordinateSystem'):
+        if _is_real_lcs(child):
             return _sub_name_for_child(child, root)
     return None
 

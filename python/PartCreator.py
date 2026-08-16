@@ -82,6 +82,10 @@ class PartCreator:
         Utils._ensure_property(App, core_obj, "App::PropertyString", "Bezeichnung", "FCProject_PDM", "Logische Bauteilbenennung", bezeichnung_val)
         Utils._ensure_property(App, core_obj, "App::PropertyFloat", "Preis", "FCProject_PDM", "Preis für das Halbzeug", price_val)
 
+        # 5b. Echtes LCS ergänzen (siehe CONSTRAINTS.md - Pattern/Joints brauchen eine verlässliche
+        # Referenz, der automatische App::Origin-Container zählt dafür bewusst nicht mehr).
+        Utils.add_local_coordinate_system(core_obj)
+
         # 6. Sichern und Berechnen
         new_doc.saveAs(file_path)
         new_doc.recompute()

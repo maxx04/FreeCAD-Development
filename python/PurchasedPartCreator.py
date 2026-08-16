@@ -233,5 +233,11 @@ class PurchasedPartCreator:
         Utils._ensure_property(App, core_obj, "App::PropertyString", "Bestellnummer", "FCProject_PDM", "Bestellnummer", bestell_val)
         Utils._ensure_property(App, core_obj, "App::PropertyFloat", "Preis", "FCProject_PDM", "Preis für das Halbzeug", price_val)
 
+        # Echtes LCS ergänzen (siehe CONSTRAINTS.md - Pattern/Joints brauchen eine verlässliche
+        # Referenz, der automatische App::Origin-Container zählt dafür bewusst nicht mehr). Deckt
+        # hier alle drei Geometrie-Wege ab (Einzel-Solid/Multi-Solid/leer), da core_obj an dieser
+        # Stelle in jedem Fall schon final feststeht.
+        Utils.add_local_coordinate_system(core_obj)
+
         new_doc.saveAs(file_path)
         new_doc.recompute()
