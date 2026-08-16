@@ -20,6 +20,16 @@ _active_panel = None
 _pending_material_state = None
 _material_watch_timer = None
 
+# Wird während EntityCreator.create_pdm_document() (siehe FCProjectTaskPanel._finalize_creation)
+# auf True gesetzt: die Kaufteil-/STEP-Baugruppen-Erstellung wechselt dabei bewusst mehrfach über
+# App.newDocument()/App.setActiveDocument() das aktive Dokument (siehe
+# [[project_fcproject_kaufteil_step_workflow]]) - close_panel_on_foreign_document() (unten, von
+# DocObserver.slotActivateDocument() bei JEDEM Dokument-Wechsel aufgerufen) darf das NICHT als
+# "Nutzer hat das Dokument gewechselt" werten und das Panel deshalb mitten in der Erstellung
+# schließen, sonst bricht das gewollte Verhalten "mehrere Komponenten nacheinander erstellen, ohne
+# das Panel neu zu öffnen" komplett.
+_suppress_auto_close_on_doc_switch = False
+
 class FCProjectTaskPanel:
     """FreeCAD-Task-Panel-Controller (kein QDialog mehr) - wird über Gui.Control.showDialog()
     im Aufgabenbereich (Combo View) angezeigt. self.form ist das eigentliche Inhalts-Widget;
@@ -232,8 +242,26 @@ class FCProjectTaskPanel:
         return True
 
     def _on_close_clicked(self):
+        """Wird der Klick vom sichtbaren Schließen-Button ausgelöst, zeigt der Aufgabenbereich per
+        Definition GENAU dieses Panel für das GERADE aktive Dokument (TaskView::slotActiveDocument
+        im FreeCAD-Kern blendet ein Panel nur ein, wenn dessen angehängtes Dokument == aktives
+        Dokument ist) - Gui.ActiveDocument stimmt hier also immer mit self._attached_doc überein.
+        Trotzdem zur Sicherheit BEIDES versuchen: zuerst ohne Dokument-Argument (deckt sich mit
+        obiger Garantie, unabhängig von einer eventuell veralteten self._attached_doc-Referenz),
+        als Fallback zusätzlich explizit self._attached_doc - und alles in try/except, damit ein
+        einzelner fehlschlagender Aufruf den Button nicht wortlos wirkungslos macht (kein
+        try/except hier hätte eine Python-Exception in diesem Qt-Slot sonst nur lautlos im Report
+        View versenkt, ohne dass der Button sichtbar reagiert)."""
         self.reject()
-        Gui.Control.closeDialog(self._attached_doc)
+        try:
+            Gui.Control.closeDialog()
+        except Exception as e:
+            App.Console.PrintWarning(f"FCProject: Schließen-Button konnte Panel nicht schließen: {str(e)}\n")
+        try:
+            if Gui.Control.activeDialog(self._attached_doc):
+                Gui.Control.closeDialog(self._attached_doc)
+        except Exception as e:
+            App.Console.PrintWarning(f"FCProject: Panel am ursprünglichen Dokument konnte nicht geschlossen werden: {str(e)}\n")
 
     # --- Ab hier: unverändert gegenüber der freischwebenden Dialog-Version ---
 
@@ -666,7 +694,9 @@ class FCProjectTaskPanel:
 
     def _finalize_creation(self, comp_type, comp_num, payload_properties):
         """Letzter Schritt: PDM-Komponente inkl. CAD-Datei tatsächlich erstellen und Feedback geben."""
+        global _suppress_auto_close_on_doc_switch
         try:
+            _suppress_auto_close_on_doc_switch = True  # siehe Erklärung an der Definition oben
             creator = EntityCreator(self.proj_name, self.proj_dir)
             generated_name = creator.create_pdm_document(comp_type, comp_num, payload_properties)
             self._fit_and_isometric_view(generated_name)
@@ -678,6 +708,8 @@ class FCProjectTaskPanel:
             self._reset_source_selection()
         except Exception as e:
             QtWidgets.QMessageBox.critical(self.form, "FCProject", f"Fehler: {str(e)}")
+        finally:
+            _suppress_auto_close_on_doc_switch = False
 
     @staticmethod
     def _fit_and_isometric_view(doc_name):
@@ -708,6 +740,41 @@ class FCProjectTaskPanel:
         self.profile_path_display.clear()
         self.step_object_display.clear()
         self._step_source_refs = []
+
+
+def close_panel_on_foreign_document(doc):
+    """Wird von DocObserver.FCProjectDocObserver.slotActivateDocument() bei JEDEM Dokument-Wechsel
+    aufgerufen - auch einem reinen Dokument-Tab-Wechsel OHNE Werkbench-Wechsel. Der bestehende
+    FCProjectWorkbench.Deactivated()-Hook (InitGui.py) schließt unser Panel nur beim Wechsel der
+    WERKBENCH; wechselt man dagegen bloß das aktive Dokument (z.B. von einem frisch erstellten
+    Kaufteil zurück in die Gesamtbaugruppe, um dort "Teil hinzufügen" zu nutzen), bleibt das Panel
+    an seinem ursprünglichen Dokument technisch weiter offen (siehe TaskView::slotActiveDocument im
+    FreeCAD-Kern: pro Dokument wird der EIGENE offene Dialog wieder eingeblendet, sobald man zu
+    diesem Dokument zurückkehrt) - und blockiert dort ggf. sogar andere Befehle, die wie
+    Assembly_InsertLink ("Teil hinzufügen") ihr eigenes IsActive() an
+    "kein offener Task-Dialog" koppeln (siehe [[project_fcproject_kaufteil_step_workflow]]).
+
+    Schließt das Panel deshalb zusätzlich proaktiv, sobald das neu aktive Dokument NICHT das ist,
+    an dem das Panel hängt - außer während unserer eigenen Kaufteil-/Baugruppen-Erstellung
+    (_suppress_auto_close_on_doc_switch), die bewusst mehrfach das aktive Dokument wechselt, ohne
+    dass der Nutzer das Panel deshalb schon "verlassen" hätte."""
+    if _suppress_auto_close_on_doc_switch:
+        return
+    panel = _active_panel
+    if panel is None or panel._attached_doc is None:
+        return
+    try:
+        attached_app_doc = panel._attached_doc.Document
+    except Exception:
+        attached_app_doc = None
+    if attached_app_doc is None or doc is None or doc.Name == attached_app_doc.Name:
+        return  # kein fremdes Dokument - Panel bleibt sinnvoll sichtbar
+
+    panel.reject()
+    try:
+        Gui.Control.closeDialog(panel._attached_doc)
+    except Exception as e:
+        App.Console.PrintWarning(f"FCProject: Panel beim Dokument-Wechsel nicht schließbar: {str(e)}\n")
 
 
 def _cleanup_stray_dummy_bodies(doc):

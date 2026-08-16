@@ -24,6 +24,18 @@ class FCProjectDocObserver:
         # landet dadurch direkt im gerade laufenden Speichervorgang, statt erst beim nächsten.
         _repair_stuck_selectable(doc)
 
+    def slotActivateDocument(self, doc):
+        # Schließt das PDM-Creator-Panel zusätzlich zum Werkbench-Wechsel-Hook (InitGui.py
+        # Deactivated()) auch bei einem reinen Dokument-Wechsel OHNE Werkbench-Wechsel - z.B. beim
+        # Zurückspringen von einem frisch erstellten Kaufteil in die Gesamtbaugruppe, um dort
+        # "Teil hinzufügen" zu nutzen. Siehe TaskPanel.close_panel_on_foreign_document() für die
+        # Details (inkl. Ausnahme während unserer eigenen Kaufteil-Erstellung).
+        try:
+            import TaskPanel
+            TaskPanel.close_panel_on_foreign_document(doc)
+        except Exception as e:
+            App.Console.PrintWarning(f"FCProject DocObserver: Panel-Check beim Dokument-Wechsel fehlgeschlagen: {str(e)}\n")
+
 
 def _repair_stuck_selectable(doc):
     """Repariert vor jedem Speichern automatisch hängengebliebenes Selectable=False (bekannter
