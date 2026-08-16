@@ -220,12 +220,50 @@ Nach einem frischen Checkout/Build von FreeCAD:
 
 ```bash
 cd /home/maxx/freecad/freecad-source
-git apply /home/maxx/Documents/FreeCAD-Development/FCProject/patches/freecad-assembly-jointobject.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-jointobject.patch
 cp src/Mod/Assembly/JointObject.py /home/maxx/freecad/install/Mod/Assembly/JointObject.py
 ```
 
 (Reines Python, kein Rebuild von FreeCADGui nötig - Kopieren in `install/`
 reicht für sofortige Wirkung.)
+
+## freecad-assembly-link-delete-hang.patch
+
+Betrifft `src/Mod/Assembly/App/AssemblyLink.{cpp,h}`. FreeCAD hängt sich
+(100% CPU auf dem Hauptthread, keine weitere Report-View-Ausgabe) beim
+Löschen eines Bauteils auf, das Teil einer mehrfach verlinkten
+Unterbaugruppe ist (`Assembly::AssemblyLink`) - reproduziert 2026-08-16
+("loeschfehler"-Bugreport, siehe unten).
+
+Ursache: `AssemblyLink::synchronizeComponents()` legt fehlende Spiegel-
+Objekte über `doc->addObject(...)` an, was synchron `onChanged(&Group)` ->
+`updateContents()` auf sich selbst UND (über `getInList()`) auf jede
+andere `AssemblyLink`-Instanz auslöst, die auf diese verweist - die
+Kaskade kann also zwischen mehreren Instanzen hin- und herspringen, nicht
+nur in sich selbst rekursieren. Wird eine Komponente der Quell-Baugruppe
+gerade gelöscht, während eine `AssemblyLink`-Instanz sie noch spiegelt,
+findet `synchronizeComponents()` nie ein stabiles Match und legt bei
+jedem Wiedereintritt einen neuen Spiegel-Versuch an - endlos.
+
+Fix: `static bool updatingContents`-Wiedereintritts-Sperre (geteilt über
+alle Instanzen, siehe Kommentar im Header) um `updateContents()`.
+Verschachtelte Aufrufe werden zum No-Op; der äußerste Aufruf läuft normal
+durch, ein eventuell übersprungener Sync holt sich der nächste reguläre
+`execute()`/Recompute nach.
+
+Vollständiger Stacktrace + Analyse: `patches/bugreport-loeschfehler/README.md`.
+
+### Anwenden
+
+```bash
+cd /home/maxx/freecad/freecad-source
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-link-delete-hang.patch
+cmake --build build --target Assembly -- -j$(nproc)
+cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.so
+```
+
+(C++, betrifft `AssemblyApp.so` - Rebuild des `Assembly`-Targets nötig,
+reines Kopieren wie bei den Python-Patches reicht hier nicht.)
 
 ## freecad-cmake-disable-tests.patch
 
@@ -257,9 +295,12 @@ beim Umstieg von 1.2.0dev auf 26.3.0dev auf (neuer Code in `getPropUses`/
 
 ```bash
 cd /home/maxx/freecad/freecad-source
-git apply /home/maxx/Documents/FreeCAD-Development/FCProject/patches/freecad-assembly-jointobject.patch
-git apply /home/maxx/Documents/FreeCAD-Development/FCProject/patches/freecad-cmake-disable-tests.patch
-git apply /home/maxx/Documents/FreeCAD-Development/FCProject/patches/freecad-navigation-qbytearray-fix.patch
-git apply /home/maxx/Documents/FreeCAD-Development/FCProject/patches/freecad-propertyeditor-qstring-fix.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-jointobject.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-link-delete-hang.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-cmake-disable-tests.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-navigation-qbytearray-fix.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-propertyeditor-qstring-fix.patch
 cp src/Mod/Assembly/JointObject.py /home/maxx/freecad/install/Mod/Assembly/JointObject.py
+cmake --build build --target Assembly -- -j$(nproc)
+cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.so
 ```

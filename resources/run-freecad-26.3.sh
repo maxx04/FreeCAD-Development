@@ -4,7 +4,24 @@
 
 # Gleiches venv-Setup wie in ~/.bashrc, damit FreeCAD
 # exakt dieselbe Umgebung sieht wie ein Terminal mit aktiviertem venv.
-source /home/maxx/Documents/FreeCAD-Development/.venv/bin/activate
+# Pfad relativ zum Skript-Ort ermittelt (FCProject/resources/../../.venv),
+# damit ein Verschieben von FreeCAD-Development/ (wie z.B. Dokuments -> Dokumente)
+# dieses Skript nicht erneut bricht. Funktioniert so nur, wenn das Skript aus
+# dem Repo heraus läuft - die per CMake nach ~/freecad/ installierte Kopie
+# (Ziel des Desktop-Starters) liegt in einem eigenen, unabhängigen Verzeichnis-
+# baum, daher der absolute Fallback als zweite Instanz. VIRTUAL_ENV wird nach
+# dem source in jedem Fall überschrieben, weil im venv selbst (bin/activate)
+# noch der absolute Erstellungspfad einprogrammiert ist, der sich beim
+# Verschieben nicht automatisch mitändert.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FALLBACK_VENV_DIR="/home/maxx/Dokumente/FreeCAD-Development/.venv"
+if VENV_DIR="$(cd "${SCRIPT_DIR}/../../.venv" 2>/dev/null && pwd)"; then
+    :
+else
+    VENV_DIR="${FALLBACK_VENV_DIR}"
+fi
+source "${VENV_DIR}/bin/activate"
+export VIRTUAL_ENV="${VENV_DIR}"
 
 PYSIDE_QT="${VIRTUAL_ENV}/lib/python3.12/site-packages/PySide6/Qt"
 

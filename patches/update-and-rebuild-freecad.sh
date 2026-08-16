@@ -92,9 +92,12 @@ ENV_PATCHED_FILES=(
 # werden ERST nach einem gruenen Vanilla-Build wieder aufgelegt.
 FEATURE_PATCHES=(
   "freecad-assembly-jointobject.patch"
+  "freecad-assembly-link-delete-hang.patch"
 )
 FEATURE_PATCHED_FILES=(
   "src/Mod/Assembly/JointObject.py"
+  "src/Mod/Assembly/App/AssemblyLink.cpp"
+  "src/Mod/Assembly/App/AssemblyLink.h"
 )
 
 DRY_RUN=0

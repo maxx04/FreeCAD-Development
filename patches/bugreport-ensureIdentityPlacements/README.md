@@ -201,7 +201,7 @@ venv). Skripte, die Joints/`Gui`/`TaskAssemblyCreateJoint` brauchen, laufen mit 
 `FreeCAD`-Binary + Offscreen-Qt:
 
 ```bash
-source /home/maxx/Documents/FreeCAD-Development/.venv/bin/activate
+source /home/maxx/Dokumente/FreeCAD-Development/.venv/bin/activate
 PYSIDE_QT="${VIRTUAL_ENV}/lib/python3.12/site-packages/PySide6/Qt"
 export QT_PLUGIN_PATH="${PYSIDE_QT}/plugins"
 export LD_LIBRARY_PATH="${PYSIDE_QT}/lib:/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

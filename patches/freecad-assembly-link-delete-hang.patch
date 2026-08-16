@@ -1,0 +1,58 @@
+diff --git a/src/Mod/Assembly/App/AssemblyLink.cpp b/src/Mod/Assembly/App/AssemblyLink.cpp
+index d2dface315..9161e474d2 100644
+--- a/src/Mod/Assembly/App/AssemblyLink.cpp
++++ b/src/Mod/Assembly/App/AssemblyLink.cpp
+@@ -57,6 +57,8 @@ using namespace Assembly;
+ 
+ PROPERTY_SOURCE(Assembly::AssemblyLink, App::Part)
+ 
++bool AssemblyLink::updatingContents = false;
++
+ AssemblyLink::AssemblyLink()
+ {
+     ADD_PROPERTY_TYPE(
+@@ -315,6 +317,13 @@ void AssemblyLink::updateParentJoints()
+ 
+ void AssemblyLink::updateContents()
+ {
++    // See the `updatingContents` declaration in the header for why this guard is needed and
++    // why it has to be shared across all AssemblyLink instances rather than per-instance.
++    if (updatingContents) {
++        return;
++    }
++    Base::StateLocker guard(updatingContents, true);
++
+     synchronizeComponents();
+ 
+     if (isRigid()) {
+diff --git a/src/Mod/Assembly/App/AssemblyLink.h b/src/Mod/Assembly/App/AssemblyLink.h
+index 700b1821d9..f1a071073c 100644
+--- a/src/Mod/Assembly/App/AssemblyLink.h
++++ b/src/Mod/Assembly/App/AssemblyLink.h
+@@ -98,6 +98,26 @@ protected:
+     /// get called by the container whenever a property has been changed
+     void onChanged(const App::Property* prop) override;
+     void onDocumentRestored() override;
++
++private:
++    // Reentrancy guard for updateContents(). synchronizeComponents() adds/removes objects in
++    // this AssemblyLink's own Group, which synchronously re-enters onChanged(&Group) ->
++    // updateContents(). That re-entry is not limited to the same instance: onChanged(&Group)
++    // walks getInList() and calls updateContents() on *every* AssemblyLink that references this
++    // one, which can in turn reference the first one back, i.e. the cascade can ping-pong across
++    // several distinct AssemblyLink instances rather than just recursing into itself. A
++    // per-instance flag only stops the single-instance case, so this needs to be shared by all
++    // instances. Normally the cascade settles after one or two passes because everything is
++    // already in sync. But if a component of the *source* assembly is being deleted while some
++    // AssemblyLink still mirrors it (e.g. the same sub-assembly is linked more than once - see
++    // FCProject bugreport "loeschfehler"), synchronizeComponents() can never find a stable match
++    // for the vanishing source object and keeps recreating a mirror for it on every re-entry,
++    // which never terminates (FreeCAD hangs, 100% CPU on the main thread, no further Report View
++    // output). This flag makes any nested re-entry - same instance or not - a no-op; the
++    // outermost call still runs synchronizeComponents()/synchronizeJoints() to completion, and
++    // any sync that a nested call would have performed happens on the next legitimate
++    // execute()/recompute instead.
++    static bool updatingContents;
+ };
+ 
+ 
