@@ -214,7 +214,7 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
    verifiziert plus Vorher/Nachher-Vergleich der echten Projektdatei) - bitte
    beim nächsten Bearbeiten eines Joints gegenprüfen.
 
-10. **Redundant-Constraint-Warnung nennt keinen eindeutigen Namen**
+10. **Redundant-Constraint-Warnung nennt keinen eindeutigen/auffindbaren Namen**
     (2026-08-17, `AssemblyObject::isMbDJointValid()`): beim Ziehen eines Teils
     bündelt der Solver fest verbundene Teile; ist ein Joint dabei
     selbstreferenzierend (beide Enden landen im selben MbD-Teil), wird er
@@ -226,11 +226,21 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
     C++-Seite statt in `JointObject.py`: FreeCADs Standard-Label ist für
     JEDEN gleichartigen Joint identisch (z.B. "Parallel" für jeden
     Parallel-Joint), bei mehreren betroffenen Joints in derselben Baugruppe
-    war so nicht erkennbar, welcher gemeint ist. Fix: `getFullName()` statt
-    `getFullLabel()` (`Dokument#Name`, z.B. `...#Joint013` - immer eindeutig,
-    direkt per `getObject()` wiederfindbar). Einzige Codeänderung in diesem
-    Patch, die `AssemblyObject.cpp` statt `JointObject.py` betrifft - braucht
-    deshalb (anders als Fix 1-9) einen Rebuild des `Assembly`-Targets, siehe
+    war so nicht erkennbar, welcher gemeint ist. Erster Versuch:
+    `getFullName()` (`Dokument#Name`, z.B. `...#Joint005`) - zwar eindeutig,
+    aber bei verschachtelten Baugruppen (PDM-Standardfall: jede
+    Unterbaugruppe hat ihre EIGENE, lokal bei 0 beginnende Joint-
+    Nummerierung) trotzdem nicht auffindbar, ohne jede Unterbaugruppe
+    einzeln nach dem passenden Namen zu durchsuchen - `Joint005` allein
+    verrät nicht, dass er z.B. in `Halterbaugruppe` sitzt statt im
+    Top-Level der Baugruppe. Endgültiger Fix: neue freie Funktion
+    `getJointContextName()` (Äquivalent zu `getContext()` aus Fix 8, aber in
+    C++) baut den vollen Pfad über die Eltern-Kette (`InList`, jeweils
+    erster Eintrag) auf, z.B. `Projekt.FCStd#Halterbaugruppe.Joint005` -
+    zeigt direkt, in welcher (ggf. mehrfach verschachtelten) Unterbaugruppe
+    der Joint sitzt. Einzige Codeänderung in diesem Patch, die
+    `AssemblyObject.cpp` statt `JointObject.py` betrifft - braucht deshalb
+    (anders als Fix 1-9) einen Rebuild des `Assembly`-Targets, siehe
     "Anwenden" unten.
 
 ### Anwenden

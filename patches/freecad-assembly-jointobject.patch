@@ -225,22 +225,68 @@ index 79752c46d5..5af8ad8b23 100644
          self.refs.clear()
          self.updateJoint()
 diff --git a/src/Mod/Assembly/App/AssemblyObject.cpp b/src/Mod/Assembly/App/AssemblyObject.cpp
-index af06d35628..4c2d364c6e 100644
+index af06d35628..e9d23f8220 100644
 --- a/src/Mod/Assembly/App/AssemblyObject.cpp
 +++ b/src/Mod/Assembly/App/AssemblyObject.cpp
-@@ -1850,10 +1850,14 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
+@@ -1837,6 +1837,42 @@ int AssemblyObject::slidingPartIndex(App::DocumentObject* joint)
+     return slidingFound;
+ }
+ 
++namespace
++{
++// FCPROJECT-PATCH (10, nachgebessert): Aequivalent zu JointObject.py's getContext() - baut den
++// vollen Pfad ueber die Eltern-Kette (InList, jeweils erster Eintrag) auf, z.B.
++// "Halterbaugruppe.Joint005" statt nur "Joint005". Ein blosser Name reicht bei verschachtelten
++// Baugruppen (PDM-Standardfall: jede Unterbaugruppe hat ihre EIGENE, lokal bei 0 beginnende
++// Joint-Nummerierung) nicht aus, um den Joint ohne Suchen im Baum wiederzufinden - man muss
++// wissen, in welcher Unterbaugruppe er sitzt. maxDepth als simple Zyklen-Bremse statt eines
++// zusaetzlichen std::set-Includes.
++std::string getJointContextName(App::DocumentObject* obj)
++{
++    std::vector<std::string> parts;
++    App::DocumentObject* current = obj;
++    int maxDepth = 32;
++    while (current && maxDepth-- > 0) {
++        const char* name = current->getNameInDocument();
++        parts.insert(parts.begin(), name ? name : "?");
++        const auto& inList = current->getInList();
++        current = inList.empty() ? nullptr : inList.front();
++    }
++
++    std::string result;
++    for (size_t i = 0; i < parts.size(); ++i) {
++        if (i > 0) {
++            result += ".";
++        }
++        result += parts[i];
++    }
++
++    if (obj && obj->getDocument()) {
++        return std::string(obj->getDocument()->Label.getStrValue()) + "#" + result;
++    }
++    return result;
++}
++}  // namespace
++
+ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
+ {
+     // When dragging a part, we are bundling fixed parts together.
+@@ -1850,10 +1886,17 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
  
      // If this joint is self-referential it must be ignored.
      if (getMbDPart(part1) == getMbDPart(part2)) {
-+        // FCPROJECT-PATCH (10): getFullName() statt getFullLabel() - Label ist fuer JEDEN
-+        // gleichartigen Joint identisch (z.B. "Parallel" fuer jeden Parallel-Joint), Name ist
-+        // immer eindeutig und per getObject() direkt wiederfindbar. Gleiches Muster wie Fix 8
-+        // (getContext() in JointObject.py).
++        // FCPROJECT-PATCH (10): getJointContextName() statt getFullLabel() - Label ist fuer JEDEN
++        // gleichartigen Joint identisch (z.B. "Parallel" fuer jeden Parallel-Joint), der blosse
++        // Name allein (z.B. "Joint005") ist zwar eindeutig, verraet aber nicht, in welcher (ggf.
++        // verschachtelten) Unterbaugruppe der Joint sitzt - jede Unterbaugruppe hat ihre eigene,
++        // lokal bei 0 beginnende Joint-Nummerierung. getJointContextName() liefert deshalb den
++        // vollen Pfad ueber die Eltern-Kette, z.B. "Halterbaugruppe.Joint005". Gleiches Muster
++        // wie Fix 8 (getContext() in JointObject.py).
          Base::Console().warning(
              "Assembly: Ignoring joint (%s) because its parts are connected by a fixed "
              "joint bundle. This joint is a conflicting or redundant constraint.\n",
 -            joint->getFullLabel()
-+            joint->getFullName()
++            getJointContextName(joint)
          );
          return false;
      }
