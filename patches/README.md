@@ -214,6 +214,25 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
    verifiziert plus Vorher/Nachher-Vergleich der echten Projektdatei) - bitte
    beim nächsten Bearbeiten eines Joints gegenprüfen.
 
+10. **Redundant-Constraint-Warnung nennt keinen eindeutigen Namen**
+    (2026-08-17, `AssemblyObject::isMbDJointValid()`): beim Ziehen eines Teils
+    bündelt der Solver fest verbundene Teile; ist ein Joint dabei
+    selbstreferenzierend (beide Enden landen im selben MbD-Teil), wird er
+    ignoriert und über die Konsole protokolliert, z.B.
+    `Assembly: Ignoring joint (Projekt.FCStd#Parallel) because its parts are
+    connected by a fixed joint bundle. This joint is a conflicting or
+    redundant constraint.` Die Meldung baute sich bisher aus `getFullLabel()`
+    (`Dokument#Label`) - genau dasselbe Problem wie Fix 8, nur in der
+    C++-Seite statt in `JointObject.py`: FreeCADs Standard-Label ist für
+    JEDEN gleichartigen Joint identisch (z.B. "Parallel" für jeden
+    Parallel-Joint), bei mehreren betroffenen Joints in derselben Baugruppe
+    war so nicht erkennbar, welcher gemeint ist. Fix: `getFullName()` statt
+    `getFullLabel()` (`Dokument#Name`, z.B. `...#Joint013` - immer eindeutig,
+    direkt per `getObject()` wiederfindbar). Einzige Codeänderung in diesem
+    Patch, die `AssemblyObject.cpp` statt `JointObject.py` betrifft - braucht
+    deshalb (anders als Fix 1-9) einen Rebuild des `Assembly`-Targets, siehe
+    "Anwenden" unten.
+
 ### Anwenden
 
 Nach einem frischen Checkout/Build von FreeCAD:
@@ -222,10 +241,14 @@ Nach einem frischen Checkout/Build von FreeCAD:
 cd /home/maxx/freecad/freecad-source
 git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-jointobject.patch
 cp src/Mod/Assembly/JointObject.py /home/maxx/freecad/install/Mod/Assembly/JointObject.py
+cmake --build build --target Assembly -- -j$(nproc)
+cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.so
 ```
 
-(Reines Python, kein Rebuild von FreeCADGui nötig - Kopieren in `install/`
-reicht für sofortige Wirkung.)
+(Fix 1-9 sind reines Python, würden allein durch das Kopieren in `install/`
+sofort wirken - seit Fix 10 steckt aber auch eine `.cpp`-Änderung in diesem
+Patch, daher jetzt immer beides: kopieren UND das `Assembly`-Target neu
+bauen.)
 
 ## freecad-assembly-link-delete-hang.patch
 

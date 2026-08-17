@@ -224,3 +224,23 @@ index 79752c46d5..5af8ad8b23 100644
 +            return
          self.refs.clear()
          self.updateJoint()
+diff --git a/src/Mod/Assembly/App/AssemblyObject.cpp b/src/Mod/Assembly/App/AssemblyObject.cpp
+index af06d35628..4c2d364c6e 100644
+--- a/src/Mod/Assembly/App/AssemblyObject.cpp
++++ b/src/Mod/Assembly/App/AssemblyObject.cpp
+@@ -1850,10 +1850,14 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
+ 
+     // If this joint is self-referential it must be ignored.
+     if (getMbDPart(part1) == getMbDPart(part2)) {
++        // FCPROJECT-PATCH (10): getFullName() statt getFullLabel() - Label ist fuer JEDEN
++        // gleichartigen Joint identisch (z.B. "Parallel" fuer jeden Parallel-Joint), Name ist
++        // immer eindeutig und per getObject() direkt wiederfindbar. Gleiches Muster wie Fix 8
++        // (getContext() in JointObject.py).
+         Base::Console().warning(
+             "Assembly: Ignoring joint (%s) because its parts are connected by a fixed "
+             "joint bundle. This joint is a conflicting or redundant constraint.\n",
+-            joint->getFullLabel()
++            joint->getFullName()
+         );
+         return false;
+     }
