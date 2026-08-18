@@ -77,10 +77,9 @@ ENV_PATCHES=(
   "freecad-navigation-qbytearray-fix.patch"
   "freecad-propertyeditor-qstring-fix.patch"
 )
-# Dateien, die die obigen Umgebungs-Patches beruehren - bleiben waehrend des
-# gesamten Laufs absichtlich angewendet (siehe Schritt 4), duerfen dem
-# Sicherheitscheck in Schritt 1 also nicht als "unerwartete Aenderung"
-# auffallen, auch nicht bei einem Resume nach einem Abbruch.
+# Dateien, die die obigen Umgebungs-Patches beruehren - werden in Schritt 1
+# wie die Feature-Patches zurueckgesetzt (pristiner Baum fuer den ff-only-
+# Merge) und in Schritt 4 frisch wieder angewendet.
 ENV_PATCHED_FILES=(
   "CMakeLists.txt"
   "src/Gui/PreferencePages/DlgSettingsNavigation.cpp"
@@ -94,10 +93,17 @@ FEATURE_PATCHES=(
   "freecad-assembly-jointobject.patch"
   "freecad-assembly-link-delete-hang.patch"
 )
+# WICHTIG: hier ALLE von den FEATURE_PATCHES beruehrten Dateien eintragen,
+# nicht nur einen Teil - sonst faellt eine vergessene Datei (z. B. AssemblyObject.cpp
+# oder CommandSolveAssembly.py, siehe Vorfall 2026-08-18) beim Resume nach einem
+# Abbruch faelschlich als "unerwartete Aenderung" durch Schritt 1 und muss jedes
+# Mal von Hand bereinigt werden.
 FEATURE_PATCHED_FILES=(
   "src/Mod/Assembly/JointObject.py"
   "src/Mod/Assembly/App/AssemblyLink.cpp"
   "src/Mod/Assembly/App/AssemblyLink.h"
+  "src/Mod/Assembly/App/AssemblyObject.cpp"
+  "src/Mod/Assembly/CommandSolveAssembly.py"
 )
 
 DRY_RUN=0
@@ -130,20 +136,22 @@ fi
 log "Start. Aktueller Stand: $(git log -1 --format='%h %cd %s' --date=short)"
 echo "Parallelitaet: JOBS=${JOBS} (nproc=$(nproc), RAM=${MEM_GB:-?}GB) - via JOBS=<n> env var uebersteuerbar."
 
-log "Schritt 1/7: eigene Feature-Patches aus freecad-source entfernen"
-for f in "${FEATURE_PATCHED_FILES[@]}"; do
+log "Schritt 1/7: eigene Feature- UND Umgebungs-Patches aus freecad-source entfernen"
+# WICHTIG: auch die Umgebungs-Patches muessen hier raus, nicht nur die
+# Feature-Patches - sonst blockiert der ff-only-Merge in Schritt 2, sobald
+# Upstream eine dieser Dateien ebenfalls aendert ("lokale Aenderungen wuerden
+# ueberschrieben"). Schritt 4 legt sie danach frisch wieder auf einen
+# pristinen Baum.
+for f in "${FEATURE_PATCHED_FILES[@]}" "${ENV_PATCHED_FILES[@]}"; do
   run git checkout -- "$f"
 done
 
 # Alles, was jetzt noch als lokale Aenderung dasteht, kennt dieses Skript
 # nicht - lieber abbrechen als es stillschweigend zu verlieren. Bekannte,
 # erwartete Eintraege werden ausgefiltert: die harmlosen Submodule (git zeigt
-# sie je nach Inhalt mal als "M" mal als "??" an) sowie die Dateien der
-# Umgebungs-Patches - die bleiben waehrend des ganzen Laufs absichtlich
-# angewendet (Schritt 4), duerfen also auch bei einem Resume nach einem
-# Abbruch nicht als "unerwartet" durchfallen.
+# sie je nach Inhalt mal als "M" mal als "??" an).
 if [[ $DRY_RUN -eq 0 ]]; then
-  KNOWN_DIRTY=("src/3rdParty/OndselSolver" "src/Mod/AddonManager" "${ENV_PATCHED_FILES[@]}")
+  KNOWN_DIRTY=("src/3rdParty/OndselSolver" "src/Mod/AddonManager")
   UNEXPECTED=""
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
@@ -204,7 +212,11 @@ run cmake --build --preset FC-dev --parallel "$JOBS"
 
 log "Schritt 7/7: installieren"
 run cmake --install "${FC_SRC}/build"
+# Nur *.py hier extra nach install/ kopieren - .cpp/.h werden bereits ueber
+# "cmake --install" als Teil der kompilierten .so ausgeliefert, dort existiert
+# gar kein passendes Zielverzeichnis (App/-Unterordner fehlt im install-Baum).
 for f in "${FEATURE_PATCHED_FILES[@]}"; do
+  [[ "$f" == *.py ]] || continue
   run cp "${FC_SRC}/${f}" "${FC_INSTALL}/${f#src/}"
 done
 

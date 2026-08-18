@@ -225,10 +225,10 @@ index 79752c46d5..5af8ad8b23 100644
          self.refs.clear()
          self.updateJoint()
 diff --git a/src/Mod/Assembly/App/AssemblyObject.cpp b/src/Mod/Assembly/App/AssemblyObject.cpp
-index af06d35628..668a63ee62 100644
+index 51d2b3230f..b5f2cfb778 100644
 --- a/src/Mod/Assembly/App/AssemblyObject.cpp
 +++ b/src/Mod/Assembly/App/AssemblyObject.cpp
-@@ -151,6 +151,15 @@ void AssemblyObject::onChanged(const App::Property* prop)
+@@ -154,6 +154,15 @@ void AssemblyObject::onChanged(const App::Property* prop)
  
  int AssemblyObject::solve(bool enableRedo)
  {
@@ -244,7 +244,7 @@ index af06d35628..668a63ee62 100644
      ensureIdentityPlacements();
  
      syncGroundedJoints();
-@@ -162,6 +171,10 @@ int AssemblyObject::solve(bool enableRedo)
+@@ -167,6 +176,10 @@ int AssemblyObject::solve(bool enableRedo)
      auto groundedObjs = fixGroundedParts();
      if (groundedObjs.empty()) {
          // If no part fixed we can't solve.
@@ -255,7 +255,7 @@ index af06d35628..668a63ee62 100644
          return -6;
      }
  
-@@ -192,12 +205,38 @@ int AssemblyObject::solve(bool enableRedo)
+@@ -197,6 +210,13 @@ int AssemblyObject::solve(bool enableRedo)
          return -1;
      }
  
@@ -267,8 +267,9 @@ index af06d35628..668a63ee62 100644
 +    );
 +
      setNewPlacements();
+     updateRigidPlacementCache();
  
-     redrawJointPlacements(joints);
+@@ -204,6 +224,25 @@ int AssemblyObject::solve(bool enableRedo)
  
      updateSolveStatus();
  
@@ -294,7 +295,7 @@ index af06d35628..668a63ee62 100644
      return 0;
  }
  
-@@ -1837,6 +1876,42 @@ int AssemblyObject::slidingPartIndex(App::DocumentObject* joint)
+@@ -2163,6 +2202,42 @@ int AssemblyObject::slidingPartIndex(App::DocumentObject* joint)
      return slidingFound;
  }
  
@@ -337,7 +338,7 @@ index af06d35628..668a63ee62 100644
  bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
  {
      // When dragging a part, we are bundling fixed parts together.
-@@ -1850,10 +1925,17 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
+@@ -2176,10 +2251,17 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
  
      // If this joint is self-referential it must be ignored.
      if (getMbDPart(part1) == getMbDPart(part2)) {

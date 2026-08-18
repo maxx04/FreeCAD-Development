@@ -286,6 +286,21 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
     `solve()`-Aufruf zu umgehen. Reines Python (`CommandSolveAssembly.py`),
     kein Rebuild nötig - nur Kopieren wie bei Fix 1-9.
 
+**Hinweis (2026-08-18, `update-and-rebuild-freecad.sh`-Lauf):** Upstream hat
+mit "Assembly: Add RigidGroup (#29605)" (11. Aug 2026) `AssemblyObject.cpp`
+strukturell verändert (neue `rebuildRigidClusters()`/
+`syncActiveRigidGroupPlacements()`/`updateRigidPlacementCache()`-Aufrufe in
+`solve()`) - der `.cpp`-Hunk dieses Patches passte danach nicht mehr
+(`JointObject.py` und `CommandSolveAssembly.py` waren unberührt und passten
+weiter). Von Hand an die neue `solve()`-Struktur nachgezogen und den Patch
+neu generiert; inhaltlich unverändert (gleiche drei Meldungen, gleiches
+`getJointContextName()`). Dabei außerdem einen Bug im Skript selbst
+gefunden: `AssemblyObject.cpp` und `CommandSolveAssembly.py` fehlten in
+dessen `FEATURE_PATCHED_FILES`-Liste, wodurch Schritt 1 sie nicht
+zurücksetzte (Ursache des "unerwartete lokale Aenderungen"-Abbruchs an
+diesem Tag) und Schritt 7 `CommandSolveAssembly.py` nie nach `install/`
+kopierte - beides in `update-and-rebuild-freecad.sh` behoben.
+
 ### Anwenden
 
 Nach einem frischen Checkout/Build von FreeCAD:
