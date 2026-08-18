@@ -238,10 +238,33 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
     C++) baut den vollen Pfad über die Eltern-Kette (`InList`, jeweils
     erster Eintrag) auf, z.B. `Projekt.FCStd#Halterbaugruppe.Joint005` -
     zeigt direkt, in welcher (ggf. mehrfach verschachtelten) Unterbaugruppe
-    der Joint sitzt. Einzige Codeänderung in diesem Patch, die
-    `AssemblyObject.cpp` statt `JointObject.py` betrifft - braucht deshalb
-    (anders als Fix 1-9) einen Rebuild des `Assembly`-Targets, siehe
-    "Anwenden" unten.
+    der Joint sitzt.
+
+11. **`AssemblyObject::solve()` meldet praktisch nichts über die Konsole**
+    (2026-08-18, in `assembly-solver-sandbox` entwickelt, siehe dortige
+    `SANDBOX_NOTES.md`): weder ein erfolgreicher Solve noch ein mangels
+    geerdetem Teil komplett übersprungener Solve
+    (`groundedObjs.empty() -> return -6`) gaben bisher irgendeine
+    Konsolen-Ausgabe - nur echte Exceptions (`catch`-Blöcke) wurden
+    gemeldet. Im PDM-Alltag mit vielen verschachtelten Baugruppen blieb
+    dadurch oft unklar, ob/wann der Solver überhaupt gelaufen ist und was
+    er dabei festgestellt hat (z.B. redundante Joints, siehe Fix 10) - vor
+    allem beim stillen Fehlschlagen aus Nutzersicht ("Solver muckt
+    überhaupt nicht", Nutzer-Zitat). Fix: drei neue `Base::Console()`-Meldungen
+    in `solve()`:
+    - `Assembly: Solving '<Name>'...` beim Start,
+    - `Assembly: Solve of '<Name>' skipped - no grounded part found.` als
+      Warnung, falls gar nicht gerechnet werden konnte,
+    - `Assembly: '<Name>' computed (N joint(s), M grounded part(s)).` nach
+      erfolgreicher MbD-Berechnung,
+    - abschließend entweder `Assembly: Solve of '<Name>' finished
+      successfully.` oder (als Warnung, mit Namen über `getJointContextName()`
+      aus Fix 10) `Assembly: Solve of '<Name>' finished with N redundant
+      joint(s): <Namen>.`.
+
+    Einzige Codeänderung in diesem Patch, die `AssemblyObject.cpp` statt
+    `JointObject.py` betrifft - braucht deshalb (anders als Fix 1-9) einen
+    Rebuild des `Assembly`-Targets, siehe "Anwenden" unten.
 
 ### Anwenden
 

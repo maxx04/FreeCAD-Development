@@ -225,10 +225,76 @@ index 79752c46d5..5af8ad8b23 100644
          self.refs.clear()
          self.updateJoint()
 diff --git a/src/Mod/Assembly/App/AssemblyObject.cpp b/src/Mod/Assembly/App/AssemblyObject.cpp
-index af06d35628..e9d23f8220 100644
+index af06d35628..668a63ee62 100644
 --- a/src/Mod/Assembly/App/AssemblyObject.cpp
 +++ b/src/Mod/Assembly/App/AssemblyObject.cpp
-@@ -1837,6 +1837,42 @@ int AssemblyObject::slidingPartIndex(App::DocumentObject* joint)
+@@ -151,6 +151,15 @@ void AssemblyObject::onChanged(const App::Property* prop)
+ 
+ int AssemblyObject::solve(bool enableRedo)
+ {
++    // FCPROJECT-PATCH (11): mehr Rueckmeldung ueber den Solver-Ablauf. Bisher blieb sowohl ein
++    // erfolgreicher Solve als auch ein mangels geerdetem Teil komplett uebersprungener Solve
++    // (groundedObjs.empty() -> return -6) OHNE JEDE Konsolen-Ausgabe - nur echte Exceptions
++    // wurden gemeldet (siehe catch-Bloecke unten). Im PDM-Alltag mit vielen verschachtelten
++    // Baugruppen ist dadurch oft unklar, ob/wann der Solver ueberhaupt gelaufen ist und was er
++    // dabei festgestellt hat (z.B. redundante Joints, siehe Fix 10) - die drei Meldungen unten
++    // decken die Fragen "1. gestartet? 2. berechnet? 3. mit welchem Ergebnis?" ab.
++    Base::Console().message("Assembly: Solving '%s'...\n", getFullName());
++
+     ensureIdentityPlacements();
+ 
+     syncGroundedJoints();
+@@ -162,6 +171,10 @@ int AssemblyObject::solve(bool enableRedo)
+     auto groundedObjs = fixGroundedParts();
+     if (groundedObjs.empty()) {
+         // If no part fixed we can't solve.
++        Base::Console().warning(
++            "Assembly: Solve of '%s' skipped - no grounded part found.\n",
++            getFullName()
++        );
+         return -6;
+     }
+ 
+@@ -192,12 +205,38 @@ int AssemblyObject::solve(bool enableRedo)
+         return -1;
+     }
+ 
++    Base::Console().message(
++        "Assembly: '%s' computed (%zu joint(s), %zu grounded part(s)).\n",
++        getFullName(),
++        joints.size(),
++        groundedObjs.size()
++    );
++
+     setNewPlacements();
+ 
+     redrawJointPlacements(joints);
+ 
+     updateSolveStatus();
+ 
++    if (lastHasRedundancies) {
++        std::string names;
++        for (const auto& n : lastRedundantJoints) {
++            if (!names.empty()) {
++                names += ", ";
++            }
++            names += n;
++        }
++        Base::Console().warning(
++            "Assembly: Solve of '%s' finished with %zu redundant joint(s): %s.\n",
++            getFullName(),
++            lastRedundantJoints.size(),
++            names
++        );
++    }
++    else {
++        Base::Console().message("Assembly: Solve of '%s' finished successfully.\n", getFullName());
++    }
++
+     return 0;
+ }
+ 
+@@ -1837,6 +1876,42 @@ int AssemblyObject::slidingPartIndex(App::DocumentObject* joint)
      return slidingFound;
  }
  
@@ -271,7 +337,7 @@ index af06d35628..e9d23f8220 100644
  bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
  {
      // When dragging a part, we are bundling fixed parts together.
-@@ -1850,10 +1886,17 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
+@@ -1850,10 +1925,17 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
  
      // If this joint is self-referential it must be ignored.
      if (getMbDPart(part1) == getMbDPart(part2)) {
