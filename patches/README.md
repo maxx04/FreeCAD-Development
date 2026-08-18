@@ -266,6 +266,26 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
     `JointObject.py` betrifft - braucht deshalb (anders als Fix 1-9) einen
     Rebuild des `Assembly`-Targets, siehe "Anwenden" unten.
 
+12. **"Baugruppe lösen" (Z) tut manchmal buchstäblich gar nichts**
+    (2026-08-18, `CommandSolveAssembly.Activated()`, per Zusatz-Logging in
+    `assembly-solver-sandbox` live diagnostiziert): der Befehl rief bisher
+    nur `assembly.recompute(True)` auf. `DocumentObject.recompute()`
+    überspringt aber `execute()` (und damit den darin aufgerufenen `solve()`,
+    siehe Fix 11), wenn das Objekt nicht bereits als "touched" markiert ist -
+    das `True`-Argument bedeutet nur "rekursiv in Abhängigkeiten", nicht
+    "erzwinge trotzdem". War die Baugruppe gerade nicht touched (z.B. direkt
+    nach einem vorherigen erfolgreichen Solve), lief `recompute(True)` ohne
+    jeden Fehler durch, löste aber **keinen** tatsächlichen Solve aus - im
+    Gegensatz zum Ziehen eines Teils (`preDrag()`), das `solve()` immer
+    direkt aufruft. Nutzer-Symptom: "beim Drücken Z passiert nichts" +
+    "Regenerieren der Baugruppe und Bewegen eines Teils bringen zwei
+    unterschiedliche Ergebnisse" - beides dieselbe Ursache. Fix:
+    `assembly.touch()` vor `recompute(True)`, erzwingt zuverlässig einen
+    echten `execute()`-Lauf, ohne `execute()`s sonstiges Verhalten
+    (`Part::execute()`, Signal-Emissionen etc.) durch einen direkten
+    `solve()`-Aufruf zu umgehen. Reines Python (`CommandSolveAssembly.py`),
+    kein Rebuild nötig - nur Kopieren wie bei Fix 1-9.
+
 ### Anwenden
 
 Nach einem frischen Checkout/Build von FreeCAD:
@@ -274,11 +294,12 @@ Nach einem frischen Checkout/Build von FreeCAD:
 cd /home/maxx/freecad/freecad-source
 git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-jointobject.patch
 cp src/Mod/Assembly/JointObject.py /home/maxx/freecad/install/Mod/Assembly/JointObject.py
+cp src/Mod/Assembly/CommandSolveAssembly.py /home/maxx/freecad/install/Mod/Assembly/CommandSolveAssembly.py
 cmake --build build --target Assembly -- -j$(nproc)
 cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.so
 ```
 
-(Fix 1-9 sind reines Python, würden allein durch das Kopieren in `install/`
+(Fix 1-9 und 12 sind reines Python, würden allein durch das Kopieren in `install/`
 sofort wirken - seit Fix 10 steckt aber auch eine `.cpp`-Änderung in diesem
 Patch, daher jetzt immer beides: kopieren UND das `Assembly`-Target neu
 bauen.)
@@ -357,6 +378,7 @@ git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-cma
 git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-navigation-qbytearray-fix.patch
 git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-propertyeditor-qstring-fix.patch
 cp src/Mod/Assembly/JointObject.py /home/maxx/freecad/install/Mod/Assembly/JointObject.py
+cp src/Mod/Assembly/CommandSolveAssembly.py /home/maxx/freecad/install/Mod/Assembly/CommandSolveAssembly.py
 cmake --build build --target Assembly -- -j$(nproc)
 cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.so
 ```
