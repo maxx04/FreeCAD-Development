@@ -388,6 +388,39 @@ durch, ein eventuell übersprungener Sync holt sich der nächste reguläre
 
 Vollständiger Stacktrace + Analyse: `patches/bugreport-loeschfehler/README.md`.
 
+### 2. Fix - Joint-Referenz in doppelt verschachtelte flexible Unterbaugruppe
+
+(2026-08-19, siehe `patches/bugreport-rigid-nested-joint-reference/README.md` für die
+volle Analyse + synthetisches Minimal-Repro `repro.py`.) Bindet eine Baugruppe eine
+verschachtelte Unterbaugruppe als **flexibel** (`Rigid=False`) ein und referenziert ein
+Joint darin ein Teil *innerhalb* dieser Unterbaugruppe (ein "Enkelkind" aus Sicht der
+äußeren Baugruppe), bleibt die gespiegelte Referenz beim erneuten Einbinden in eine
+weitere, übergeordnete Baugruppe auf der externen Quelldatei hängen statt auf die
+lokale Kopie umgebogen zu werden - die betroffenen Teile erscheinen dann in der
+äußersten Baugruppe komplett unverbunden. Bei `Rigid=True` (identische Verschachtelung)
+tritt das nicht auf, da `UtilsAssembly.getComponentReference()` die Referenz dort schon
+beim Joint-Anlegen kompakt (auf die direkte Unterbaugruppe) statt flach (direkt aufs
+Enkelkind) kodiert.
+
+Ursache: `AssemblyLink::handleJointReference()`s `objLinkMap`-Lookup kennt nur direkte
+Kinder der gespiegelten Baugruppe, keine Enkelkinder. Fix: neue Methode
+`findLocalAncestor()` läuft bei einem gescheiterten direkten Lookup die
+Struktur-Eltern-Kette hoch (über die `Group`-Property der `getInList()`-Kandidaten, nicht
+blind `getInList().front()` - das kann auch Joints statt des echten Containers liefern),
+bis ein in `objLinkMap` bekannter Vorfahre gefunden wird, und liefert den durchlaufenen
+Pfad als `Sub`-Präfix zurück - exakt das Gegenstück zu `getComponentReference()`s eigener
+Kodierung. Am 2026-08-19 in einer realen, dreifach verschachtelten Baugruppe
+(Gesamtbaugruppe → FuehrungsBaugruppe400 → Halterbaugruppe, alle live vom Nutzer
+getestet, nicht nur synthetisch) verifiziert: Referenzen sind nach dem Fix lokal, Solve
+läuft fehlerfrei durch, Teile bewegen sich korrekt mit.
+
+**Vorsicht bei Weiterentwicklung:** ein erster Versuch, denselben `objLinkMap`-Mechanismus
+auch für das neue RigidGroup-Feature zu erweitern (Mitglieder einer Rigid Group
+umtragen), hat eine Regression verursacht (Teile fälschlich zur Löschung markiert, "out
+of scope"-Validierung) - dieser Fix hier betrifft nur normale Joint-Referenzen
+(`Reference1`/`Reference2`), nicht `ObjectsToRigidGroup`. Siehe
+`patches/bugreport-rigid-nested-joint-reference/README.md` für Details.
+
 ### Anwenden
 
 ```bash

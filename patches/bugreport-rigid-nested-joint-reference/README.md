@@ -1,10 +1,18 @@
 # FreeCAD-Kernbug: Joint-Referenz in doppelt verschachtelte flexible Unterbaugruppe bricht beim Spiegeln
 
-**Status: Ursache gefunden und mit synthetischem Minimal-Repro (`repro.py`) bewiesen
-(2026-08-19). Noch nicht gepatcht** - Fixversuch am 2026-08-19 an der verwandten
-Rigid-Group-Variante hat eine Regression verursacht (siehe
-[[project_fcproject_redundant_fixed_joint_rigidgroup_fix]]), deshalb hier bewusst erst
-sauber verstanden und dokumentiert, bevor erneut Code angefasst wird.
+**Status: Ursache gefunden, gepatcht und verifiziert (2026-08-19).** Patch:
+`patches/freecad-assembly-link-delete-hang.patch` (2. Fix darin, siehe README.md dort).
+Live vom Nutzer an einer echten, dreifach verschachtelten Baugruppe getestet - Fix
+funktioniert (Referenzen sind lokal, Solve läuft durch, Teile bewegen sich korrekt mit).
+Der end-to-end-Verifikationsversuch per `freecadcmd` scheiterte an derselben
+Cold-Load-Unzuverlässigkeit wie beim 0-Joints-Problem (selbst der Rigid=True-Baseline-
+Fall spiegelte in `freecadcmd` nicht zuverlässig) - deshalb live in der GUI verifiziert
+statt headless.
+
+Vorsicht: ein separater Fixversuch am selben Tag für die verwandte Rigid-Group-Variante
+(`ObjectsToRigidGroup` statt `Reference1`/`Reference2`) hat eine Regression verursacht
+(siehe [[project_fcproject_redundant_fixed_joint_rigidgroup_fix]]) - der hier gepatchte
+Fix betrifft NUR normale Joint-Referenzen, nicht Rigid Groups.
 
 ## Symptom
 
@@ -87,32 +95,33 @@ Ausführen: `freecadcmd patches/bugreport-rigid-nested-joint-reference/repro.py`
 (erzeugt temporäre `.FCStd`-Dateien unter `repro_docs/` im selben Ordner, nicht Teil des
 Repros selbst - können nach dem Lauf gelöscht werden).
 
-## Fix - noch offen
+## Fix - umgesetzt (Variante a)
 
-Zwei denkbare Ansatzpunkte, keiner bisher umgesetzt:
+`handleJointReference()` mehrstufig gemacht: schlägt `objLinkMap.find(externalComponent)`
+fehl, läuft die neue Methode `AssemblyLink::findLocalAncestor()` die Struktur-Eltern-Kette
+von `externalComponent` hoch (über die `Group`-Property der `getInList()`-Kandidaten -
+nicht blind `getInList().front()`, das kann auch Joints statt des echten Containers
+treffen), bis ein in `objLinkMap` bekannter Vorfahre gefunden wird, und liefert den
+durchlaufenen Pfad als `Sub`-Präfix zurück - analog zu `getComponentReference()`s eigener
+Kodierung beim Joint-Anlegen. `maxDepth`-Begrenzung (32) als Zyklen-Bremse, gleiches
+Muster wie `getJointContextName()` in `AssemblyObject.cpp`.
 
-- **a) `handleJointReference()` mehrstufig machen:** wenn `objLinkMap.find(externalComponent)`
-  fehlschlägt, die Eltern-Kette von `externalComponent` (`getInList()`) hochlaufen, bis ein
-  Vorfahre gefunden wird, der in `objLinkMap` steckt - dann die Referenz analog zu
-  `getComponentReference()`s eigener Logik auf diesen Vorfahren + zusammengesetzten
-  `Sub`-Pfad umschreiben.
-- **b) `objLinkMap` rekursiv befüllen:** beim Aufbau in `synchronizeComponents()` auch
-  Enkelkinder (rekursiv durch verschachtelte `AssemblyLink`/`AssemblyObject`-Gruppen)
-  eintragen, mit demselben lokalen Ziel wie ihr jeweiliger direkter Container.
+Patch: `patches/freecad-assembly-link-delete-hang.patch` (2. Eintrag). Live an einer
+echten, dreifach verschachtelten Baugruppe verifiziert (siehe Status oben) - nicht per
+`freecadcmd`, das scheiterte selbst am Rigid=True-Baseline-Fall (siehe
+[[project_fcproject_freecadcmd_zero_joints_cold_load]]).
 
-Beide Varianten sind nicht trivial - der erste Live-Versuch an der eng verwandten
-Rigid-Group-Variante (gleicher `objLinkMap`-Mechanismus, siehe
-[[project_fcproject_redundant_fixed_joint_rigidgroup_fix]]) hat eine Regression
-verursacht (Teile faelschlich zur Loeschung markiert, "out of scope"-Validierung). Vor
-einem erneuten Versuch: nur an Kopien testen, nicht an echten Projektdateien - `freecadcmd`
-allein reicht zur Verifikation nicht (siehe
-[[project_fcproject_freecadcmd_zero_joints_cold_load]]), Struktur-Checks wie in `repro.py`
-(reine Property-Inspektion nach `recompute()`, ohne auf wiederholte `solve()`-Läufe
-angewiesen zu sein) sind aber zuverlässig.
+Variante (b) - `objLinkMap` von vornherein rekursiv befüllen - wurde nicht umgesetzt,
+Variante (a) war zielgerichteter und ausreichend.
 
 ## Offene Fragen / mögliche Nacharbeit
 
 - Nicht bei FreeCAD upstream eingereicht (kein GitHub-Issue/PR bisher) - `repro.py` ist
   dafür vorbereitet.
-- Ungeklärt, ob Variante (a) oder (b) der sauberere Fix ist, oder ob beide zusammen
-  gebraucht werden (z.B. falls Enkelkinder selbst wieder Enkelkinder haben - 3+ Ebenen).
+- Nicht geprüft, ob der Fix auch bei 3+ Verschachtelungsebenen (Enkelkind hat selbst
+  wieder ein Kind, das referenziert wird) korrekt durchläuft - `findLocalAncestor()`s
+  Schleife sollte das grundsätzlich abdecken (läuft beliebig viele Ebenen hoch bis
+  `maxDepth`), aber noch nicht konkret getestet.
+- Die verwandte Rigid-Group-Variante (`ObjectsToRigidGroup` statt `Reference1`/
+  `Reference2`) ist weiterhin ungefixt, siehe
+  [[project_fcproject_redundant_fixed_joint_rigidgroup_fix]].
