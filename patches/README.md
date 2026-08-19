@@ -307,6 +307,18 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
     beiden Stellen gebraucht. Wie Fix 10/11 in `AssemblyObject.cpp` -
     braucht einen Rebuild des `Assembly`-Targets.
 
+14. **"1 grounded part(s)" mit leerer Namensliste direkt nach dem Laden**
+    (2026-08-19, sofort beim Live-Test von Fix 13 aufgefallen):
+    `getGroundedParts()` steckte `Origin.getValue()` bisher ungeprüft in
+    `groundedSet` - direkt beim Öffnen einer Datei (bevor der
+    Assembly-`Origin` initialisiert ist, siehe auch
+    [[project_fcproject_freecadcmd_zero_joints_cold_load]] fürs verwandte
+    "0 joint(s)"-Symptom auf demselben frühen Ladepfad) ist das `nullptr`
+    und zählte trotzdem als "1 Teil" mit - fiel erst durch Fix 13 auf, weil
+    die Namensausgabe den Nullpointer korrekt überspringt, die Anzahl davon
+    aber unberührt blieb (Diskrepanz Zahl vs. Namen). Fix: `Origin.getValue()`
+    nur einfügen, wenn tatsächlich gesetzt. Wie Fix 13 in `AssemblyObject.cpp`.
+
 **Hinweis (2026-08-18, `update-and-rebuild-freecad.sh`-Lauf):** Upstream hat
 mit "Assembly: Add RigidGroup (#29605)" (11. Aug 2026) `AssemblyObject.cpp`
 strukturell verändert (neue `rebuildRigidClusters()`/

@@ -225,7 +225,7 @@ index 79752c46d5..5af8ad8b23 100644
          self.refs.clear()
          self.updateJoint()
 diff --git a/src/Mod/Assembly/App/AssemblyObject.cpp b/src/Mod/Assembly/App/AssemblyObject.cpp
-index 51d2b3230f..ce9e34f6bb 100644
+index 51d2b3230f..a63e7894cb 100644
 --- a/src/Mod/Assembly/App/AssemblyObject.cpp
 +++ b/src/Mod/Assembly/App/AssemblyObject.cpp
 @@ -152,8 +152,76 @@ void AssemblyObject::onChanged(const App::Property* prop)
@@ -370,7 +370,26 @@ index 51d2b3230f..ce9e34f6bb 100644
      return 0;
  }
  
-@@ -2176,10 +2288,17 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
+@@ -1167,8 +1279,16 @@ std::unordered_set<App::DocumentObject*> AssemblyObject::getGroundedParts()
+         }
+     }
+ 
+-    // Origin is not in Group so we add it separately
+-    groundedSet.insert(Origin.getValue());
++    // Origin is not in Group so we add it separately.
++    // FCPROJECT-PATCH (14): nur einfuegen, wenn tatsaechlich gesetzt - direkt beim Laden (bevor
++    // der Origin des Assembly-Objekts initialisiert ist) liefert Origin.getValue() nullptr,
++    // was bisher ungeprueft in groundedSet landete. Zaehlte dann als "1 grounded part", obwohl
++    // gar kein echtes Teil gemeint war - fiel erst mit Fix 13 auf, weil die Namensausgabe fuer
++    // diesen Phantom-Eintrag leer blieb (Nullpointer wird beim Benennen korrekt uebersprungen,
++    // die Anzahl blieb davon aber unberuehrt).
++    if (auto* origin = Origin.getValue()) {
++        groundedSet.insert(origin);
++    }
+ 
+     // Propagate grounding through active rigid clusters.
+     std::vector<App::DocumentObject*> groundedSnapshot(groundedSet.begin(), groundedSet.end());
+@@ -2176,10 +2296,17 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
  
      // If this joint is self-referential it must be ignored.
      if (getMbDPart(part1) == getMbDPart(part2)) {
