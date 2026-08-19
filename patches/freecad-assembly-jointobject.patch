@@ -224,3 +224,158 @@ index 79752c46d5..5af8ad8b23 100644
 +            return
          self.refs.clear()
          self.updateJoint()
+diff --git a/src/Mod/Assembly/App/AssemblyObject.cpp b/src/Mod/Assembly/App/AssemblyObject.cpp
+index 51d2b3230f..b5f2cfb778 100644
+--- a/src/Mod/Assembly/App/AssemblyObject.cpp
++++ b/src/Mod/Assembly/App/AssemblyObject.cpp
+@@ -154,6 +154,15 @@ void AssemblyObject::onChanged(const App::Property* prop)
+ 
+ int AssemblyObject::solve(bool enableRedo)
+ {
++    // FCPROJECT-PATCH (11): mehr Rueckmeldung ueber den Solver-Ablauf. Bisher blieb sowohl ein
++    // erfolgreicher Solve als auch ein mangels geerdetem Teil komplett uebersprungener Solve
++    // (groundedObjs.empty() -> return -6) OHNE JEDE Konsolen-Ausgabe - nur echte Exceptions
++    // wurden gemeldet (siehe catch-Bloecke unten). Im PDM-Alltag mit vielen verschachtelten
++    // Baugruppen ist dadurch oft unklar, ob/wann der Solver ueberhaupt gelaufen ist und was er
++    // dabei festgestellt hat (z.B. redundante Joints, siehe Fix 10) - die drei Meldungen unten
++    // decken die Fragen "1. gestartet? 2. berechnet? 3. mit welchem Ergebnis?" ab.
++    Base::Console().message("Assembly: Solving '%s'...\n", getFullName());
++
+     ensureIdentityPlacements();
+ 
+     syncGroundedJoints();
+@@ -167,6 +176,10 @@ int AssemblyObject::solve(bool enableRedo)
+     auto groundedObjs = fixGroundedParts();
+     if (groundedObjs.empty()) {
+         // If no part fixed we can't solve.
++        Base::Console().warning(
++            "Assembly: Solve of '%s' skipped - no grounded part found.\n",
++            getFullName()
++        );
+         return -6;
+     }
+ 
+@@ -197,6 +210,13 @@ int AssemblyObject::solve(bool enableRedo)
+         return -1;
+     }
+ 
++    Base::Console().message(
++        "Assembly: '%s' computed (%zu joint(s), %zu grounded part(s)).\n",
++        getFullName(),
++        joints.size(),
++        groundedObjs.size()
++    );
++
+     setNewPlacements();
+     updateRigidPlacementCache();
+ 
+@@ -204,6 +224,25 @@ int AssemblyObject::solve(bool enableRedo)
+ 
+     updateSolveStatus();
+ 
++    if (lastHasRedundancies) {
++        std::string names;
++        for (const auto& n : lastRedundantJoints) {
++            if (!names.empty()) {
++                names += ", ";
++            }
++            names += n;
++        }
++        Base::Console().warning(
++            "Assembly: Solve of '%s' finished with %zu redundant joint(s): %s.\n",
++            getFullName(),
++            lastRedundantJoints.size(),
++            names
++        );
++    }
++    else {
++        Base::Console().message("Assembly: Solve of '%s' finished successfully.\n", getFullName());
++    }
++
+     return 0;
+ }
+ 
+@@ -2163,6 +2202,42 @@ int AssemblyObject::slidingPartIndex(App::DocumentObject* joint)
+     return slidingFound;
+ }
+ 
++namespace
++{
++// FCPROJECT-PATCH (10, nachgebessert): Aequivalent zu JointObject.py's getContext() - baut den
++// vollen Pfad ueber die Eltern-Kette (InList, jeweils erster Eintrag) auf, z.B.
++// "Halterbaugruppe.Joint005" statt nur "Joint005". Ein blosser Name reicht bei verschachtelten
++// Baugruppen (PDM-Standardfall: jede Unterbaugruppe hat ihre EIGENE, lokal bei 0 beginnende
++// Joint-Nummerierung) nicht aus, um den Joint ohne Suchen im Baum wiederzufinden - man muss
++// wissen, in welcher Unterbaugruppe er sitzt. maxDepth als simple Zyklen-Bremse statt eines
++// zusaetzlichen std::set-Includes.
++std::string getJointContextName(App::DocumentObject* obj)
++{
++    std::vector<std::string> parts;
++    App::DocumentObject* current = obj;
++    int maxDepth = 32;
++    while (current && maxDepth-- > 0) {
++        const char* name = current->getNameInDocument();
++        parts.insert(parts.begin(), name ? name : "?");
++        const auto& inList = current->getInList();
++        current = inList.empty() ? nullptr : inList.front();
++    }
++
++    std::string result;
++    for (size_t i = 0; i < parts.size(); ++i) {
++        if (i > 0) {
++            result += ".";
++        }
++        result += parts[i];
++    }
++
++    if (obj && obj->getDocument()) {
++        return std::string(obj->getDocument()->Label.getStrValue()) + "#" + result;
++    }
++    return result;
++}
++}  // namespace
++
+ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
+ {
+     // When dragging a part, we are bundling fixed parts together.
+@@ -2176,10 +2251,17 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
+ 
+     // If this joint is self-referential it must be ignored.
+     if (getMbDPart(part1) == getMbDPart(part2)) {
++        // FCPROJECT-PATCH (10): getJointContextName() statt getFullLabel() - Label ist fuer JEDEN
++        // gleichartigen Joint identisch (z.B. "Parallel" fuer jeden Parallel-Joint), der blosse
++        // Name allein (z.B. "Joint005") ist zwar eindeutig, verraet aber nicht, in welcher (ggf.
++        // verschachtelten) Unterbaugruppe der Joint sitzt - jede Unterbaugruppe hat ihre eigene,
++        // lokal bei 0 beginnende Joint-Nummerierung. getJointContextName() liefert deshalb den
++        // vollen Pfad ueber die Eltern-Kette, z.B. "Halterbaugruppe.Joint005". Gleiches Muster
++        // wie Fix 8 (getContext() in JointObject.py).
+         Base::Console().warning(
+             "Assembly: Ignoring joint (%s) because its parts are connected by a fixed "
+             "joint bundle. This joint is a conflicting or redundant constraint.\n",
+-            joint->getFullLabel()
++            getJointContextName(joint)
+         );
+         return false;
+     }
+diff --git a/src/Mod/Assembly/CommandSolveAssembly.py b/src/Mod/Assembly/CommandSolveAssembly.py
+index 52820a8566..53a4f004b0 100644
+--- a/src/Mod/Assembly/CommandSolveAssembly.py
++++ b/src/Mod/Assembly/CommandSolveAssembly.py
+@@ -63,6 +63,17 @@ class CommandSolveAssembly:
+             return
+ 
+         App.setActiveTransaction("Solve assembly")
++        # FCPROJECT-PATCH (12): assembly.recompute(True) allein loeste den eigentlichen Solve
++        # nicht zuverlaessig aus - DocumentObject.recompute() ueberspringt execute() (und damit
++        # den darin aufgerufenen solve(), siehe AssemblyObject::execute()), wenn das Objekt nicht
++        # bereits als "touched" markiert ist. Das True-Argument bedeutet nur "rekursiv in
++        # Abhaengigkeiten", nicht "erzwinge trotzdem". Ergebnis: der "Baugruppe loesen"-Befehl
++        # (Tastenkuerzel Z) tat je nach Touched-Status manchmal buchstaeblich gar nichts - obwohl
++        # Ziehen eines Teils (das direkt solve() aufruft, siehe preDrag()) zuverlaessig
++        # funktionierte. touch() erzwingt das jetzt zuverlaessig, ohne execute()'s sonstiges
++        # Verhalten (Part::execute(), Signal-Emissionen etc.) durch einen direkten solve()-Aufruf
++        # zu umgehen. Live verifiziert per Zusatz-Logging in assembly-solver-sandbox.
++        assembly.touch()
+         assembly.recompute(True)
+         Gui.ActiveDocument.commitCommand()
+ 

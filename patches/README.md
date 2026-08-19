@@ -214,6 +214,93 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
    verifiziert plus Vorher/Nachher-Vergleich der echten Projektdatei) - bitte
    beim nächsten Bearbeiten eines Joints gegenprüfen.
 
+10. **Redundant-Constraint-Warnung nennt keinen eindeutigen/auffindbaren Namen**
+    (2026-08-17, `AssemblyObject::isMbDJointValid()`): beim Ziehen eines Teils
+    bündelt der Solver fest verbundene Teile; ist ein Joint dabei
+    selbstreferenzierend (beide Enden landen im selben MbD-Teil), wird er
+    ignoriert und über die Konsole protokolliert, z.B.
+    `Assembly: Ignoring joint (Projekt.FCStd#Parallel) because its parts are
+    connected by a fixed joint bundle. This joint is a conflicting or
+    redundant constraint.` Die Meldung baute sich bisher aus `getFullLabel()`
+    (`Dokument#Label`) - genau dasselbe Problem wie Fix 8, nur in der
+    C++-Seite statt in `JointObject.py`: FreeCADs Standard-Label ist für
+    JEDEN gleichartigen Joint identisch (z.B. "Parallel" für jeden
+    Parallel-Joint), bei mehreren betroffenen Joints in derselben Baugruppe
+    war so nicht erkennbar, welcher gemeint ist. Erster Versuch:
+    `getFullName()` (`Dokument#Name`, z.B. `...#Joint005`) - zwar eindeutig,
+    aber bei verschachtelten Baugruppen (PDM-Standardfall: jede
+    Unterbaugruppe hat ihre EIGENE, lokal bei 0 beginnende Joint-
+    Nummerierung) trotzdem nicht auffindbar, ohne jede Unterbaugruppe
+    einzeln nach dem passenden Namen zu durchsuchen - `Joint005` allein
+    verrät nicht, dass er z.B. in `Halterbaugruppe` sitzt statt im
+    Top-Level der Baugruppe. Endgültiger Fix: neue freie Funktion
+    `getJointContextName()` (Äquivalent zu `getContext()` aus Fix 8, aber in
+    C++) baut den vollen Pfad über die Eltern-Kette (`InList`, jeweils
+    erster Eintrag) auf, z.B. `Projekt.FCStd#Halterbaugruppe.Joint005` -
+    zeigt direkt, in welcher (ggf. mehrfach verschachtelten) Unterbaugruppe
+    der Joint sitzt.
+
+11. **`AssemblyObject::solve()` meldet praktisch nichts über die Konsole**
+    (2026-08-18, in `assembly-solver-sandbox` entwickelt, siehe dortige
+    `SANDBOX_NOTES.md`): weder ein erfolgreicher Solve noch ein mangels
+    geerdetem Teil komplett übersprungener Solve
+    (`groundedObjs.empty() -> return -6`) gaben bisher irgendeine
+    Konsolen-Ausgabe - nur echte Exceptions (`catch`-Blöcke) wurden
+    gemeldet. Im PDM-Alltag mit vielen verschachtelten Baugruppen blieb
+    dadurch oft unklar, ob/wann der Solver überhaupt gelaufen ist und was
+    er dabei festgestellt hat (z.B. redundante Joints, siehe Fix 10) - vor
+    allem beim stillen Fehlschlagen aus Nutzersicht ("Solver muckt
+    überhaupt nicht", Nutzer-Zitat). Fix: drei neue `Base::Console()`-Meldungen
+    in `solve()`:
+    - `Assembly: Solving '<Name>'...` beim Start,
+    - `Assembly: Solve of '<Name>' skipped - no grounded part found.` als
+      Warnung, falls gar nicht gerechnet werden konnte,
+    - `Assembly: '<Name>' computed (N joint(s), M grounded part(s)).` nach
+      erfolgreicher MbD-Berechnung,
+    - abschließend entweder `Assembly: Solve of '<Name>' finished
+      successfully.` oder (als Warnung, mit Namen über `getJointContextName()`
+      aus Fix 10) `Assembly: Solve of '<Name>' finished with N redundant
+      joint(s): <Namen>.`.
+
+    Einzige Codeänderung in diesem Patch, die `AssemblyObject.cpp` statt
+    `JointObject.py` betrifft - braucht deshalb (anders als Fix 1-9) einen
+    Rebuild des `Assembly`-Targets, siehe "Anwenden" unten.
+
+12. **"Baugruppe lösen" (Z) tut manchmal buchstäblich gar nichts**
+    (2026-08-18, `CommandSolveAssembly.Activated()`, per Zusatz-Logging in
+    `assembly-solver-sandbox` live diagnostiziert): der Befehl rief bisher
+    nur `assembly.recompute(True)` auf. `DocumentObject.recompute()`
+    überspringt aber `execute()` (und damit den darin aufgerufenen `solve()`,
+    siehe Fix 11), wenn das Objekt nicht bereits als "touched" markiert ist -
+    das `True`-Argument bedeutet nur "rekursiv in Abhängigkeiten", nicht
+    "erzwinge trotzdem". War die Baugruppe gerade nicht touched (z.B. direkt
+    nach einem vorherigen erfolgreichen Solve), lief `recompute(True)` ohne
+    jeden Fehler durch, löste aber **keinen** tatsächlichen Solve aus - im
+    Gegensatz zum Ziehen eines Teils (`preDrag()`), das `solve()` immer
+    direkt aufruft. Nutzer-Symptom: "beim Drücken Z passiert nichts" +
+    "Regenerieren der Baugruppe und Bewegen eines Teils bringen zwei
+    unterschiedliche Ergebnisse" - beides dieselbe Ursache. Fix:
+    `assembly.touch()` vor `recompute(True)`, erzwingt zuverlässig einen
+    echten `execute()`-Lauf, ohne `execute()`s sonstiges Verhalten
+    (`Part::execute()`, Signal-Emissionen etc.) durch einen direkten
+    `solve()`-Aufruf zu umgehen. Reines Python (`CommandSolveAssembly.py`),
+    kein Rebuild nötig - nur Kopieren wie bei Fix 1-9.
+
+**Hinweis (2026-08-18, `update-and-rebuild-freecad.sh`-Lauf):** Upstream hat
+mit "Assembly: Add RigidGroup (#29605)" (11. Aug 2026) `AssemblyObject.cpp`
+strukturell verändert (neue `rebuildRigidClusters()`/
+`syncActiveRigidGroupPlacements()`/`updateRigidPlacementCache()`-Aufrufe in
+`solve()`) - der `.cpp`-Hunk dieses Patches passte danach nicht mehr
+(`JointObject.py` und `CommandSolveAssembly.py` waren unberührt und passten
+weiter). Von Hand an die neue `solve()`-Struktur nachgezogen und den Patch
+neu generiert; inhaltlich unverändert (gleiche drei Meldungen, gleiches
+`getJointContextName()`). Dabei außerdem einen Bug im Skript selbst
+gefunden: `AssemblyObject.cpp` und `CommandSolveAssembly.py` fehlten in
+dessen `FEATURE_PATCHED_FILES`-Liste, wodurch Schritt 1 sie nicht
+zurücksetzte (Ursache des "unerwartete lokale Aenderungen"-Abbruchs an
+diesem Tag) und Schritt 7 `CommandSolveAssembly.py` nie nach `install/`
+kopierte - beides in `update-and-rebuild-freecad.sh` behoben.
+
 ### Anwenden
 
 Nach einem frischen Checkout/Build von FreeCAD:
@@ -222,10 +309,15 @@ Nach einem frischen Checkout/Build von FreeCAD:
 cd /home/maxx/freecad/freecad-source
 git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-jointobject.patch
 cp src/Mod/Assembly/JointObject.py /home/maxx/freecad/install/Mod/Assembly/JointObject.py
+cp src/Mod/Assembly/CommandSolveAssembly.py /home/maxx/freecad/install/Mod/Assembly/CommandSolveAssembly.py
+cmake --build build --target Assembly -- -j$(nproc)
+cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.so
 ```
 
-(Reines Python, kein Rebuild von FreeCADGui nötig - Kopieren in `install/`
-reicht für sofortige Wirkung.)
+(Fix 1-9 und 12 sind reines Python, würden allein durch das Kopieren in `install/`
+sofort wirken - seit Fix 10 steckt aber auch eine `.cpp`-Änderung in diesem
+Patch, daher jetzt immer beides: kopieren UND das `Assembly`-Target neu
+bauen.)
 
 ## freecad-assembly-link-delete-hang.patch
 
@@ -301,6 +393,7 @@ git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-cma
 git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-navigation-qbytearray-fix.patch
 git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-propertyeditor-qstring-fix.patch
 cp src/Mod/Assembly/JointObject.py /home/maxx/freecad/install/Mod/Assembly/JointObject.py
+cp src/Mod/Assembly/CommandSolveAssembly.py /home/maxx/freecad/install/Mod/Assembly/CommandSolveAssembly.py
 cmake --build build --target Assembly -- -j$(nproc)
 cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.so
 ```
