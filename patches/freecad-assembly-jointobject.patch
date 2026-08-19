@@ -225,10 +225,10 @@ index 79752c46d5..5af8ad8b23 100644
          self.refs.clear()
          self.updateJoint()
 diff --git a/src/Mod/Assembly/App/AssemblyObject.cpp b/src/Mod/Assembly/App/AssemblyObject.cpp
-index 51d2b3230f..a63e7894cb 100644
+index 51d2b3230f..9d5b4dd8cf 100644
 --- a/src/Mod/Assembly/App/AssemblyObject.cpp
 +++ b/src/Mod/Assembly/App/AssemblyObject.cpp
-@@ -152,8 +152,76 @@ void AssemblyObject::onChanged(const App::Property* prop)
+@@ -152,8 +152,73 @@ void AssemblyObject::onChanged(const App::Property* prop)
      App::Part::onChanged(prop);
  }
  
@@ -270,6 +270,8 @@ index 51d2b3230f..a63e7894cb 100644
 +}
 +
 +// FCPROJECT-PATCH (13): Nutzerwunsch - Namen statt nur Anzahl ausgeben, siehe solve() unten.
++// Nur noch fuer die Rigid-Group-Mitgliederliste gebraucht (Vector) - die geerdeten Teile
++// bekommen seit Fix 15 je eine eigene Zeile statt einer komma-getrennten Liste.
 +std::string joinContextNames(const std::vector<App::DocumentObject*>& objs)
 +{
 +    std::string result;
@@ -283,11 +285,6 @@ index 51d2b3230f..a63e7894cb 100644
 +        result += getJointContextName(obj);
 +    }
 +    return result;
-+}
-+
-+std::string joinContextNames(const std::unordered_set<App::DocumentObject*>& objs)
-+{
-+    return joinContextNames(std::vector<App::DocumentObject*>(objs.begin(), objs.end()));
 +}
 +}  // namespace
 +
@@ -305,7 +302,7 @@ index 51d2b3230f..a63e7894cb 100644
      ensureIdentityPlacements();
  
      syncGroundedJoints();
-@@ -167,6 +235,10 @@ int AssemblyObject::solve(bool enableRedo)
+@@ -167,6 +232,10 @@ int AssemblyObject::solve(bool enableRedo)
      auto groundedObjs = fixGroundedParts();
      if (groundedObjs.empty()) {
          // If no part fixed we can't solve.
@@ -316,7 +313,7 @@ index 51d2b3230f..a63e7894cb 100644
          return -6;
      }
  
-@@ -197,6 +269,27 @@ int AssemblyObject::solve(bool enableRedo)
+@@ -197,6 +266,35 @@ int AssemblyObject::solve(bool enableRedo)
          return -1;
      }
  
@@ -324,13 +321,21 @@ index 51d2b3230f..a63e7894cb 100644
 +    // sondern auch deren Namen (z.B. um zu erkennen, dass Origin IMMER automatisch mitgezaehlt
 +    // wird, auch ohne eigenen GroundedJoint - siehe getGroundedParts()), sowie die Mitglieder
 +    // etwaiger Rigid Groups (siehe rebuildRigidClusters() oben, neues RigidGroup-Feature).
++    // FCPROJECT-PATCH (15): Nutzerwunsch - jedes geerdete Teil in einer eigenen Zeile statt
++    // komma-getrennt in einer Zeile, damit lange Listen im Report View nicht mehr horizontal
++    // gescrollt werden muessen.
 +    Base::Console().message(
-+        "Assembly: '%s' computed (%zu joint(s), %zu grounded part(s): %s).\n",
++        "Assembly: '%s' computed (%zu joint(s), %zu grounded part(s)):\n",
 +        getFullName(),
 +        joints.size(),
-+        groundedObjs.size(),
-+        joinContextNames(groundedObjs)
++        groundedObjs.size()
 +    );
++    for (auto* obj : groundedObjs) {
++        if (!obj) {
++            continue;
++        }
++        Base::Console().message("Assembly:   grounded part: %s\n", getJointContextName(obj));
++    }
 +
 +    for (const auto& [rep, members] : rigidMembersByRep) {
 +        Base::Console().message(
@@ -344,7 +349,7 @@ index 51d2b3230f..a63e7894cb 100644
      setNewPlacements();
      updateRigidPlacementCache();
  
-@@ -204,6 +297,25 @@ int AssemblyObject::solve(bool enableRedo)
+@@ -204,6 +302,25 @@ int AssemblyObject::solve(bool enableRedo)
  
      updateSolveStatus();
  
@@ -370,7 +375,7 @@ index 51d2b3230f..a63e7894cb 100644
      return 0;
  }
  
-@@ -1167,8 +1279,16 @@ std::unordered_set<App::DocumentObject*> AssemblyObject::getGroundedParts()
+@@ -1167,8 +1284,16 @@ std::unordered_set<App::DocumentObject*> AssemblyObject::getGroundedParts()
          }
      }
  
@@ -389,7 +394,7 @@ index 51d2b3230f..a63e7894cb 100644
  
      // Propagate grounding through active rigid clusters.
      std::vector<App::DocumentObject*> groundedSnapshot(groundedSet.begin(), groundedSet.end());
-@@ -2176,10 +2296,17 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
+@@ -2176,10 +2301,17 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
  
      // If this joint is self-referential it must be ignored.
      if (getMbDPart(part1) == getMbDPart(part2)) {

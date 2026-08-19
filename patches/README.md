@@ -319,6 +319,16 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
     aber unberührt blieb (Diskrepanz Zahl vs. Namen). Fix: `Origin.getValue()`
     nur einfügen, wenn tatsächlich gesetzt. Wie Fix 13 in `AssemblyObject.cpp`.
 
+15. **Geerdete Teile in einer eigenen Zeile statt komma-getrennt**
+    (2026-08-19, Nutzerwunsch: "jede grounded Part auch eine neue Zeile"):
+    die `computed(...)`-Meldung aus Fix 13 listete alle geerdeten Teile
+    komma-getrennt in einer einzigen, bei vielen Teilen unhandlich langen
+    Zeile. Jetzt eine Kopfzeile mit den Anzahlen, gefolgt von je einer
+    `Assembly:   grounded part: <Name>`-Zeile pro Teil. Die Rigid-Group-
+    Mitgliederliste bleibt bewusst komma-getrennt in einer Zeile (typischerweise
+    deutlich kürzer, eine Gruppe pro Meldung). Wie Fix 13/14 in
+    `AssemblyObject.cpp`.
+
 **Hinweis (2026-08-18, `update-and-rebuild-freecad.sh`-Lauf):** Upstream hat
 mit "Assembly: Add RigidGroup (#29605)" (11. Aug 2026) `AssemblyObject.cpp`
 strukturell verändert (neue `rebuildRigidClusters()`/
