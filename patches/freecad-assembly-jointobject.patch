@@ -225,78 +225,11 @@ index 79752c46d5..5af8ad8b23 100644
          self.refs.clear()
          self.updateJoint()
 diff --git a/src/Mod/Assembly/App/AssemblyObject.cpp b/src/Mod/Assembly/App/AssemblyObject.cpp
-index 51d2b3230f..b5f2cfb778 100644
+index 51d2b3230f..ce9e34f6bb 100644
 --- a/src/Mod/Assembly/App/AssemblyObject.cpp
 +++ b/src/Mod/Assembly/App/AssemblyObject.cpp
-@@ -154,6 +154,15 @@ void AssemblyObject::onChanged(const App::Property* prop)
- 
- int AssemblyObject::solve(bool enableRedo)
- {
-+    // FCPROJECT-PATCH (11): mehr Rueckmeldung ueber den Solver-Ablauf. Bisher blieb sowohl ein
-+    // erfolgreicher Solve als auch ein mangels geerdetem Teil komplett uebersprungener Solve
-+    // (groundedObjs.empty() -> return -6) OHNE JEDE Konsolen-Ausgabe - nur echte Exceptions
-+    // wurden gemeldet (siehe catch-Bloecke unten). Im PDM-Alltag mit vielen verschachtelten
-+    // Baugruppen ist dadurch oft unklar, ob/wann der Solver ueberhaupt gelaufen ist und was er
-+    // dabei festgestellt hat (z.B. redundante Joints, siehe Fix 10) - die drei Meldungen unten
-+    // decken die Fragen "1. gestartet? 2. berechnet? 3. mit welchem Ergebnis?" ab.
-+    Base::Console().message("Assembly: Solving '%s'...\n", getFullName());
-+
-     ensureIdentityPlacements();
- 
-     syncGroundedJoints();
-@@ -167,6 +176,10 @@ int AssemblyObject::solve(bool enableRedo)
-     auto groundedObjs = fixGroundedParts();
-     if (groundedObjs.empty()) {
-         // If no part fixed we can't solve.
-+        Base::Console().warning(
-+            "Assembly: Solve of '%s' skipped - no grounded part found.\n",
-+            getFullName()
-+        );
-         return -6;
-     }
- 
-@@ -197,6 +210,13 @@ int AssemblyObject::solve(bool enableRedo)
-         return -1;
-     }
- 
-+    Base::Console().message(
-+        "Assembly: '%s' computed (%zu joint(s), %zu grounded part(s)).\n",
-+        getFullName(),
-+        joints.size(),
-+        groundedObjs.size()
-+    );
-+
-     setNewPlacements();
-     updateRigidPlacementCache();
- 
-@@ -204,6 +224,25 @@ int AssemblyObject::solve(bool enableRedo)
- 
-     updateSolveStatus();
- 
-+    if (lastHasRedundancies) {
-+        std::string names;
-+        for (const auto& n : lastRedundantJoints) {
-+            if (!names.empty()) {
-+                names += ", ";
-+            }
-+            names += n;
-+        }
-+        Base::Console().warning(
-+            "Assembly: Solve of '%s' finished with %zu redundant joint(s): %s.\n",
-+            getFullName(),
-+            lastRedundantJoints.size(),
-+            names
-+        );
-+    }
-+    else {
-+        Base::Console().message("Assembly: Solve of '%s' finished successfully.\n", getFullName());
-+    }
-+
-     return 0;
- }
- 
-@@ -2163,6 +2202,42 @@ int AssemblyObject::slidingPartIndex(App::DocumentObject* joint)
-     return slidingFound;
+@@ -152,8 +152,76 @@ void AssemblyObject::onChanged(const App::Property* prop)
+     App::Part::onChanged(prop);
  }
  
 +namespace
@@ -307,7 +240,9 @@ index 51d2b3230f..b5f2cfb778 100644
 +// Baugruppen (PDM-Standardfall: jede Unterbaugruppe hat ihre EIGENE, lokal bei 0 beginnende
 +// Joint-Nummerierung) nicht aus, um den Joint ohne Suchen im Baum wiederzufinden - man muss
 +// wissen, in welcher Unterbaugruppe er sitzt. maxDepth als simple Zyklen-Bremse statt eines
-+// zusaetzlichen std::set-Includes.
++// zusaetzlichen std::set-Includes. Trotz des Namens nicht joint-spezifisch - funktioniert fuer
++// jedes DocumentObject (seit Fix 13 auch fuer geerdete Teile und Rigid-Group-Mitglieder
++// verwendet), daher hier vor solve() statt erst vor isMbDJointValid().
 +std::string getJointContextName(App::DocumentObject* obj)
 +{
 +    std::vector<std::string> parts;
@@ -333,12 +268,109 @@ index 51d2b3230f..b5f2cfb778 100644
 +    }
 +    return result;
 +}
++
++// FCPROJECT-PATCH (13): Nutzerwunsch - Namen statt nur Anzahl ausgeben, siehe solve() unten.
++std::string joinContextNames(const std::vector<App::DocumentObject*>& objs)
++{
++    std::string result;
++    for (auto* obj : objs) {
++        if (!obj) {
++            continue;
++        }
++        if (!result.empty()) {
++            result += ", ";
++        }
++        result += getJointContextName(obj);
++    }
++    return result;
++}
++
++std::string joinContextNames(const std::unordered_set<App::DocumentObject*>& objs)
++{
++    return joinContextNames(std::vector<App::DocumentObject*>(objs.begin(), objs.end()));
++}
 +}  // namespace
 +
- bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
+ int AssemblyObject::solve(bool enableRedo)
  {
-     // When dragging a part, we are bundling fixed parts together.
-@@ -2176,10 +2251,17 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
++    // FCPROJECT-PATCH (11): mehr Rueckmeldung ueber den Solver-Ablauf. Bisher blieb sowohl ein
++    // erfolgreicher Solve als auch ein mangels geerdetem Teil komplett uebersprungener Solve
++    // (groundedObjs.empty() -> return -6) OHNE JEDE Konsolen-Ausgabe - nur echte Exceptions
++    // wurden gemeldet (siehe catch-Bloecke unten). Im PDM-Alltag mit vielen verschachtelten
++    // Baugruppen ist dadurch oft unklar, ob/wann der Solver ueberhaupt gelaufen ist und was er
++    // dabei festgestellt hat (z.B. redundante Joints, siehe Fix 10) - die drei Meldungen unten
++    // decken die Fragen "1. gestartet? 2. berechnet? 3. mit welchem Ergebnis?" ab.
++    Base::Console().message("Assembly: Solving '%s'...\n", getFullName());
++
+     ensureIdentityPlacements();
+ 
+     syncGroundedJoints();
+@@ -167,6 +235,10 @@ int AssemblyObject::solve(bool enableRedo)
+     auto groundedObjs = fixGroundedParts();
+     if (groundedObjs.empty()) {
+         // If no part fixed we can't solve.
++        Base::Console().warning(
++            "Assembly: Solve of '%s' skipped - no grounded part found.\n",
++            getFullName()
++        );
+         return -6;
+     }
+ 
+@@ -197,6 +269,27 @@ int AssemblyObject::solve(bool enableRedo)
+         return -1;
+     }
+ 
++    // FCPROJECT-PATCH (13): Nutzerwunsch - nicht nur die ANZAHL der geerdeten Teile ausgeben,
++    // sondern auch deren Namen (z.B. um zu erkennen, dass Origin IMMER automatisch mitgezaehlt
++    // wird, auch ohne eigenen GroundedJoint - siehe getGroundedParts()), sowie die Mitglieder
++    // etwaiger Rigid Groups (siehe rebuildRigidClusters() oben, neues RigidGroup-Feature).
++    Base::Console().message(
++        "Assembly: '%s' computed (%zu joint(s), %zu grounded part(s): %s).\n",
++        getFullName(),
++        joints.size(),
++        groundedObjs.size(),
++        joinContextNames(groundedObjs)
++    );
++
++    for (const auto& [rep, members] : rigidMembersByRep) {
++        Base::Console().message(
++            "Assembly: rigid group '%s' (%zu Teil(e)): %s.\n",
++            getJointContextName(rep),
++            members.size(),
++            joinContextNames(members)
++        );
++    }
++
+     setNewPlacements();
+     updateRigidPlacementCache();
+ 
+@@ -204,6 +297,25 @@ int AssemblyObject::solve(bool enableRedo)
+ 
+     updateSolveStatus();
+ 
++    if (lastHasRedundancies) {
++        std::string names;
++        for (const auto& n : lastRedundantJoints) {
++            if (!names.empty()) {
++                names += ", ";
++            }
++            names += n;
++        }
++        Base::Console().warning(
++            "Assembly: Solve of '%s' finished with %zu redundant joint(s): %s.\n",
++            getFullName(),
++            lastRedundantJoints.size(),
++            names
++        );
++    }
++    else {
++        Base::Console().message("Assembly: Solve of '%s' finished successfully.\n", getFullName());
++    }
++
+     return 0;
+ }
+ 
+@@ -2176,10 +2288,17 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
  
      // If this joint is self-referential it must be ignored.
      if (getMbDPart(part1) == getMbDPart(part2)) {

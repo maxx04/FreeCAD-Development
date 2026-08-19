@@ -255,8 +255,9 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
     - `Assembly: Solving '<Name>'...` beim Start,
     - `Assembly: Solve of '<Name>' skipped - no grounded part found.` als
       Warnung, falls gar nicht gerechnet werden konnte,
-    - `Assembly: '<Name>' computed (N joint(s), M grounded part(s)).` nach
-      erfolgreicher MbD-Berechnung,
+    - `Assembly: '<Name>' computed (N joint(s), M grounded part(s): <Namen>).`
+      nach erfolgreicher MbD-Berechnung (Namen der geerdeten Teile seit
+      Fix 13),
     - abschließend entweder `Assembly: Solve of '<Name>' finished
       successfully.` oder (als Warnung, mit Namen über `getJointContextName()`
       aus Fix 10) `Assembly: Solve of '<Name>' finished with N redundant
@@ -285,6 +286,26 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
     (`Part::execute()`, Signal-Emissionen etc.) durch einen direkten
     `solve()`-Aufruf zu umgehen. Reines Python (`CommandSolveAssembly.py`),
     kein Rebuild nötig - nur Kopieren wie bei Fix 1-9.
+
+13. **Solver-Meldungen aus Fix 11 nannten nur Anzahlen, keine Namen**
+    (2026-08-19, Nutzerwunsch: "Ausgabe in Solver vervollständigen wo der
+    soll Namen für Grounded parts ausgeben, bzw. Teilnehmer Rigid Group"):
+    `computed (N joint(s), M grounded part(s))` sagte nicht, WELCHE Teile
+    das waren - gerade bei "M grounded part(s)" verwirrend, weil
+    `getGroundedParts()` das `Origin`-Objekt IMMER automatisch mitzählt,
+    auch ganz ohne eigenen `GroundedJoint` (siehe
+    [[project_fcproject_redundant_fixed_joint_rigidgroup_fix]] fürs
+    verwandte Redundanz-Thema). Fix: `computed(...)`-Meldung nennt jetzt die
+    Namen aller geerdeten Teile (über `getJointContextName()` aus Fix 10,
+    für Konsistenz bei verschachtelten Baugruppen); zusätzlich eine neue
+    Meldung pro aktiver Rigid Group (`rebuildRigidClusters()`/
+    `rigidMembersByRep`, siehe RigidGroup-Feature) mit deren Mitgliedern:
+    `Assembly: rigid group '<Name>' (N Teil(e)): <Namen>.`. Dafür
+    `getJointContextName()` (und die zwei neuen `joinContextNames()`-
+    Overloads für `vector`/`unordered_set`) im anonymen Namespace vor
+    `solve()` statt erst vor `isMbDJointValid()` platziert, da jetzt von
+    beiden Stellen gebraucht. Wie Fix 10/11 in `AssemblyObject.cpp` -
+    braucht einen Rebuild des `Assembly`-Targets.
 
 **Hinweis (2026-08-18, `update-and-rebuild-freecad.sh`-Lauf):** Upstream hat
 mit "Assembly: Add RigidGroup (#29605)" (11. Aug 2026) `AssemblyObject.cpp`
