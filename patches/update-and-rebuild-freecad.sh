@@ -92,6 +92,7 @@ ENV_PATCHED_FILES=(
 FEATURE_PATCHES=(
   "freecad-assembly-jointobject.patch"
   "freecad-assembly-link-delete-hang.patch"
+  "freecad-filedialog-search-filter.patch"
 )
 # WICHTIG: hier ALLE von den FEATURE_PATCHES beruehrten Dateien eintragen,
 # nicht nur einen Teil - sonst faellt eine vergessene Datei (z. B. AssemblyObject.cpp
@@ -104,6 +105,8 @@ FEATURE_PATCHED_FILES=(
   "src/Mod/Assembly/App/AssemblyLink.h"
   "src/Mod/Assembly/App/AssemblyObject.cpp"
   "src/Mod/Assembly/CommandSolveAssembly.py"
+  "src/Gui/FileDialog.cpp"
+  "src/Gui/FileDialog.h"
 )
 
 DRY_RUN=0

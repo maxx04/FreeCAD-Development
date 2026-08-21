@@ -449,6 +449,77 @@ kein `const char*` mehr direkt liefert, das eindeutig auf einen der
 `QByteArray`-Konstruktoren passt. Fix: explizit `.data()` und `.size()`
 übergeben.
 
+## freecad-filedialog-search-filter.patch
+
+Betrifft `src/Gui/FileDialog.{cpp,h}` (`Gui::FileDialog`, der nicht-native
+Öffnen/Speichern-Dialog - wird von FCProject bewusst erzwungen, siehe
+`DontUseNativeDialog` in `resources/run-freecad-26.3.sh`, wegen eines
+lautlosen Hangs im nativen Dialog auf dieser Maschine).
+
+**Problem** (2026-08-21, Nutzer-Repro): das Feld "Dateiname" validiert bei
+jedem Tastendruck den eingegebenen Text als konkreten, existierenden
+Dateinamen (Qt-eigenes Verhalten) - eine Wildcard-Maske wie `*Tr*` oder
+`*.csv` zum Filtern der Liste eintippen löst darüber nur die Fehlermeldung
+"Die Datei konnte nicht gefunden werden" aus, statt zu filtern. Es gibt in
+diesem Dialog keine funktionierende Möglichkeit, die Dateiliste nach Namen
+zu durchsuchen/filtern.
+
+**Fix:** neues Suchfeld ("Search:") wird als letzte Zeile in den
+bestehenden `QGridLayout` des Dialogs eingefügt (unterhalb der
+OK/Abbrechen-Buttons - bewusst keine Positionierung *über* den Buttons
+versucht, siehe Live-Test-Erkenntnis unten). Live-Filterung über eine neue
+`FileDialogSearchProxyModel : QSortFilterProxyModel`
+(`FileDialog::setupSearchFilter()`/`onSearchTextChanged()`), verbunden auf
+`QLineEdit::textChanged` statt auf Enter:
+- reiner Text ohne `*`/`?` wird automatisch als Teilstring-Suche behandelt
+  (`text` -> `*text*`),
+- ein Muster mit `*`/`?` wird direkt als Wildcard verwendet (z.B.
+  `BOM*.csv`),
+- Ordner bleiben in `filterAcceptsRow()` immer sichtbar, damit man trotz
+  aktivem Filter weiter navigieren kann - nur Dateien werden gefiltert.
+
+Betrifft nur den nicht-nativen Dialog (`layout()` liefert dort ein
+`QGridLayout*`; beim nativen OS-Dialog bleibt es ein No-Op) - erzwungen
+per `DontUseNativeDialog=1`, siehe `resources/run-freecad-26.3.sh`.
+
+**Zwei Live-Test-Erkenntnisse vom 2026-08-21 (per Diagnose-Logging in
+`setupSearchFilter()` gefunden, siehe `Base::Console().log(...)`-Aufrufe im
+Code):**
+1. Erster Versuch positionierte das Suchfeld *über* den Buttons, indem die
+   `QDialogButtonBox` per `grid->getItemPosition()` eine Zeile nach unten
+   verschoben wurde - Feld blieb unsichtbar. Vermutete Ursache: die
+   Button-Box teilt sich vermutlich eine Grid-Zeile mit anderen Widgets
+   (z.B. "Dateiname"), wodurch das neu eingefügte Suchfeld eine bereits
+   belegte Zelle überlagert hat. Endgültiger Fix positioniert stattdessen
+   garantiert kollisionsfrei bei `grid->rowCount()` (erste sicher freie
+   Zeile) - kostet nur die optisch etwas unübliche Position unterhalb der
+   Buttons.
+2. Selbst danach blieb das Feld unsichtbar, weil `layout()` direkt im
+   Konstruktor noch `nullptr` liefert - Qt baut die interne
+   Widget-Oberfläche des nicht-nativen Dialogs nachweislich erst verzögert
+   beim tatsächlichen Anzeigen auf, nicht schon beim Konstruieren. Fix:
+   `setupSearchFilter()` wird jetzt aus einem neuen `showEvent()`-Override
+   aufgerufen statt aus dem Konstruktor (idempotent via
+   `if (searchLineEdit) return;`, da `showEvent()` mehrfach feuern kann).
+
+Live gegen den selbstgebauten FreeCAD 26.3 getestet (Nutzer-Bestätigung
+2026-08-21: Suchfeld erscheint, Filterung funktioniert) - inklusive der
+beiden oben beschriebenen Fehlschläge, bevor der finale Stand griff.
+
+### Anwenden
+
+```bash
+cd /home/maxx/freecad/freecad-source
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-filedialog-search-filter.patch
+cmake --build build --target FreeCADGui -- -j$(nproc)
+cp build/lib/libFreeCADGui.so /home/maxx/freecad/install/lib/libFreeCADGui.so
+```
+
+(C++, betrifft `libFreeCADGui.so` - Rebuild des `FreeCADGui`-Targets nötig,
+reines Kopieren wie bei den Python-Patches reicht hier nicht. Der Rebuild
+zieht wegen des geänderten Headers viele abhängige `.cpp`-Dateien im
+Gui-Modul mit - ca. 1-2 Minuten inkrementell.)
+
 ## freecad-propertyeditor-qstring-fix.patch
 
 Betrifft `src/Gui/propertyeditor/PropertyEditor.cpp`. `QString::operator+=`
@@ -468,8 +539,11 @@ git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-ass
 git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-cmake-disable-tests.patch
 git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-navigation-qbytearray-fix.patch
 git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-propertyeditor-qstring-fix.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-filedialog-search-filter.patch
 cp src/Mod/Assembly/JointObject.py /home/maxx/freecad/install/Mod/Assembly/JointObject.py
 cp src/Mod/Assembly/CommandSolveAssembly.py /home/maxx/freecad/install/Mod/Assembly/CommandSolveAssembly.py
 cmake --build build --target Assembly -- -j$(nproc)
 cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.so
+cmake --build build --target FreeCADGui -- -j$(nproc)
+cp build/lib/libFreeCADGui.so /home/maxx/freecad/install/lib/libFreeCADGui.so
 ```
