@@ -1,5 +1,5 @@
 diff --git a/src/Gui/FileDialog.cpp b/src/Gui/FileDialog.cpp
-index c86736bd1e..2457ef1bf5 100644
+index c86736bd1e..e08892401e 100644
 --- a/src/Gui/FileDialog.cpp
 +++ b/src/Gui/FileDialog.cpp
 @@ -40,6 +40,7 @@
@@ -10,48 +10,7 @@ index c86736bd1e..2457ef1bf5 100644
  #include <QLineEdit>
  #include <QMenuBar>
  #include <QPushButton>
-@@ -47,6 +48,7 @@
- #include <QRegularExpression>
- #include <QRegularExpressionMatch>
- #include <QResizeEvent>
-+#include <QSortFilterProxyModel>
- #include <QStandardPaths>
- #include <QStyle>
- #include <QUrl>
-@@ -100,6 +102,32 @@ QString getPreferredDialogDirectory()
- 
-     return FileDialog::getWorkingDirectory();
- }
-+
-+/*!
-+ * Proxy model used by FileDialog's live search field (see
-+ * FileDialog::setupSearchFilter()). Behaves like a plain name filter
-+ * (QSortFilterProxyModel::setFilterRegularExpression()/filterAcceptsRow()),
-+ * except that directories are always accepted regardless of the current
-+ * pattern, so the user can keep navigating into folders while a filter is
-+ * active instead of the whole tree collapsing to nothing.
-+ */
-+class FileDialogSearchProxyModel: public QSortFilterProxyModel
-+{
-+public:
-+    using QSortFilterProxyModel::QSortFilterProxyModel;
-+
-+protected:
-+    bool filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const override
-+    {
-+        if (auto* fsModel = qobject_cast<QFileSystemModel*>(sourceModel())) {
-+            QModelIndex index = fsModel->index(sourceRow, 0, sourceParent);
-+            if (fsModel->isDir(index)) {
-+                return true;
-+            }
-+        }
-+        return QSortFilterProxyModel::filterAcceptsRow(sourceRow, sourceParent);
-+    }
-+};
- }  // namespace
- 
- // An raii-helper struct to disable actions while dialogs are open
-@@ -203,6 +231,12 @@ FileDialog::FileDialog(QWidget* parent)
+@@ -203,6 +204,12 @@ FileDialog::FileDialog(QWidget* parent)
  
  FileDialog::~FileDialog() = default;
  
@@ -64,7 +23,7 @@ index c86736bd1e..2457ef1bf5 100644
  void FileDialog::onSelectedFilter(const QString& /*filter*/)
  {
      QRegularExpression rx(QLatin1String(R"(\(\*.(\w+))"));
-@@ -214,6 +248,111 @@ void FileDialog::onSelectedFilter(const QString& /*filter*/)
+@@ -214,6 +221,111 @@ void FileDialog::onSelectedFilter(const QString& /*filter*/)
      }
  }
  
@@ -114,11 +73,11 @@ index c86736bd1e..2457ef1bf5 100644
 +        return;
 +    }
 +
-+    auto* proxy = new FileDialogSearchProxyModel(this);
-+    proxy->setFilterKeyColumn(0);  // "Name" column of QFileSystemModel
-+    proxy->setRecursiveFilteringEnabled(false);
-+    setProxyModel(proxy);
-+    searchProxyModel = proxy;
++    // Remember what the "Files of type" combo had selected so it can be
++    // restored once the search field is cleared again - onSearchTextChanged()
++    // temporarily overrides it with setNameFilter() while searching.
++    originalNameFilters = nameFilters();
++    originalSelectedFilter = selectedNameFilter();
 +
 +    auto* label = new QLabel(tr("Search:"), this);
 +    auto* edit = new QLineEdit(this);
@@ -149,47 +108,46 @@ index c86736bd1e..2457ef1bf5 100644
 +
 +void FileDialog::onSearchTextChanged(const QString& text)
 +{
-+    if (!searchProxyModel) {
-+        return;
-+    }
-+
 +    QString pattern = text.trimmed();
 +    if (pattern.isEmpty()) {
-+        searchProxyModel->setFilterRegularExpression(QRegularExpression());
++        // Back to whatever the "Files of type" combo had selected before
++        // searching started.
++        setNameFilters(originalNameFilters);
++        if (!originalSelectedFilter.isEmpty()) {
++            selectNameFilter(originalSelectedFilter);
++        }
 +        return;
 +    }
 +
 +    // Plain text without explicit wildcards is treated as a substring match
 +    // ("*text*"); a pattern that already contains '*' or '?' is used as-is,
-+    // so e.g. "BOM*.csv" keeps working as a real wildcard mask.
++    // so e.g. "BOM*.csv" keeps working as a real wildcard mask. setNameFilter()
++    // is QFileDialog's own, fully supported filtering mechanism (same one the
++    // "Files of type" combo uses) - unlike a custom proxy model, it needs no
++    // extra bookkeeping to keep folders always navigable: QFileDialog already
++    // never applies name filters to directories, only to files.
 +    if (!pattern.contains(QLatin1Char('*')) && !pattern.contains(QLatin1Char('?'))) {
 +        pattern = QStringLiteral("*%1*").arg(pattern);
 +    }
-+
-+    QRegularExpression rx(
-+        QRegularExpression::wildcardToRegularExpression(pattern),
-+        QRegularExpression::CaseInsensitiveOption
-+    );
-+    searchProxyModel->setFilterRegularExpression(rx);
++    setNameFilter(pattern);
 +}
 +
  QList<QUrl> FileDialog::fetchSidebarUrls()
  {
      QStringList list;
 diff --git a/src/Gui/FileDialog.h b/src/Gui/FileDialog.h
-index 8f2c5c1776..bed710528e 100644
+index 8f2c5c1776..71e871b848 100644
 --- a/src/Gui/FileDialog.h
 +++ b/src/Gui/FileDialog.h
-@@ -35,6 +35,8 @@ class QGridLayout;
+@@ -35,6 +35,7 @@ class QGridLayout;
  class QGroupBox;
  class QHBoxLayout;
  class QLineEdit;
 +class QShowEvent;
-+class QSortFilterProxyModel;
  class QSpacerItem;
  
  namespace Gui
-@@ -157,13 +159,37 @@ public:
+@@ -157,13 +158,42 @@ public:
  
      void accept() override;
  
@@ -210,20 +168,25 @@ index 8f2c5c1776..bed710528e 100644
      bool hasSuffix(const QString&) const;
      static QList<QUrl> fetchSidebarUrls();
 +    /*!
-+     * Adds a live search/filter field above the file view (non-native dialog
++     * Adds a live search/filter field below the file view (non-native dialog
 +     * only). Unlike QFileDialog's own wildcard-on-Enter handling in the
 +     * "File name" field - which validates the typed text as a literal file
 +     * name on every keystroke and is unreliable in practice - this filters
-+     * the visible list as you type, via a QSortFilterProxyModel. Folders are
-+     * always kept visible so navigation still works while a filter is active.
-+     * Safe to call more than once (e.g. from repeated showEvent()s) - a
-+     * no-op once the field already exists.
++     * the visible list as you type, via setNameFilter() (see
++     * onSearchTextChanged()). Folders are always kept visible so navigation
++     * still works while a filter is active - QFileDialog's name filters
++     * already never apply to directories, only to files. Safe to call more
++     * than once (e.g. from repeated showEvent()s) - a no-op once the field
++     * already exists.
 +     */
 +    void setupSearchFilter();
      static QString workingDirectory;
 +
 +    QPointer<QLineEdit> searchLineEdit;
-+    QPointer<QSortFilterProxyModel> searchProxyModel;
++    /// "Files of type" state from before the search field took over, so it
++    /// can be restored once the search text is cleared again.
++    QStringList originalNameFilters;
++    QString originalSelectedFilter;
  };
  
  // ----------------------------------------------------------------------

@@ -467,44 +467,63 @@ zu durchsuchen/filtern.
 **Fix:** neues Suchfeld ("Search:") wird als letzte Zeile in den
 bestehenden `QGridLayout` des Dialogs eingefügt (unterhalb der
 OK/Abbrechen-Buttons - bewusst keine Positionierung *über* den Buttons
-versucht, siehe Live-Test-Erkenntnis unten). Live-Filterung über eine neue
-`FileDialogSearchProxyModel : QSortFilterProxyModel`
-(`FileDialog::setupSearchFilter()`/`onSearchTextChanged()`), verbunden auf
-`QLineEdit::textChanged` statt auf Enter:
+versucht, siehe Live-Test-Erkenntnisse unten). Live-Filterung über
+`FileDialog::onSearchTextChanged()`, verbunden auf `QLineEdit::textChanged`
+statt auf Enter, per `QFileDialog::setNameFilter()` - demselben,
+voll unterstützten Mechanismus, den auch das "Dateien des Typs"-Dropdown
+selbst benutzt:
 - reiner Text ohne `*`/`?` wird automatisch als Teilstring-Suche behandelt
   (`text` -> `*text*`),
 - ein Muster mit `*`/`?` wird direkt als Wildcard verwendet (z.B.
   `BOM*.csv`),
-- Ordner bleiben in `filterAcceptsRow()` immer sichtbar, damit man trotz
-  aktivem Filter weiter navigieren kann - nur Dateien werden gefiltert.
+- Ordner bleiben immer sichtbar, ganz ohne Zusatzaufwand - Name-Filter
+  in `QFileDialog` greifen laut Qt-Doku ohnehin nur auf Dateien, nie auf
+  Verzeichnisse,
+- beim Leeren des Suchfelds wird der vorherige Filterzustand
+  (`nameFilters()`/`selectedNameFilter()`, in `setupSearchFilter()`
+  gemerkt) wiederhergestellt.
 
 Betrifft nur den nicht-nativen Dialog (`layout()` liefert dort ein
 `QGridLayout*`; beim nativen OS-Dialog bleibt es ein No-Op) - erzwungen
 per `DontUseNativeDialog=1`, siehe `resources/run-freecad-26.3.sh`.
 
-**Zwei Live-Test-Erkenntnisse vom 2026-08-21 (per Diagnose-Logging in
+**Live-Test-Erkenntnisse vom 2026-08-21** (per Diagnose-Logging in
 `setupSearchFilter()` gefunden, siehe `Base::Console().log(...)`-Aufrufe im
-Code):**
+Code):
 1. Erster Versuch positionierte das Suchfeld *über* den Buttons, indem die
    `QDialogButtonBox` per `grid->getItemPosition()` eine Zeile nach unten
    verschoben wurde - Feld blieb unsichtbar. Vermutete Ursache: die
    Button-Box teilt sich vermutlich eine Grid-Zeile mit anderen Widgets
    (z.B. "Dateiname"), wodurch das neu eingefügte Suchfeld eine bereits
-   belegte Zelle überlagert hat. Endgültiger Fix positioniert stattdessen
-   garantiert kollisionsfrei bei `grid->rowCount()` (erste sicher freie
-   Zeile) - kostet nur die optisch etwas unübliche Position unterhalb der
-   Buttons.
+   belegte Zelle überlagert hat. Fix: garantiert kollisionsfrei bei
+   `grid->rowCount()` einfügen (erste sicher freie Zeile) - kostet nur die
+   optisch etwas unübliche Position unterhalb der Buttons.
 2. Selbst danach blieb das Feld unsichtbar, weil `layout()` direkt im
    Konstruktor noch `nullptr` liefert - Qt baut die interne
    Widget-Oberfläche des nicht-nativen Dialogs nachweislich erst verzögert
    beim tatsächlichen Anzeigen auf, nicht schon beim Konstruieren. Fix:
-   `setupSearchFilter()` wird jetzt aus einem neuen `showEvent()`-Override
+   `setupSearchFilter()` wird aus einem neuen `showEvent()`-Override
    aufgerufen statt aus dem Konstruktor (idempotent via
    `if (searchLineEdit) return;`, da `showEvent()` mehrfach feuern kann).
+3. Erste funktionierende Fassung nutzte ein eigenes
+   `FileDialogSearchProxyModel : QSortFilterProxyModel`, per
+   `QFileDialog::setProxyModel()` eingehängt (mit `filterAcceptsRow()`, das
+   Verzeichnisse immer durchwinkt). Feld und Filterung funktionierten,
+   erzeugten aber bei jedem Dialogaufbau zweimal die Qt-Warnung
+   `QSortFilterProxyModel: index from wrong model passed to mapToSource` -
+   vermutlich, weil `setProxyModel()` mitten im bereits laufenden
+   Initialisierungsablauf des Dialogs (in `showEvent()`, nach
+   `setDirectory()` etc.) das Modell austauscht, während Qt intern noch
+   `QModelIndex`-Zustand (Verlauf/aktuelle Auswahl) vom vorherigen
+   Standard-Proxy referenziert. Endgültiger Fix: eigenes Proxy-Model
+   komplett verworfen, stattdessen `setNameFilter()`/`setNameFilters()`
+   direkt auf dem Dialog - Qts eigener, dafür vorgesehener Mechanismus,
+   ohne Modellaustausch, ohne die Warnung.
 
 Live gegen den selbstgebauten FreeCAD 26.3 getestet (Nutzer-Bestätigung
-2026-08-21: Suchfeld erscheint, Filterung funktioniert) - inklusive der
-beiden oben beschriebenen Fehlschläge, bevor der finale Stand griff.
+2026-08-21: Suchfeld erscheint, Filterung funktioniert, keine Warnung mehr
+im Log) - inklusive der drei oben beschriebenen Fehlschläge, bevor der
+finale Stand griff.
 
 ### Anwenden
 
