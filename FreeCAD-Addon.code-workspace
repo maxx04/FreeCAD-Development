@@ -1,12 +1,23 @@
 {
-    "folders": [
-        {
-            "name": "Addon-Source",
-            "path": "src"
-        }
-    ],
-    "settings": {
-        "cmake.sourceDirectory": "${workspaceFolder:Addon-Source}",
-        "cmake.useCMakePresets": "always"
-    }
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../assembly-solver-sandbox"
+		}
+	],
+	"settings": {
+		"terminal.integrated.profiles.linux": {
+			"venv_prof": {
+				"path": "/usr/bin/bash",
+				"args": [
+					"-l"
+				]
+			}
+		},
+		"terminal.integrated.defaultProfile.linux": "venv_prof",
+		"cmake.options.statusBarVisibility": "visible",
+		"python-envs.defaultEnvManager": "ms-python.python:venv"
+	}
 }
