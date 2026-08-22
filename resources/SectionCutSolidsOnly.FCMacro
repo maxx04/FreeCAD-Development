@@ -1,0 +1,177 @@
+# -*- coding: utf-8 -*-
+"""SectionCutSolidsOnly.FCMacro
+
+Schneidet in der aktiven 3D-Ansicht nur Koerper (Solids) an einer per Auswahl
+vorgegebenen Ebene - Flaechen-/Oberflaechen-Objekte (kein Volumen, z.B. aus der
+Surface-Werkbank) werden unangetastet uebersprungen. Anders als die eingebaute
+Clipping-Ebene (View -> Clipping Plane) ist das ein echter Boolean-Schnitt
+(Part::makeCut) mit einer echten Schnittflaeche, keine reine OpenGL-Blende -
+dafuer nicht live ziehbar, sondern einmalig auf Knopfdruck. Bewusst OHNE
+Schraffur auf der Schnittflaeche (Nutzerwunsch) - einfache Volumenkoerper-
+Darstellung reicht.
+
+Bedienung:
+1. Vor dem Ausfuehren eine ebene Flaeche ODER ein Datum-Plane-Objekt
+   auswaehlen - das definiert Position und Ausrichtung der Schnittebene.
+   Weggeschnitten wird die Haelfte, in die die Flaechennormale zeigt (bei
+   einem Datum-Plane die lokale +Z-Achse). Falls die falsche Haelfte
+   verschwindet: unten INVERT auf True setzen und erneut ausfuehren, oder
+   stattdessen die gegenueberliegende Flaeche auswaehlen.
+2. Dieses Makro ausfuehren (Makro-Menue -> Makros... -> Ausfuehren, oder in
+   eine eigene Toolbar/Tastenkuerzel legen).
+3. Ergebnis: fuer jeden aktuell SICHTBAREN Koerper im aktiven Dokument
+   entsteht ein neues "<Name>_Schnitt"-Objekt mit der geschnittenen Form;
+   das Original wird dabei ausgeblendet (nicht geloescht). Objekte ohne
+   Volumen (Shape.Solids leer) werden uebersprungen und bleiben unveraendert
+   sichtbar - genau das war der eigentliche Nutzerwunsch (Koerper schneiden,
+   Flaechen nicht).
+4. Rueckgaengig machen: entweder Strg+Z direkt danach, oder die "_Schnitt"-
+   Objekte manuell loeschen und die Originale wieder einblenden (Leertaste).
+
+Getestet werden sollte das live in der echten Baugruppe, bevor es fest in
+einen Arbeitsablauf uebernommen wird - insbesondere bei App::Link/Assembly::
+AssemblyLink-Objekten (verlinkte Unterbaugruppen) kann .Shape je nach
+Verschachtelung ein bereits zusammengesetzter Compound sein; das Skript
+schneidet dann die gesamte verlinkte Baugruppe auf einmal, nicht Teil fuer
+Teil einzeln.
+"""
+
+import math
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+# Auf True setzen, um die jeweils andere Haelfte wegzuschneiden, ohne die
+# Flaechenauswahl wiederholen zu muessen.
+INVERT = False
+
+
+def get_cutting_plane():
+    sel = Gui.Selection.getSelectionEx()
+    if not sel:
+        raise RuntimeError(
+            "Bitte zuerst eine ebene Flaeche (oder ein Datum-Plane-Objekt) auswaehlen."
+        )
+    sub = sel[0]
+    obj = sub.Object
+
+    if sub.SubElementNames and sub.SubElementNames[0].startswith("Face"):
+        face = obj.Shape.getElement(sub.SubElementNames[0])
+        if not isinstance(face.Surface, Part.Plane):
+            raise RuntimeError("Ausgewaehlte Flaeche ist nicht eben.")
+        base = face.CenterOfMass
+        normal = face.Surface.Axis
+        if face.Orientation == "Reversed":
+            normal = normal.negative()
+    elif obj.TypeId in ("PartDesign::Plane", "Part::Plane", "App::Plane"):
+        base = obj.Placement.Base
+        normal = obj.Placement.Rotation.multVec(App.Vector(0, 0, 1))
+    else:
+        raise RuntimeError(
+            "Auswahl ist weder eine ebene Flaeche noch ein Datum-Plane-Objekt."
+        )
+
+    if INVERT:
+        normal = normal.negative()
+    return base, normal.normalize()
+
+
+def make_cutting_tool(base, normal, size):
+    """Grosser Kasten, dessen eine Seite genau auf der Schnittebene liegt und
+    der von dort in Richtung der Flaechennormale wegragt - das ist die
+    Haelfte des Raums, die weggeschnitten wird."""
+    if not math.isfinite(size) or size <= 0.0:
+        raise RuntimeError(
+            f"Ungueltige Schnitt-Box-Groesse berechnet ({size!r}) - "
+            "vermutlich eine Form mit unplausibler BoundBox im Dokument."
+        )
+    try:
+        box = Part.makeBox(size, size, size, App.Vector(-size / 2, -size / 2, 0))
+    except Part.OCCError as exc:
+        raise RuntimeError(f"Schnitt-Box (Kantenlaenge {size}) konnte nicht erzeugt werden: {exc}") from exc
+    rotation = App.Rotation(App.Vector(0, 0, 1), normal)
+    box.Placement = App.Placement(base, rotation)
+    return box
+
+
+def run():
+    doc = App.ActiveDocument
+    if doc is None:
+        raise RuntimeError("Kein aktives Dokument.")
+
+    base, normal = get_cutting_plane()
+
+    # Nur Solids einbeziehen - Achsen/Datum-Ebenen/Skizzen etc. haben teils
+    # entartete oder unplausible BoundBox-Werte (bis hin zu NaN/Infinity), was
+    # Part.makeBox weiter unten mit "creation of box failed" abbrechen liess.
+    bbox = App.BoundBox()
+    for obj in doc.Objects:
+        if hasattr(obj, "Shape") and obj.Shape and not obj.Shape.isNull() and obj.Shape.Solids:
+            bbox.add(obj.Shape.BoundBox)
+    diagonal = bbox.DiagonalLength if bbox.isValid() else 0.0
+    if not math.isfinite(diagonal) or diagonal <= 0.0:
+        diagonal = 0.0
+    size = max(diagonal * 2, 100.0)
+
+    tool = make_cutting_tool(base, normal, size)
+
+    cut_count = 0
+    empty_results = []
+    unchanged_results = []
+    skipped = []
+    for obj in doc.Objects:
+        vis_obj = getattr(obj, "ViewObject", None)
+        if vis_obj is None or not vis_obj.Visibility:
+            continue
+        if obj.Name.endswith("_Schnitt"):
+            continue  # eigene, vorher erzeugte Schnitt-Objekte nicht nochmal schneiden
+        if not hasattr(obj, "Shape") or obj.Shape is None or obj.Shape.isNull():
+            continue
+        if not obj.Shape.Solids:
+            skipped.append(obj.Label)
+            continue
+
+        original_volume = obj.Shape.Volume
+        result_shape = obj.Shape.cut(tool)
+        # Auffaellige Ergebnisse mitprotokollieren statt sie stillschweigend
+        # als (unsichtbares) leeres oder augenscheinlich ungeschnittenes
+        # Objekt durchgehen zu lassen - haeufigste Ursache: die gewaehlte
+        # Flaeche zeigt mit ihrer Normale vom Material weg (OCC-Konvention),
+        # dann trifft die Schnitt-Box den Koerper gar nicht (unveraendertes
+        # Volumen) oder umschliesst ihn komplett (leeres Ergebnis).
+        if result_shape.isNull() or not result_shape.Solids:
+            empty_results.append(obj.Label)
+        elif abs(result_shape.Volume - original_volume) < 1e-6:
+            unchanged_results.append(obj.Label)
+
+        section_obj = doc.addObject("Part::Feature", f"{obj.Name}_Schnitt")
+        section_obj.Label = f"{obj.Label} (Schnitt)"
+        section_obj.Shape = result_shape
+        section_obj.ViewObject.Visibility = True
+        vis_obj.Visibility = False
+        cut_count += 1
+
+    doc.recompute()
+    if empty_results:
+        App.Console.PrintWarning(
+            "SectionCutSolidsOnly: Schnittebene liegt komplett auf der falschen Seite - "
+            f"{len(empty_results)} Objekt(e) wurden dabei volltaendig weggeschnitten (leer): "
+            f"{', '.join(empty_results)}. INVERT im Makro-Kopf umschalten und erneut "
+            "ausfuehren.\n"
+        )
+    if unchanged_results:
+        App.Console.PrintWarning(
+            "SectionCutSolidsOnly: Schnittebene trifft folgende Objekte gar nicht - "
+            f"Volumen unveraendert: {', '.join(unchanged_results)}. Vermutlich zeigt die "
+            "gewaehlte Flaechennormale vom Material weg; INVERT im Makro-Kopf umschalten "
+            "und erneut ausfuehren.\n"
+        )
+    msg = f"SectionCutSolidsOnly: {cut_count} Koerper geschnitten"
+    if skipped:
+        msg += f", {len(skipped)} Flaechen-Objekt(e) uebersprungen ({', '.join(skipped)})"
+    msg += "."
+    App.Console.PrintMessage(msg + "\n")
+
+
+run()

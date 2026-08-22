@@ -28,6 +28,7 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         import PatternFeatures as PatternFeatures
         import PartExchangeCommand as PartExchangeCommand
         import SelectableRepairCommand as SelectableRepairCommand
+        import SectionSketchFeature as SectionSketchFeature
         import DocObserver
         DocObserver.register()
 
@@ -37,7 +38,8 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
             "FCProject_ExportBOM",
             "FCProject_PatternGroup",
             "FCProject_PartExchange",
-            "FCProject_RepairSelectable"
+            "FCProject_RepairSelectable",
+            "FCProject_CreateSectionSketch"
         ])
 
 

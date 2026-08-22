@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Section Sketch Icon - Koerper mit Schnittebene und Schnittkontur -->
+  <defs>
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4A90E2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#357ABD;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" fill="white" opacity="0"/>
+
+  <!-- Wuerfel (Koerper) -->
+  <g transform="translate(10, 22)">
+    <rect x="0" y="0" width="26" height="26" fill="url(#grad1)" stroke="#2E5C8A" stroke-width="0.8"/>
+    <polygon points="0,0 9,-8 35,-8 26,0" fill="#5BA3F5" opacity="0.8"/>
+    <polygon points="26,0 35,-8 35,18 26,26" fill="#2E5C8A" opacity="0.6"/>
+  </g>
+
+  <!-- Schnittebene (halbtransparent, schraeg durch den Koerper) -->
+  <polygon points="4,20 54,10 60,30 10,40" fill="#F5A623" opacity="0.35" stroke="#C77C11" stroke-width="1.2"/>
+
+  <!-- Schnittkontur (das Ergebnis: die Sketch-Geometrie auf der Ebene) -->
+  <circle cx="32" cy="25" r="7" fill="none" stroke="#1E1E1E" stroke-width="2"/>
+</svg>
