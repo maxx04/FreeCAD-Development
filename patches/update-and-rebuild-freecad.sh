@@ -93,6 +93,7 @@ FEATURE_PATCHES=(
   "freecad-assembly-jointobject.patch"
   "freecad-assembly-link-delete-hang.patch"
   "freecad-filedialog-search-filter.patch"
+  "freecad-assembly-grounded-joint-nested-flex.patch"
 )
 # WICHTIG: hier ALLE von den FEATURE_PATCHES beruehrten Dateien eintragen,
 # nicht nur einen Teil - sonst faellt eine vergessene Datei (z. B. AssemblyObject.cpp

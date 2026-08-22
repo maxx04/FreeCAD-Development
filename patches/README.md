@@ -433,6 +433,82 @@ cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.
 (C++, betrifft `AssemblyApp.so` - Rebuild des `Assembly`-Targets nötig,
 reines Kopieren wie bei den Python-Patches reicht hier nicht.)
 
+## freecad-assembly-grounded-joint-nested-flex.patch
+
+**⚠️ Aktuell WIRKUNGSLOS (Aufruf auskommentiert) - hat live einen FreeCAD-Absturz verursacht,
+NICHT ohne Reentrancy-Fix reaktivieren.** Betrifft `src/Mod/Assembly/App/AssemblyLink.{cpp,h}`.
+
+**Ausgangsbug** (2026-08-22, Nutzer-Repro): baut man eine Unterbaugruppe mit intern per
+`GroundedJoint` geerdeten/starren Teilen (z.B. ein Kaufteil-Motor mit 17 starr fixierten
+Gehäuseteilen + 1 drehbarer Welle) selbst als **flexible** (`Rigid=False`) Unterbaugruppe
+**zwei oder mehr Ebenen tief** in eine weitere Baugruppe ein (`TraegerBaugruppe_Z` ->
+`TreiberBaugruppe100`[flex] -> `NEMA17x33`[flex] -> 18 Teile), landen alle betroffenen Teile
+mit `Placement` = exakter Identität am Weltursprung - "der Motor bricht zusammen".
+
+**Root Cause** (im FreeCAD-Quellcode verifiziert, `AssemblyObject::getJoints()`, Kommentar
+*"Filter grounded joints and deactivated joints"*): `AssemblyLink::synchronizeJoints()`
+spiegelt beim Verschachteln nur echte Joints mit `Reference1`/`Reference2`
+(`App::PropertyXLinkSub`, via `handleJointReference()`/`findLocalAncestor()` - siehe
+`freecad-assembly-link-delete-hang.patch`, 2. Fix) - `GroundedJoint` (`ObjectToGround`) und
+`RigidGroupJoint` (`ObjectsToRigidGroup`) sind einfache Objekt-Links OHNE Sub-Pfad und werden
+dabei absichtlich ausgeschlossen, bleiben also beim Verschachteln komplett unberücksichtigt.
+
+**Drei Fix-Anläufe, alle live getestet, siehe
+[[project_fcproject_grounded_joint_nested_flex_assembly_bug]] für den vollen Verlauf:**
+
+1. Neue Funktion `AssemblyLink::synchronizeGroundedAndRigidJoints()` (aufgerufen aus
+   `updateContents()` nach `synchronizeJoints()`): spiegelt GroundedJoint/RigidGroupJoint
+   zusätzlich, per neuer Hilfsfunktion `mapToLocalComponent()`. Erster Versuch nutzte
+   `objLinkMap` + `findLocalAncestor()`-Fallback (wie bei Reference1/2) - **falsch**: ohne
+   Sub-Pfad-Konzept sprang der Fallback auf den ganzen (flexiblen, laut Code selbst nicht
+   erdbaren) Container statt auf das einzelne Zielteil.
+2. `mapToLocalComponent()` neu geschrieben: Vergleich nicht mehr über Pointer-Gleichheit,
+   sondern über `DocumentObject::getLinkedObject(true)` - jede PDM-Teil-Kopie ist selbst ein
+   `App::Link`, dessen rekursiv aufgelöstes Ziel *immer* auf dieselbe Quelldatei zeigt, egal auf
+   welcher Verschachtelungsebene. Live verifiziert: **funktioniert korrekt**, findet stabil das
+   richtige Einzelteil bzw. die richtige 17er-Teilemenge, kein Zuordnungsfehler mehr.
+3. Trotzdem blieben Placements bei Identität - `JointObject.RigidGroupJoint.__init__()`
+   berechnet `RigidPlacements` sofort aus dem AKTUELLEN (bei einer frischen Kopie: noch
+   identischen) Placement der Mitglieder, bevor der eigentliche Solve gelaufen ist. Fix-Versuch:
+   `RigidPlacements` direkt vom Quell-Joint übernehmen statt neu berechnen.
+
+**Beim Live-Test von Fix 3: echter FreeCAD-Absturz** beim Löschen der verschachtelten
+`AssemblyLink` aus der Baugruppe. Log zeigt eine Reentrancy-Endlosschleife unmittelbar vor dem
+Absturz (hunderte abwechselnde "Zuordnung gefunden"/"Zuordnung verloren"-Zeilen für dieselben
+zwei Objekte). Vermutete Ursache: die `Base::Interpreter().runString()`-Aufrufe in
+`synchronizeGroundedAndRigidJoints()` (Joint anlegen/löschen) lösen beim Löschen einer
+Baugruppe eine Kaskade über Python-`onChanged()`-Callbacks aus, die vom bestehenden
+`updatingContents`-Guard NICHT abgefangen wird (der schützt nur vor verschachtelten Aufrufen
+von `updateContents()` selbst, nicht vor Kaskaden über Callbacks auf andere Objekte) - dieselbe
+Bug-Klasse wie der bereits gepatchte "loeschfehler", hier durch das neue Feature erneut
+ausgelöst.
+
+**Deshalb: der Aufruf `synchronizeGroundedAndRigidJoints();` in
+`AssemblyLink::updateContents()` ist auskommentiert.** Die Funktion selbst (inkl. der
+funktionierenden `mapToLocalComponent()`) bleibt im Patch erhalten - reiner Diagnose-/
+Grundlagen-Code für den nächsten Anlauf, aktuell ohne jede Laufzeitwirkung, da nie aufgerufen.
+
+**Vor einer Reaktivierung zwingend:**
+1. Reentrancy-Schutz für die Python-Interpreter-Aufrufe selbst einbauen (nicht nur für
+   `updateContents()` als Ganzes).
+2. Erst an einem kleinen, synthetischen Testfall (2-3 Teile) das Löschverhalten prüfen, bevor
+   wieder live gegen eine echte Baugruppe getestet wird.
+3. Die `RigidPlacements`-Kopie (Fix 3) war zum Zeitpunkt des Absturzes noch nicht separat vom
+   Reentrancy-Problem verifiziert.
+
+### Anwenden
+
+```bash
+cd /home/maxx/freecad/freecad-source
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-grounded-joint-nested-flex.patch
+cmake --build build --target Assembly -- -j$(nproc)
+cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.so
+```
+
+(C++, betrifft `AssemblyApp.so` - Rebuild des `Assembly`-Targets nötig. Sicher anzuwenden, da
+der einzige Aufruf der neuen Funktion auskommentiert ist - keine Laufzeit-/Absturzwirkung ohne
+weitere Änderung.)
+
 ## freecad-cmake-disable-tests.patch
 
 Betrifft `CMakeLists.txt`. `ENABLE_DEVELOPER_TESTS` zieht `add_subdirectory(tests)`
@@ -555,6 +631,7 @@ beim Umstieg von 1.2.0dev auf 26.3.0dev auf (neuer Code in `getPropUses`/
 cd /home/maxx/freecad/freecad-source
 git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-jointobject.patch
 git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-link-delete-hang.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-grounded-joint-nested-flex.patch
 git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-cmake-disable-tests.patch
 git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-navigation-qbytearray-fix.patch
 git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-propertyeditor-qstring-fix.patch
