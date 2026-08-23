@@ -29,6 +29,9 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         import PartExchangeCommand as PartExchangeCommand
         import SelectableRepairCommand as SelectableRepairCommand
         import SectionSketchFeature as SectionSketchFeature
+        import ManualPlacementCommand as ManualPlacementCommand
+        import InterfaceFeature as InterfaceFeature
+        import RestoreRigidGroupCommand as RestoreRigidGroupCommand
         import DocObserver
         DocObserver.register()
 
@@ -39,7 +42,10 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
             "FCProject_PatternGroup",
             "FCProject_PartExchange",
             "FCProject_RepairSelectable",
-            "FCProject_CreateSectionSketch"
+            "FCProject_CreateSectionSketch",
+            "FCProject_ManualPlacement",
+            "FCProject_RestoreRigidGroup",
+            "FCProject_CreateInterface"
         ])
 
 

@@ -36,6 +36,18 @@ class FCProjectDocObserver:
         except Exception as e:
             App.Console.PrintWarning(f"FCProject DocObserver: Panel-Check beim Dokument-Wechsel fehlgeschlagen: {str(e)}\n")
 
+    def slotRecomputedDocument(self, doc):
+        # Setzt alle "Interface"-Objekte (siehe InterfaceFeature.py) NACH einem KOMPLETTEN
+        # Dokument-Recompute erneut durch - unabhaengig davon, in welcher internen Reihenfolge
+        # der (bei verschachtelten flexiblen Baugruppen nachweislich fehlerhafte) Assembly-Solver
+        # gelaufen ist. Kein doc.recompute()-Aufruf hier drin (reine Eigenschaftszuweisung) -
+        # loest also KEIN erneutes signalRecomputed und damit keine Rekursion aus.
+        try:
+            import InterfaceFeature
+            InterfaceFeature.enforce_all_interfaces(doc)
+        except Exception as e:
+            App.Console.PrintWarning(f"FCProject DocObserver: Interface-Durchsetzung fehlgeschlagen: {str(e)}\n")
+
 
 def _repair_stuck_selectable(doc):
     """Repariert vor jedem Speichern automatisch hängengebliebenes Selectable=False (bekannter
