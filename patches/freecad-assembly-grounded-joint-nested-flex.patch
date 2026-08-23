@@ -1,5 +1,5 @@
 diff --git a/src/Mod/Assembly/App/AssemblyLink.cpp b/src/Mod/Assembly/App/AssemblyLink.cpp
-index d2dface315..9a03f8cb34 100644
+index d2dface315..0ee9d1f20f 100644
 --- a/src/Mod/Assembly/App/AssemblyLink.cpp
 +++ b/src/Mod/Assembly/App/AssemblyLink.cpp
 @@ -21,7 +21,9 @@
@@ -58,7 +58,7 @@ index d2dface315..9a03f8cb34 100644
      }
      purgeTouched();
  }
-@@ -624,6 +644,356 @@ void AssemblyLink::synchronizeJoints()
+@@ -624,6 +644,329 @@ void AssemblyLink::synchronizeJoints()
      }
  }
  
@@ -127,28 +127,6 @@ index d2dface315..9a03f8cb34 100644
 +                                    localTarget
 +                                )
 +            != existingGroundedTargets.end();
-+        // FCPROJECT-DEBUG: temporaeres Diagnose-Logging, um den 2026-08-22 live beobachteten
-+        // Delete/Recreate-Churn der gespiegelten GroundedJoints einzugrenzen (Vermutung:
-+        // localTarget ist bei jedem updateContents()-Durchlauf ein ANDERER Pointer, weil
-+        // synchronizeComponents() das lokale Mirror-Objekt neu anlegt statt es
-+        // wiederzuverwenden - vor Merge/Commit wieder entfernen).
-+        {
-+            std::string existingNames;
-+            for (auto* t : existingGroundedTargets) {
-+                existingNames += t ? t->getNameInDocument() : "<null>";
-+                existingNames += "(" + std::to_string(reinterpret_cast<uintptr_t>(t)) + ") ";
-+            }
-+            Base::Console().log(
-+                "FCPROJECT-DEBUG [%s]: source=%s -> localTarget=%s(%s), alreadyMirrored=%d, "
-+                "existing=[ %s]\n",
-+                getNameInDocument(),
-+                prop->getValue()->getNameInDocument(),
-+                localTarget->getNameInDocument(),
-+                std::to_string(reinterpret_cast<uintptr_t>(localTarget)).c_str(),
-+                alreadyMirrored ? 1 : 0,
-+                existingNames.c_str()
-+            );
-+        }
 +        if (alreadyMirrored) {
 +            continue;
 +        }
@@ -354,20 +332,14 @@ index d2dface315..9a03f8cb34 100644
 +}
 +
 +// FCPROJECT-PATCH: siehe patches/README.md ("GroundedJoint/RigidGroupJoint verschwindet bei
-+// verschachtelter flexibler Baugruppe"). Fuer synchronizeGroundedAndRigidJoints() gebraucht -
-+// ObjectToGround/ObjectsToRigidGroup sind einfache Objekt-Links ohne Sub-Element (anders als
-+// Reference1/2, PropertyXLinkSub), daher ist findLocalAncestor()s "auf den naechsten Vorfahren
-+// springen + Sub-Pfad merken"-Technik hier NICHT anwendbar (kein Sub-Pfad-Konzept fuer einen
-+// einfachen Objekt-Link) - sie wuerde faelschlich die gesamte (evtl. flexible) Container-
-+// AssemblyLink statt des einzelnen Zielteils zurueckgeben (live so beobachtet, siehe
-+// patches/README.md fuer den vollen Befund inkl. Solver-Log-Beweis).
-+//
-+// Stattdessen wird hier NICHT ueber Objekt-Identitaet (Pointer-Gleichheit) verglichen, sondern
-+// ueber die vom jeweiligen Objekt selbst aufgeloeste "letzte Wahrheit"
-+// (DocumentObject::getLinkedObject(true)): jede Mirror-Kopie eines PDM-Teils ist selbst wieder
-+// ein App::Link, dessen rekursiv aufgeloestes Linked-Objekt IMMER auf dieselbe letztendliche
-+// Quelldatei zeigt, egal auf welcher Verschachtelungsebene die Kopie sitzt. Zwei Objekte mit
-+// gleichem getLinkedObject(true)-Ergebnis meinen also dasselbe reale Teil, auch wenn sie in
++// verschachtelter flexibler Baugruppe"). mapToLocalComponent() findet die lokale Entsprechung
++// eines externen (Quell-)Objekts - anders als findLocalAncestor() (fuer Reference1/2 mit
++// Sub-Element-Pfad gedacht) wird hier ueber Objekt-IDENTITAET verglichen (kein Sub-Pfad-Konzept
++// fuer einen einfachen Objekt-Link wie ObjectToGround/ObjectsToRigidGroup): jede Mirror-Kopie
++// eines PDM-Teils ist selbst wieder ein App::Link, dessen rekursiv aufgeloestes Linked-Objekt
++// (DocumentObject::getLinkedObject(true)) IMMER auf dieselbe letztendliche Quelldatei zeigt,
++// egal auf welcher Verschachtelungsebene die Kopie sitzt. Zwei Objekte mit gleichem
++// getLinkedObject(true)-Ergebnis meinen also dasselbe reale Teil, auch wenn sie in
 +// verschiedenen Dokumenten liegen und unterschiedliche Objekt-Pointer haben.
 +//
 +// Ablauf: zuerst die eigenen direkten Mirror-Kinder (objLinkMap-Werte) auf Identitaets-Treffer
@@ -412,10 +384,11 @@ index d2dface315..9a03f8cb34 100644
 +
 +    return nullptr;
 +}
++
  
  void AssemblyLink::handleJointReference(
      App::DocumentObject* joint,
-@@ -644,8 +1014,20 @@ void AssemblyLink::handleJointReference(
+@@ -644,8 +987,20 @@ void AssemblyLink::handleJointReference(
      }
  
      // 2. Map to local link
@@ -437,7 +410,7 @@ index d2dface315..9a03f8cb34 100644
          Base::Console().warning(
              "AssemblyLink: Could not map external component %s to a local link for joint %s\n",
              externalComponent->getNameInDocument(),
-@@ -653,7 +1035,6 @@ void AssemblyLink::handleJointReference(
+@@ -653,7 +1008,6 @@ void AssemblyLink::handleJointReference(
          );
          return;
      }
@@ -445,7 +418,7 @@ index d2dface315..9a03f8cb34 100644
  
      // 3. Set the new reference
      // The local joint now points to the local link [LocalLink, "Sub"]
-@@ -663,8 +1044,16 @@ void AssemblyLink::handleJointReference(
+@@ -663,8 +1017,16 @@ void AssemblyLink::handleJointReference(
  
      // 4. Sync sub-elements
      // The sub-elements (e.g. "Body.Face1") are relative to the component.
@@ -463,7 +436,7 @@ index d2dface315..9a03f8cb34 100644
      std::vector<std::string> subs2 = prop2->getSubValues();
  
      bool changed = false;
-@@ -685,6 +1074,63 @@ void AssemblyLink::handleJointReference(
+@@ -685,6 +1047,63 @@ void AssemblyLink::handleJointReference(
      }
  }
  
@@ -528,10 +501,10 @@ index d2dface315..9a03f8cb34 100644
  {
      // Make sure there is no joint group
 diff --git a/src/Mod/Assembly/App/AssemblyLink.h b/src/Mod/Assembly/App/AssemblyLink.h
-index 700b1821d9..e400feed3d 100644
+index 700b1821d9..3a50c514ab 100644
 --- a/src/Mod/Assembly/App/AssemblyLink.h
 +++ b/src/Mod/Assembly/App/AssemblyLink.h
-@@ -80,6 +80,27 @@ public:
+@@ -80,6 +80,32 @@ public:
          App::DocumentObject* lJoint,
          const char* refName
      );
@@ -554,12 +527,17 @@ index 700b1821d9..e400feed3d 100644
 +    // Diese Funktion spiegelt beide Jointtypen zusaetzlich, unabhaengig von synchronizeJoints()s
 +    // positionsbasiertem Abgleich (der fuer diese Typen nicht anwendbar ist, da sie keine
 +    // Reference1/2 haben).
++    //
++    // AKTUELL DEAKTIVIERT (Aufruf in updateContents() auskommentiert, siehe dort) - hat live
++    // einen FreeCAD-Absturz ausgeloest (Reentrancy-Kaskade beim Loeschen einer verschachtelten
++    // AssemblyLink). Bleibt als toter Code stehen, bis das Reentrancy-Problem geloest ist -
++    // siehe patches/README.md fuer den vollen Befund.
 +    void synchronizeGroundedAndRigidJoints();
 +    App::DocumentObject* mapToLocalComponent(App::DocumentObject* externalComponent);
      void ensureNoJointGroup();
      JointGroup* ensureJointGroup();
      std::vector<App::DocumentObject*> getJoints();
-@@ -98,6 +119,26 @@ protected:
+@@ -98,6 +124,26 @@ protected:
      /// get called by the container whenever a property has been changed
      void onChanged(const App::Property* prop) override;
      void onDocumentRestored() override;

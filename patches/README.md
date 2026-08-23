@@ -391,6 +391,16 @@ bauen.)
 
 ## freecad-assembly-link-delete-hang.patch
 
+**⚠️ Konsolidiert (2026-08-23) - Inhalt lebt jetzt vollständig in
+`freecad-assembly-grounded-joint-nested-flex.patch`, diese Datei wird vom Update-Skript
+NICHT mehr separat angewendet.** Grund: beide Patches touchten exakt dieselben zwei Dateien
+(`AssemblyLink.cpp`/`.h`) und wurden beide jeweils per `git diff` als VOLLSTÄNDIGER
+kumulativer Snapshot dieser Dateien generiert - beim sequenziellen `git apply` (erst dieser,
+dann grounded-joint-nested-flex) lief der zweite Patch immer auf die vom ersten bereits
+vorhandenen Hunks, was erst beim nächsten `update-and-rebuild-freecad.sh`-Lauf nach einem
+Upstream-Merge sichtbar wurde ("Anwendung des Patches fehlgeschlagen"). Diese Datei bleibt
+nur noch für die Historie/Beschreibung unten erhalten.
+
 Betrifft `src/Mod/Assembly/App/AssemblyLink.{cpp,h}`. FreeCAD hängt sich
 (100% CPU auf dem Hauptthread, keine weitere Report-View-Ausgabe) beim
 Löschen eines Bauteils auf, das Teil einer mehrfach verlinkten
@@ -450,15 +460,9 @@ of scope"-Validierung) - dieser Fix hier betrifft nur normale Joint-Referenzen
 
 ### Anwenden
 
-```bash
-cd /home/maxx/freecad/freecad-source
-git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-link-delete-hang.patch
-cmake --build build --target Assembly -- -j$(nproc)
-cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.so
-```
-
-(C++, betrifft `AssemblyApp.so` - Rebuild des `Assembly`-Targets nötig,
-reines Kopieren wie bei den Python-Patches reicht hier nicht.)
+**Nicht mehr separat anwenden - siehe Konsolidierungs-Hinweis oben.** Inhalt (inkl. Fix 2,
+`findLocalAncestor()`) ist Teil von `freecad-assembly-grounded-joint-nested-flex.patch`,
+dort mit anwenden.
 
 ## freecad-assembly-viewprovider-null-crash.patch
 
@@ -521,6 +525,16 @@ beim Laden, siehe Vorfall 2026-08-23 in [[project_fcproject_manual_placement_wor
 
 **⚠️ Aktuell WIRKUNGSLOS (Aufruf auskommentiert) - hat live einen FreeCAD-Absturz verursacht,
 NICHT ohne Reentrancy-Fix reaktivieren.** Betrifft `src/Mod/Assembly/App/AssemblyLink.{cpp,h}`.
+
+**Seit 2026-08-23: alleiniger Eigentümer dieser beiden Dateien** - enthält jetzt zusätzlich
+den kompletten, weiterhin aktiven Inhalt von `freecad-assembly-link-delete-hang.patch`
+(Reentrancy-Guard `updatingContents` + `findLocalAncestor()`, siehe dessen README-Abschnitt
+oben für die Beschreibung) - beide Patches touchten dieselben Dateien und wurden beim
+Reapply-Schritt nach einem Upstream-Merge sonst gegenseitig blockiert. Beim erneuten
+Anwenden nach einem Upstream-Merge: erst prüfen, ob der `#include <algorithm>`-Hunk noch
+passt (Upstream hat ihn 2026-08-23 bereits selbst ergänzt, siehe unten) - im Zweifel die
+betroffenen Hunks von Hand nachziehen statt den ganzen Patch zu verwerfen, `findLocalAncestor()`
+ist aktive, nicht abschaltbare Funktionalität.
 
 **Ausgangsbug** (2026-08-22, Nutzer-Repro): baut man eine Unterbaugruppe mit intern per
 `GroundedJoint` geerdeten/starren Teilen (z.B. ein Kaufteil-Motor mit 17 starr fixierten

@@ -89,9 +89,16 @@ ENV_PATCHED_FILES=(
 
 # Feature-/Bugfix-Patches: nur relevant fuer FCProjects eigenen Workflow,
 # werden ERST nach einem gruenen Vanilla-Build wieder aufgelegt.
+# freecad-assembly-link-delete-hang.patch (2026-08-23 konsolidiert): touchte EXAKT dieselben
+# beiden Dateien wie freecad-assembly-grounded-joint-nested-flex.patch - beide wurden von
+# git diff jeweils als VOLLSTAENDIGER kumulativer Snapshot dieser Dateien generiert, wodurch
+# das zweite git apply beim Reapply immer auf die vom ersten Patch bereits vorhandenen Hunks
+# lief (Konflikt, sichtbar erst beim naechsten update-and-rebuild-freecad.sh-Lauf nach einem
+# Upstream-Merge). delete-hang.patch-Datei bleibt fuer die Historie erhalten, wird aber nicht
+# mehr separat angewendet - ihr Inhalt ist vollstaendig in grounded-joint-nested-flex.patch
+# aufgegangen (siehe patches/README.md).
 FEATURE_PATCHES=(
   "freecad-assembly-jointobject.patch"
-  "freecad-assembly-link-delete-hang.patch"
   "freecad-filedialog-search-filter.patch"
   "freecad-assembly-grounded-joint-nested-flex.patch"
   "freecad-assembly-viewprovider-null-crash.patch"
