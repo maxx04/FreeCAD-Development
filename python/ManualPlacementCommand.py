@@ -45,12 +45,34 @@ def _find_local_mirror(doc, target_obj):
     if target_obj.Document is doc:
         return target_obj
 
-    try:
-        target_root = target_obj.getLinkedObject(True)
-    except Exception:
-        target_root = None
-    if target_root is None or target_root is target_obj:
-        return None  # target_obj ist selbst kein Link - keine Mirror-Kopie davon zu erwarten
+    # FCPROJECT-FIX (2026-08-23): target_obj selbst ist manchmal KEIN Link-Ziel, z.B. wenn die
+    # Baumauswahl ein internes PartDesign-Objekt liefert (z.B. "BaseFeature" tief in einem Body -
+    # live beobachtet: "'BaseFeature' ist kein Link auf eine externe Quelldatei"). Kein App::Link
+    # zeigt jemals DIREKT auf ein BaseFeature - Links zeigen auf den umschliessenden Body/Part.
+    # Deshalb erst ueber getParentGeoFeatureGroup() (FreeCADs eigener Mechanismus fuer "wo bin
+    # ich strukturell drin", siehe auch AssemblyPatternCreator._get_sub_name_for_child()) so
+    # lange nach oben laufen, bis ein Objekt gefunden wird, das SELBST divergierend aufloest
+    # (also tatsaechlich Ziel eines Links sein kann) - typischerweise der Body oder ein Part-
+    # Container ein bis zwei Ebenen hoeher.
+    walker = target_obj
+    visited = set()
+    target_root = None
+    while walker is not None and id(walker) not in visited:
+        visited.add(id(walker))
+        try:
+            root = walker.getLinkedObject(True)
+        except Exception:
+            root = None
+        if root is not None and root is not walker:
+            target_root = root
+            break
+        try:
+            walker = walker.getParentGeoFeatureGroup()
+        except Exception:
+            walker = None
+
+    if target_root is None:
+        return None  # weder target_obj noch einer seiner Container ist Ziel eines Links
 
     for candidate in doc.Objects:
         if candidate is target_obj or not candidate.isDerivedFrom("App::Link"):

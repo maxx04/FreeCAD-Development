@@ -32,6 +32,7 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         import ManualPlacementCommand as ManualPlacementCommand
         import InterfaceFeature as InterfaceFeature
         import RestoreRigidGroupCommand as RestoreRigidGroupCommand
+        import RestoreJointPositionCommand as RestoreJointPositionCommand
         import DocObserver
         DocObserver.register()
 
@@ -45,6 +46,7 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
             "FCProject_CreateSectionSketch",
             "FCProject_ManualPlacement",
             "FCProject_RestoreRigidGroup",
+            "FCProject_RestoreJointPosition",
             "FCProject_CreateInterface"
         ])
 
