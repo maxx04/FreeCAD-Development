@@ -10,10 +10,12 @@
 #
 # Gleiches Prinzip wie RestoreRigidGroupCommand.py (siehe dort fuer die volle Begruendung, warum
 # eine reine Placement-Zuweisung nicht reicht und InterfaceFeature.make_interface() noetig ist),
-# nur fuer ein einzelnes Joint-Paar statt eine ganze RigidGroupJoint-Mitgliederliste: ausgehend
-# von einem bereits korrekt positionierten Anker-Teil wird der ORIGINALE Joint gefunden, der
-# dieses Teil referenziert, und daraus die Placement des JEWEILS ANDEREN referenzierten Teils
-# berechnet: neue_Position = neue_Anker_Position x (alte_Anker_Position^-1 x alte_Ziel_Position).
+# nur fuer normale Joint-Paare statt eine ganze RigidGroupJoint-Mitgliederliste: ausgehend von
+# einem bereits korrekt positionierten Anker-Teil werden ALLE ORIGINALEN Joints gefunden, die
+# dieses Teil referenzieren (ein Anker kann an mehreren Joints gleichzeitig haengen, z.B. eine
+# Buchse an Gewindestange UND zwei Gewindestiften - fruehere Version nahm faelschlich nur den
+# ERSTEN Treffer), und daraus jeweils die Placement des ANDEREN referenzierten Teils berechnet:
+# neue_Position = neue_Anker_Position x (alte_Anker_Position^-1 x alte_Ziel_Position).
 import os
 
 import FreeCAD as App
@@ -75,20 +77,30 @@ def _joint_reference_object(joint, prop_name):
     return value
 
 
-def _find_source_joint(target_doc, anchor_root):
-    """Durchsucht ALLE offenen Dokumente (ausser target_doc) nach einem normalen Joint
-    (erkennbar an Reference1 UND Reference2), dessen eine Seite - nach Aufloesung via
+def _find_source_joints(target_doc, anchor_root):
+    """Durchsucht ALLE offenen Dokumente (ausser target_doc) nach ALLEN normalen Joints
+    (erkennbar an Reference1 UND Reference2), deren eine Seite - nach Aufloesung via
     getLinkedObject(True) - mit anchor_root uebereinstimmt.
+
+    WICHTIG (2026-08-23, Nutzer-Repro): ein Anker-Teil kann an MEHREREN Joints gleichzeitig
+    haengen (z.B. eine Motor-Buchse an Gewindestange UND zwei Gewindestiften UND einem
+    Wellen-Link) - eine fruehere Version dieser Funktion gab nur den ERSTEN Treffer zurueck,
+    wodurch zufaellig ein falscher Nachbar (z.B. ein Gewindestift statt der eigentlich
+    gewuenschten Gewindestange) aktualisiert wurde. Jetzt werden ALLE passenden Joints
+    zurueckgegeben und in Activated() alle auf einmal verarbeitet - genau wie
+    RestoreRigidGroupCommand alle Mitglieder einer Rigid Group auf einmal verarbeitet.
 
     WICHTIG (siehe RestoreRigidGroupCommand._find_source_rigid_group() fuer die ausfuehrliche
     Begruendung): der Joint liegt so gut wie nie im Dokument des Rohteils selbst, sondern in der
     BAUGRUPPEN-Datei, die die Teile per App::Link einbindet - diese Datei muss dafuer parallel
     geoeffnet sein.
 
-    Rueckgabe: (joint, anchor_member, other_member) - anchor_member/other_member sind die beiden
-    ueber Reference1/Reference2 referenzierten Objekte INNERHALB der Original-Baugruppe (nicht
-    zwingend die Rohteile selbst) - deren Placement steht im selben Koordinatensystem wie das
-    jeweils andere Referenzobjekt, das ist fuer die Relativrechnung entscheidend."""
+    Rueckgabe: Liste von (joint, anchor_member, other_member) - anchor_member/other_member sind
+    die beiden ueber Reference1/Reference2 referenzierten Objekte INNERHALB der Original-
+    Baugruppe (nicht zwingend die Rohteile selbst) - deren Placement steht im selben
+    Koordinatensystem wie das jeweils andere Referenzobjekt, das ist fuer die Relativrechnung
+    entscheidend."""
+    results = []
     for doc in App.listDocuments().values():
         if doc is target_doc:
             continue
@@ -100,29 +112,39 @@ def _find_source_joint(target_doc, anchor_root):
             if ref1 is None or ref2 is None:
                 continue
             if _resolve_root(ref1) is anchor_root:
-                return obj, ref1, ref2
-            if _resolve_root(ref2) is anchor_root:
-                return obj, ref2, ref1
-    return None, None, None
+                results.append((obj, ref1, ref2))
+            elif _resolve_root(ref2) is anchor_root:
+                results.append((obj, ref2, ref1))
+    return results
 
 
 if _GUI_AVAILABLE:
+    def _warn(main_win, text):
+        """Zeigt eine Warnung sowohl als Popup als auch in der Konsole/Log-Datei - Popups
+        landen NICHT im Log, das Claude ueber run-freecad-26.3.sh liest (siehe
+        project_fcproject_live_log_file_access), ohne diese Zeile waeren Fehlermeldungen aus
+        diesem Befehl fuer eine Ferndiagnose unsichtbar."""
+        App.Console.PrintWarning(f"FCProject: {text}\n")
+        QtWidgets.QMessageBox.warning(main_win, "FCProject", text)
+
     class RestoreJointPositionCommand:
-        """Befehl: berechnet aus der Original-Datei die Position eines ueber einen normalen
-        Joint verbundenen Teils relativ zu einem bereits korrekt positionierten Anker-Teil -
-        Anker-Teil vorher per ManualPlacementCommand.py/RestoreRigidGroupCommand.py korrekt
-        positionieren, dann DIESEN Befehl mit dem Anker als Auswahl ausfuehren."""
+        """Befehl: berechnet aus der Original-Datei die Positionen ALLER ueber normale Joints
+        mit dem Anker verbundenen Teile relativ zu diesem bereits korrekt positionierten
+        Anker-Teil - Anker-Teil vorher per ManualPlacementCommand.py/RestoreRigidGroupCommand.py
+        korrekt positionieren, dann DIESEN Befehl mit dem Anker als Auswahl ausfuehren."""
 
         def GetResources(self):
             return {
                 'Pixmap': os.path.join(ICON_DIR, 'restore_joint_position.svg'),
-                'MenuText': 'FCProject: Joint-Position aus Original wiederherstellen',
+                'MenuText': 'FCProject: Joint-Positionen aus Original wiederherstellen',
                 'ToolTip': (
                     'Ausgehend vom ausgewaehlten, bereits korrekt positionierten Anker-Teil: '
-                    'berechnet die Position des ueber einen normalen Joint (z.B. Revolute) damit '
-                    'verbundenen Teils relativ dazu, aus der urspruenglichen Baugruppendatei '
+                    'berechnet die Positionen ALLER ueber normale Joints (z.B. Revolute) damit '
+                    'verbundenen Teile relativ dazu, aus der urspruenglichen Baugruppendatei '
                     'uebernommen (fuer Faelle, in denen der Assembly-Solver bei mehrfach '
-                    'verschachtelten Baugruppen nicht mehr zuverlaessig loest).'
+                    'verschachtelten Baugruppen nicht mehr zuverlaessig loest). Ein Anker kann an '
+                    'mehreren Joints gleichzeitig haengen (z.B. eine Buchse an Gewindestange UND '
+                    'Gewindestiften) - alle werden auf einmal aktualisiert.'
                 )
             }
 
@@ -130,7 +152,7 @@ if _GUI_AVAILABLE:
             main_win = Gui.getMainWindow()
             sel = Gui.Selection.getSelection()
             if len(sel) != 1:
-                QtWidgets.QMessageBox.warning(main_win, "FCProject", "Bitte genau das Anker-Teil auswaehlen.")
+                _warn(main_win, "Bitte genau das Anker-Teil auswaehlen.")
                 return
             anchor_local = sel[0]
 
@@ -156,60 +178,89 @@ if _GUI_AVAILABLE:
 
             anchor_root = _resolve_root(anchor_local)
             if anchor_root is anchor_local:
-                QtWidgets.QMessageBox.warning(
-                    main_win, "FCProject",
-                    f"'{anchor_local.Label}' ist kein Link auf eine externe Quelldatei - "
+                _warn(
+                    main_win,
+                    f"'{anchor_local.Label}' (Typ {anchor_local.TypeId}, Dokument "
+                    f"'{anchor_local.Document.Name}') ist kein Link auf eine externe Quelldatei - "
                     "kann keinen Original-Joint dafuer finden."
                 )
                 return
 
-            joint, anchor_member, other_member = _find_source_joint(target_doc, anchor_root)
-            if joint is None:
+            found_joints = _find_source_joints(target_doc, anchor_root)
+            if not found_joints:
                 open_docs = ", ".join(d.Name for d in App.listDocuments().values() if d is not target_doc)
-                QtWidgets.QMessageBox.warning(
-                    main_win, "FCProject",
+                _warn(
+                    main_win,
                     f"In keinem der aktuell geoeffneten Dokumente ({open_docs or 'keine weiteren offen'}) "
                     f"wurde ein Joint gefunden, der '{anchor_local.Label}' (aufgeloest: "
-                    f"'{anchor_root.Label}') referenziert.\n\n"
-                    "Bitte die Original-Baugruppendatei, in der der Joint definiert ist, "
-                    "zusaetzlich oeffnen und erneut versuchen."
-                )
-                return
-
-            local_other = _find_local_instance(target_doc, other_member)
-            if local_other is None:
-                other_label = other_member.Label if other_member is not None else "?"
-                QtWidgets.QMessageBox.warning(
-                    main_win, "FCProject",
-                    f"Das andere, ueber Joint '{joint.Label}' verbundene Teil ('{other_label}') "
-                    f"wurde in '{target_doc.Name}' nicht als lokale Instanz gefunden."
+                    f"'{anchor_root.Label}') referenziert. Bitte die Original-Baugruppendatei, in "
+                    "der der Joint definiert ist, zusaetzlich oeffnen und erneut versuchen."
                 )
                 return
 
             anchor_new_placement = App.Placement(anchor_local.Placement)
-            # WICHTIG: die Placement des Anker-MITGLIEDS im Original-Joint verwenden, nicht die
-            # des Rohteils in seiner eigenen Datei - nur erstere steht im selben
-            # Koordinatensystem wie die Placement des anderen Referenzobjekts (siehe
-            # _find_source_joint()-Docstring).
-            anchor_old_placement = App.Placement(anchor_member.Placement)
-            relative = anchor_old_placement.inverse().multiply(App.Placement(other_member.Placement))
-            new_placement = anchor_new_placement.multiply(relative)
-
-            # WICHTIG (siehe RestoreRigidGroupCommand.py): reine Placement-Zuweisung reicht nicht,
-            # der Solver erdet nur ueber Placement.isReadOnly() - deshalb ueber
-            # InterfaceFeature.make_interface() echt sperren statt nur den Wert zu setzen.
             import InterfaceFeature
-            note = (
-                f"Wiederhergestellt aus Joint '{joint.Label}' ({joint.Document.Name}), "
-                f"relativ zu '{anchor_local.Label}'"
-            )
-            InterfaceFeature.make_interface(target_doc, local_other, new_placement, note=note)
+
+            updated = []
+            skipped = []
+            already_locked = []
+            for joint, anchor_member, other_member in found_joints:
+                local_other = _find_local_instance(target_doc, other_member)
+                if local_other is None:
+                    other_label = other_member.Label if other_member is not None else "?"
+                    skipped.append(f"{other_label} (Joint '{joint.Label}')")
+                    continue
+
+                # WICHTIG (2026-08-23, Nutzer-Repro): ein Anker kann ueber MEHRERE Joints
+                # gleichzeitig an Teile grenzen, die bereits ueber einen ANDEREN, autoritativeren
+                # Anker korrekt positioniert und gesperrt wurden (z.B. Rotor wird korrekt vom
+                # Gehaeuse abgeleitet, haengt aber ZUSAETZLICH ueber einen eigenen Joint an der
+                # Buchse - wird die Buchse als Anker benutzt, wuerde dieser zweite Pfad den
+                # bereits korrekten Rotor wieder ueberschreiben und aus der Kette werfen). Bereits
+                # gesperrte Teile deshalb NICHT anfassen, damit die Reihenfolge der Anker-Klicks
+                # (Gehaeuse -> Rotor+Buchse, dann Buchse -> Gewindestange/-stifte) stabil bleibt.
+                existing = InterfaceFeature.find_interface_for(target_doc, local_other)
+                if existing is not None:
+                    already_locked.append(f"{local_other.Label} (Joint '{joint.Label}')")
+                    continue
+
+                # WICHTIG: die Placement des Anker-MITGLIEDS im Original-Joint verwenden, nicht
+                # die des Rohteils in seiner eigenen Datei - nur erstere steht im selben
+                # Koordinatensystem wie die Placement des anderen Referenzobjekts (siehe
+                # _find_source_joints()-Docstring).
+                anchor_old_placement = App.Placement(anchor_member.Placement)
+                relative = anchor_old_placement.inverse().multiply(App.Placement(other_member.Placement))
+                new_placement = anchor_new_placement.multiply(relative)
+
+                # WICHTIG (siehe RestoreRigidGroupCommand.py): reine Placement-Zuweisung reicht
+                # nicht, der Solver erdet nur ueber Placement.isReadOnly() - deshalb ueber
+                # InterfaceFeature.make_interface() echt sperren statt nur den Wert zu setzen.
+                note = (
+                    f"Wiederhergestellt aus Joint '{joint.Label}' ({joint.Document.Name}), "
+                    f"relativ zu '{anchor_local.Label}'"
+                )
+                InterfaceFeature.make_interface(target_doc, local_other, new_placement, note=note)
+                updated.append(f"{local_other.Label} (Joint '{joint.Label}')")
 
             Gui.updateGui()
-            App.Console.PrintMessage(
-                f"FCProject: '{local_other.Label}' relativ zu '{anchor_local.Label}' ueber Joint "
-                f"'{joint.Label}' ({joint.Document.Name}) neu positioniert und gesperrt.\n"
+
+            msg = (
+                f"FCProject: relativ zu '{anchor_local.Label}' neu positioniert und gesperrt: "
+                f"{', '.join(updated) if updated else '(keine)'}."
             )
+            if already_locked:
+                msg += (
+                    f" Uebersprungen (bereits ueber anderen Anker gesperrt, NICHT ueberschrieben): "
+                    f"{', '.join(already_locked)}."
+                )
+            if skipped:
+                msg += f" Uebersprungen (keine lokale Instanz gefunden): {', '.join(skipped)}."
+            App.Console.PrintMessage(msg + "\n")
+
+            if updated:
+                InterfaceFeature.auto_save_document(
+                    target_doc, reason=f"relativ zu '{anchor_local.Label}' neu positioniert"
+                )
 
         def IsActive(self):
             return App.ActiveDocument is not None

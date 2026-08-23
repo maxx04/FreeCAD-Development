@@ -45,34 +45,47 @@ def _find_local_mirror(doc, target_obj):
     if target_obj.Document is doc:
         return target_obj
 
-    # FCPROJECT-FIX (2026-08-23): target_obj selbst ist manchmal KEIN Link-Ziel, z.B. wenn die
+    # FCPROJECT-FIX (2026-08-23): target_obj selbst ist manchmal KEIN App::Link, z.B. wenn die
     # Baumauswahl ein internes PartDesign-Objekt liefert (z.B. "BaseFeature" tief in einem Body -
     # live beobachtet: "'BaseFeature' ist kein Link auf eine externe Quelldatei"). Kein App::Link
     # zeigt jemals DIREKT auf ein BaseFeature - Links zeigen auf den umschliessenden Body/Part.
-    # Deshalb erst ueber getParentGeoFeatureGroup() (FreeCADs eigener Mechanismus fuer "wo bin
-    # ich strukturell drin", siehe auch AssemblyPatternCreator._get_sub_name_for_child()) so
-    # lange nach oben laufen, bis ein Objekt gefunden wird, das SELBST divergierend aufloest
-    # (also tatsaechlich Ziel eines Links sein kann) - typischerweise der Body oder ein Part-
-    # Container ein bis zwei Ebenen hoeher.
-    walker = target_obj
-    visited = set()
-    target_root = None
-    while walker is not None and id(walker) not in visited:
-        visited.add(id(walker))
-        try:
-            root = walker.getLinkedObject(True)
-        except Exception:
-            root = None
-        if root is not None and root is not walker:
-            target_root = root
-            break
-        try:
-            walker = walker.getParentGeoFeatureGroup()
-        except Exception:
-            walker = None
+    # Deshalb ueber getParentGeoFeatureGroup() so weit wie moeglich hochlaufen (live per Konsole
+    # verifiziert: BaseFeature -> Body funktioniert damit einwandfrei, kein InList-Workaround
+    # noetig).
+    #
+    # NACHGEBESSERT (2026-08-23, gleicher Tag, zweiter Anlauf): der erste Fix-Versuch verlangte
+    # zusaetzlich, dass das gefundene Objekt selbst unter getLinkedObject(True) "divergiert"
+    # (zu etwas ANDEREM aufloest) - das war der eigentliche Denkfehler, nicht der Aufstieg
+    # selbst. Ein rohes Teil wie ein Body, das anderswo per App::Link eingebunden ist, loest sich
+    # unter getLinkedObject(True) ganz normal zu SICH SELBST auf (es ist ja selbst kein Link) -
+    # das ist der Normalfall fuer genau das Objekt, das wir als Identitaet suchen wollen, kein
+    # Fehlerfall. Live per Konsole bestaetigt: Body.getLinkedObject(True) == Body (divergent=False),
+    # trotzdem ist Body exakt das richtige Ziel. Deshalb keine Divergenz mehr verlangen - einfach
+    # so weit wie moeglich hochlaufen und das letzte erreichte Objekt als Identitaet nehmen.
+    target_root = target_obj
+    try:
+        resolved = target_obj.getLinkedObject(True)
+    except Exception:
+        resolved = None
+    if resolved is not None:
+        target_root = resolved
 
-    if target_root is None:
-        return None  # weder target_obj noch einer seiner Container ist Ziel eines Links
+    walker = target_obj
+    visited = {id(walker)}
+    while True:
+        try:
+            parent = walker.getParentGeoFeatureGroup()
+        except Exception:
+            parent = None
+        if parent is None or id(parent) in visited:
+            break
+        visited.add(id(parent))
+        walker = parent
+        try:
+            resolved = walker.getLinkedObject(True)
+        except Exception:
+            resolved = None
+        target_root = resolved if resolved is not None else walker
 
     for candidate in doc.Objects:
         if candidate is target_obj or not candidate.isDerivedFrom("App::Link"):
@@ -227,6 +240,9 @@ if _GUI_AVAILABLE:
                 InterfaceFeature.make_interface(
                     self.obj.Document, self.obj, placement,
                     note="Manuell gesetzt ueber FCProject_ManualPlacement"
+                )
+                InterfaceFeature.auto_save_document(
+                    self.obj.Document, reason=f"Interface fuer '{self.obj.Label}' gesperrt"
                 )
             self.obj.Document.recompute()
             Gui.Control.closeDialog()

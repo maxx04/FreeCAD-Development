@@ -88,6 +88,14 @@ def _find_source_rigid_group(target_doc, anchor_root):
 
 
 if _GUI_AVAILABLE:
+    def _warn(main_win, text):
+        """Zeigt eine Warnung sowohl als Popup als auch in der Konsole/Log-Datei - Popups
+        landen NICHT im Log, das Claude ueber run-freecad-26.3.sh liest (siehe
+        project_fcproject_live_log_file_access), ohne diese Zeile waeren Fehlermeldungen aus
+        diesem Befehl fuer eine Ferndiagnose unsichtbar."""
+        App.Console.PrintWarning(f"FCProject: {text}\n")
+        QtWidgets.QMessageBox.warning(main_win, "FCProject", text)
+
     class RestoreRigidGroupCommand:
         """Befehl: berechnet aus der Original-Datei die Relativpositionen einer Rigid Group und
         wendet sie auf die entsprechenden lokalen Instanzen im aktuellen (verschachtelten)
@@ -110,7 +118,7 @@ if _GUI_AVAILABLE:
             main_win = Gui.getMainWindow()
             sel = Gui.Selection.getSelection()
             if len(sel) != 1:
-                QtWidgets.QMessageBox.warning(main_win, "FCProject", "Bitte genau das Anker-Teil auswaehlen.")
+                _warn(main_win, "Bitte genau das Anker-Teil auswaehlen.")
                 return
             anchor_local = sel[0]
 
@@ -136,9 +144,10 @@ if _GUI_AVAILABLE:
 
             anchor_root = _resolve_root(anchor_local)
             if anchor_root is anchor_local:
-                QtWidgets.QMessageBox.warning(
-                    main_win, "FCProject",
-                    f"'{anchor_local.Label}' ist kein Link auf eine externe Quelldatei - "
+                _warn(
+                    main_win,
+                    f"'{anchor_local.Label}' (Typ {anchor_local.TypeId}, Dokument "
+                    f"'{anchor_local.Document.Name}') ist kein Link auf eine externe Quelldatei - "
                     "kann keine Original-Rigid-Group dafuer finden."
                 )
                 return
@@ -146,13 +155,13 @@ if _GUI_AVAILABLE:
             rigid_group, source_members, anchor_member = _find_source_rigid_group(target_doc, anchor_root)
             if rigid_group is None:
                 open_docs = ", ".join(d.Name for d in App.listDocuments().values() if d is not target_doc)
-                QtWidgets.QMessageBox.warning(
-                    main_win, "FCProject",
+                _warn(
+                    main_win,
                     f"In keinem der aktuell geoeffneten Dokumente ({open_docs or 'keine weiteren offen'}) "
                     f"wurde eine Rigid Group gefunden, die '{anchor_local.Label}' (aufgeloest: "
-                    f"'{anchor_root.Label}') als Mitglied fuehrt.\n\n"
-                    "Bitte die Original-Baugruppendatei (z.B. TreiberBaugruppe100.FCStd), in der "
-                    "die Rigid Group definiert ist, zusaetzlich oeffnen und erneut versuchen."
+                    f"'{anchor_root.Label}') als Mitglied fuehrt. Bitte die Original-Baugruppendatei "
+                    "(z.B. TreiberBaugruppe100.FCStd), in der die Rigid Group definiert ist, "
+                    "zusaetzlich oeffnen und erneut versuchen."
                 )
                 return
 
@@ -204,6 +213,11 @@ if _GUI_AVAILABLE:
                 msg += f", {len(skipped)} Teil(e) uebersprungen (keine lokale Instanz gefunden: {', '.join(skipped)})"
             msg += ". Bitte pruefen und bei Bedarf per Interface sperren.\n"
             App.Console.PrintMessage(msg)
+
+            if updated:
+                InterfaceFeature.auto_save_document(
+                    target_doc, reason=f"Rigid Group '{rigid_group.Label}' wiederhergestellt"
+                )
 
         def IsActive(self):
             return App.ActiveDocument is not None

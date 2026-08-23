@@ -26,6 +26,47 @@ except ImportError:
 
 ICON_DIR = os.path.join(os.path.dirname(__file__), 'resources', 'icons')
 
+# FCPROJECT-FEATURE (2026-08-23, Nutzerwunsch): an genau diesem Tag mehrfach echte Arbeit
+# verloren gegangen, weil ein erfolgreicher RestoreRigidGroupCommand/RestoreJointPositionCommand-
+# Lauf im Speicher korrekt aussah, aber nicht per Strg+S gespeichert wurde - ein spaeterer
+# "Reload partial document"-Vorgang (ausgeloest durch eine ANDERE, separat gespeicherte Datei)
+# hat den ungespeicherten Stand dann stillschweigend verworfen und durch die alte Version
+# ersetzt. Deshalb speichern make_interface()-basierte Werkzeuge das betroffene Dokument jetzt
+# automatisch. ABSCHALTBAR ueber FreeCADs eigenen Parameter-Editor (Werkzeuge -> Parameter
+# bearbeiten, oder Bearbeiten -> Einstellungen falls dort verdrahtet) unter:
+#   BaseApp/Preferences/Mod/FCProject -> AutoSaveAfterRestore (Bool) -> auf false setzen.
+# Default: true (an).
+AUTO_SAVE_PARAM_GROUP = "User parameter:BaseApp/Preferences/Mod/FCProject"
+AUTO_SAVE_PARAM_NAME = "AutoSaveAfterRestore"
+
+
+def auto_save_document(doc, reason=""):
+    """Speichert 'doc' automatisch, falls AutoSaveAfterRestore nicht explizit auf false gesetzt
+    wurde (siehe Modul-Kommentar oben fuer die volle Begruendung) - und nur, wenn das Dokument
+    bereits einen Dateinamen hat (neue, nie gespeicherte Dokumente werden nicht automatisch unter
+    einem geratenen Namen abgelegt)."""
+    enabled = App.ParamGet(AUTO_SAVE_PARAM_GROUP).GetBool(AUTO_SAVE_PARAM_NAME, True)
+    if not enabled:
+        App.Console.PrintMessage(
+            f"FCProject: Auto-Speichern uebersprungen (AutoSaveAfterRestore=false) fuer "
+            f"'{doc.Name}'{' - ' + reason if reason else ''}.\n"
+        )
+        return
+    if not doc.FileName:
+        App.Console.PrintWarning(
+            f"FCProject: Auto-Speichern uebersprungen - '{doc.Name}' wurde noch nie gespeichert "
+            "(kein Dateiname bekannt).\n"
+        )
+        return
+    try:
+        doc.save()
+        App.Console.PrintMessage(
+            f"FCProject: '{doc.Name}' automatisch gespeichert"
+            f"{' (' + reason + ')' if reason else ''}.\n"
+        )
+    except Exception as exc:
+        App.Console.PrintWarning(f"FCProject: Auto-Speichern von '{doc.Name}' fehlgeschlagen: {exc}\n")
+
 
 def set_placement_readonly(obj, value):
     """Sperrt/entsperrt Placement (und bei App::Link zusaetzlich LinkPlacement) - dieselbe
@@ -151,6 +192,19 @@ if _GUI_AVAILABLE:
             return None
 
 
+def find_interface_for(doc, target):
+    """Findet das bestehende Interface-Objekt fuer 'target' in 'doc', falls vorhanden - sonst
+    None. Fuer Werkzeuge, die ein bereits gesperrtes Teil NICHT ungefragt ueberschreiben wollen
+    (siehe RestoreJointPositionCommand.py: ein Anker kann ueber mehrere Joints gleichzeitig an
+    bereits korrekt positionierte Teile grenzen - ohne diese Pruefung wuerde ein spaeterer,
+    weniger autoritativer Anker ein zuvor korrekt gesetztes Teil wieder ueberschreiben)."""
+    for obj in doc.Objects:
+        if obj.TypeId == "App::FeaturePython" and hasattr(obj, "TargetObject") and hasattr(obj, "LockedPlacement"):
+            if obj.TargetObject is target:
+                return obj
+    return None
+
+
 def make_interface(doc, target, placement, note=""):
     """Erstellt ein neues Interface-Objekt fuer 'target' mit der gegebenen Placement. Falls fuer
     'target' bereits ein Interface existiert, wird DIESES aktualisiert statt ein zweites
@@ -233,6 +287,7 @@ if _GUI_AVAILABLE:
                 obj.Document, obj, App.Placement(obj.Placement),
                 note="Aktuelles Placement gesperrt ueber FCProject_CreateInterface"
             )
+            auto_save_document(obj.Document, reason=f"Interface fuer '{obj.Label}' gesperrt")
 
         def IsActive(self):
             return App.ActiveDocument is not None
