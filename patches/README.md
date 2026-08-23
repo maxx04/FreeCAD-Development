@@ -329,6 +329,33 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
     deutlich kürzer, eine Gruppe pro Meldung). Wie Fix 13/14 in
     `AssemblyObject.cpp`.
 
+16. **Sichtbar machen, welche Joints ein Solve-Lauf übernimmt/verwirft**
+    (2026-08-23, Nutzerwunsch: Rotor eines verschachtelten Motors bewegt sich
+    nach dem Erden des Gehäuses trotzdem nicht). `getJoints()` und
+    `removeUnconnectedJoints()` loggen jetzt für jeden Joint Name, part1/part2
+    und Ergebnis (übernommen/übersprungen-und-warum). Ursprüngliche Hypothese
+    beim Schreiben dieses Fixes (Joint fällt als "selbstverweisend" raus, weil
+    beide Enden innerhalb derselben Rigid-Unterbaugruppe liegen) war FALSCH -
+    das Logging selbst hat das widerlegt: der Rotor-Joint wurde ganz normal
+    UEBERNOMMEN. Die tatsächliche Ursache (siehe
+    `project_fcproject_manual_placement_workaround_status.md`): jede
+    verschachtelte AssemblyLink löst während desselben Recompute-Durchlaufs
+    ihr EIGENES, unabhängiges `AssemblyObject::solve()` aus - und genau DAS
+    fand keine geerdeten Teile ("no grounded part found") und brach VOR dem
+    eigentlichen Solve ab, obwohl der Joint bereits fertig in der Liste stand.
+    Ohne dieses Logging wäre das nicht unterscheidbar gewesen von einem
+    Joint-Filter-Bug. **Nachgebessert (selbes Datum):** das Logging lief
+    zunächst unbedingt (kein Verbosity-Schalter) - `getJoints()` wird aber
+    nicht nur von `solve()` aufgerufen, sondern auch von `isPartConnected()`/
+    `getJointsOfPart()`, die während einer interaktiven Zieh-Bewegung
+    (`preDrag()`) potenziell auf jedem Mausereignis laufen. Das hat beim
+    Draggen im 3D-Fenster spürbar CPU gekostet (Report-View-Textausgabe ist
+    pro Aufruf nicht billig) - im Live-Test als "Lüfter bläst, FreeCAD
+    verbraucht kontinuierlich CPU" bemerkt. Fix: neuer `verboseLog`-Parameter
+    (Default `false`) an `getJoints()`, nur der direkte Aufruf in `solve()`
+    setzt ihn auf `true`. Wie Fix 10/11/13 in `AssemblyObject.cpp`/`.h` -
+    braucht einen Rebuild des `Assembly`-Targets.
+
 **Hinweis (2026-08-18, `update-and-rebuild-freecad.sh`-Lauf):** Upstream hat
 mit "Assembly: Add RigidGroup (#29605)" (11. Aug 2026) `AssemblyObject.cpp`
 strukturell verändert (neue `rebuildRigidClusters()`/
@@ -432,6 +459,63 @@ cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.
 
 (C++, betrifft `AssemblyApp.so` - Rebuild des `Assembly`-Targets nötig,
 reines Kopieren wie bei den Python-Patches reicht hier nicht.)
+
+## freecad-assembly-viewprovider-null-crash.patch
+
+**Ausgangsbug** (2026-08-23, Nutzer-Repro: "beim aktivieren Baugruppe Freecad stürzt"): reproduzierbarer
+SIGSEGV-Absturz beim Aktivieren (Doppelklick/`setEdit()`) einer `Assembly::AssemblyObject`, wenn das
+direkt davor per `App::Document::afterRestore()` ausgelöste "Reload partial document" gelaufen ist
+(z.B. weil eine per Link eingebundene Unter-Datei extern geändert/gespeichert wurde - genau der Fall,
+wenn man wie in [[project_fcproject_manual_placement_workaround_status]] eine Unterbaugruppendatei
+direkt öffnet und dort speichert). 4-mal in Folge reproduziert, jedes Mal identisch.
+
+**Diagnose-Werkzeuge, die dabei geholfen haben** (siehe auch [[project_fcproject_live_log_file_access]]):
+- FreeCADs neuer Crash-Reporter legt bei jedem Absturz automatisch eine `.fcrash`-Binärdatei unter
+  `~/.local/share/FreeCAD/v26-3/CrashReports/` (bzw. `archive/` für ältere) ab - Format vollständig
+  dokumentiert in `src/Base/CrashReporter/Format.h`. Alle 4 Abstürze zeigten dieselbe Fehleradresse
+  `0xd1c` (SIGSEGV, Signal 11) - beweist Reproduzierbarkeit, aber `frameCount=0` (kein Stacktrace
+  in der Datei selbst).
+- Fehlender Stacktrace deshalb per `gdb -batch -ex run -ex bt` selbst reproduziert: FreeCAD mit der
+  betroffenen Datei + einem `.FCMacro`, das `Gui.ActiveDocument.setEdit(objName)` aufruft (Äquivalent
+  zum Doppelklick), als Kommandozeilenargumente gestartet. So den echten Stacktrace bekommen:
+  `AssemblyGui::ViewProviderAssembly::UpdateSolverInformation()` -> `setEdit(int)` ->
+  `Gui::ViewProvider::startEditing(int)`.
+- Register-Dump am Absturzpunkt (`info registers`) zeigte `rax=0x0` direkt nach dem Aufruf von
+  `Base::freecad_cast<AssemblyObject*>(...)`, gefolgt von `mov 0xd1c(%rax),%r13d` - der Cast lieferte
+  `nullptr`, und der Code griff ohne Prüfung direkt darauf zu.
+
+**Root Cause**: `ViewProviderAssembly::UpdateSolverInformation()` und `ViewProviderAssembly::setEdit()`
+rufen beide `getObject<AssemblyObject>()` auf und benutzen das Ergebnis SOFORT, ohne auf `nullptr` zu
+prüfen - anders als `objListHelper()` weiter unten in derselben Datei, die genau das bereits richtig
+macht (`if (!assembly) return QString();`). Direkt nach einem "Reload partial document" kann der
+ViewProvider kurzzeitig auf ein Objekt zeigen, das (noch) kein gültiges `AssemblyObject` ist -
+`getObject<AssemblyObject>()` liefert dann `nullptr`. Das ist ein waschechter, vorher unentdeckter
+FreeCAD-Bug (Upstream), keine Folge unserer sonstigen Patches - dieses konkrete Szenario (extern
+geänderte Unter-Datei + sofortiges Aktivieren) hat ihn nur zum ersten Mal sichtbar gemacht.
+
+**Fix**: zwei identische Guards ergänzt, exakt das bereits vorhandene Muster aus `objListHelper()`
+übernommen - `if (!assembly) return;` in `UpdateSolverInformation()`, `if (!assembly) return false;`
+in `setEdit()` (vor der ersten Verwendung von `assembly` jeweils). Reine Absturz-Verhinderung, keine
+Verhaltensänderung im Erfolgsfall.
+
+**Verifiziert**: nach dem ersten Guard verschob sich der Absturz nur eine Ebene höher (derselbe
+`nullptr`, andere Verwendungsstelle in `setEdit()` selbst) - erst nach BEIDEN Guards blieb der
+Prozess über 60 Sekunden stabil (vorher crashte er jedes Mal innerhalb von 15-50 Sekunden).
+
+Anwenden:
+
+```bash
+cd /home/maxx/freecad/freecad-source
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-viewprovider-null-crash.patch
+cmake --build build --target AssemblyGui -- -j$(nproc)
+cp build/Mod/Assembly/AssemblyGui.so /home/maxx/freecad/install/lib/AssemblyGui.so
+```
+
+(C++, betrifft `AssemblyGui.so` - **anderes** Target als die meisten übrigen Assembly-Patches
+(`Assembly` bzw. `AssemblyApp.so`)! Bei Signaturänderungen an `AssemblyObject`-Methoden IMMER
+prüfen, ob `AssemblyGui` (oder andere Module) dieselbe Methode aufrufen und mitgebaut werden müssen -
+ein reines `Assembly`-Rebuild ohne `AssemblyGui`-Rebuild führt sonst zu `undefined symbol`-Fehlern
+beim Laden, siehe Vorfall 2026-08-23 in [[project_fcproject_manual_placement_workaround_status]].)
 
 ## freecad-assembly-grounded-joint-nested-flex.patch
 

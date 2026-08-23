@@ -94,17 +94,22 @@ FEATURE_PATCHES=(
   "freecad-assembly-link-delete-hang.patch"
   "freecad-filedialog-search-filter.patch"
   "freecad-assembly-grounded-joint-nested-flex.patch"
+  "freecad-assembly-viewprovider-null-crash.patch"
 )
 # WICHTIG: hier ALLE von den FEATURE_PATCHES beruehrten Dateien eintragen,
 # nicht nur einen Teil - sonst faellt eine vergessene Datei (z. B. AssemblyObject.cpp
 # oder CommandSolveAssembly.py, siehe Vorfall 2026-08-18) beim Resume nach einem
 # Abbruch faelschlich als "unerwartete Aenderung" durch Schritt 1 und muss jedes
-# Mal von Hand bereinigt werden.
+# Mal von Hand bereinigt werden. AssemblyObject.h hier ergaenzt (2026-08-23) - fehlte
+# bisher trotz Aenderungen durch Fix 16 (getJoints()-Signatur), exakt derselbe
+# Fehler wie der 2026-08-18-Vorfall, nur an einer neuen Datei.
 FEATURE_PATCHED_FILES=(
   "src/Mod/Assembly/JointObject.py"
   "src/Mod/Assembly/App/AssemblyLink.cpp"
   "src/Mod/Assembly/App/AssemblyLink.h"
   "src/Mod/Assembly/App/AssemblyObject.cpp"
+  "src/Mod/Assembly/App/AssemblyObject.h"
+  "src/Mod/Assembly/Gui/ViewProviderAssembly.cpp"
   "src/Mod/Assembly/CommandSolveAssembly.py"
   "src/Gui/FileDialog.cpp"
   "src/Gui/FileDialog.h"

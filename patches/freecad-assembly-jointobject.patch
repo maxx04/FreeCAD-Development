@@ -1,231 +1,5 @@
-diff --git a/src/Mod/Assembly/JointObject.py b/src/Mod/Assembly/JointObject.py
-index 79752c46d5..5af8ad8b23 100644
---- a/src/Mod/Assembly/JointObject.py
-+++ b/src/Mod/Assembly/JointObject.py
-@@ -151,13 +151,22 @@ def solveIfAllowed(assembly, storePrev=False):
- 
- 
- def getContext(obj):
--    """Fetch the context of an object."""
-+    """Fetch the context of an object.
-+
-+    FCPROJECT-PATCH (8): benutzt den internen, eindeutigen Object.Name statt
-+    des Labels. Labels sind in vielen realen Baugruppen alles andere als
-+    eindeutig (z.B. hat FreeCAD's eigener "Distance"-Joint-Standardtext das
-+    Label "Abstand" fuer JEDEN so erzeugten Joint), wodurch Diagnose-Meldungen
-+    wie "Assembly joint 'Baugruppe.Abstand' has an invalid Reference1..." den
-+    betroffenen Joint unter mehreren gleich benannten nicht identifizieren
-+    liessen - der eindeutige Name (z.B. "Joint013") laesst sich dagegen direkt
-+    per getObject() im Python-Konsolen/Report-View wiederfinden.
-+    """
-     context = []
-     current = obj
- 
-     while current:
--        # Add the object's Label at the beginning or the Name if label is empty
--        context.insert(0, current.Label if current.Label else current.Name)
-+        context.insert(0, current.Name)
-         # Get the immediate parent object
-         parents = getattr(current, "InList", [])
-         current = parents[0] if parents else None
-@@ -973,7 +982,24 @@ class Joint:
-         if not sameDir:
-             moving_part_global_jcs = UtilsAssembly.flipPlacement(moving_part_global_jcs)
- 
--        transform_plc = fixed_part_global_jcs * moving_part_global_jcs.inverse()
-+        if joint.JointType == "Slider":
-+            # A Slider joint has one free translational DOF along the JCS's local Z axis
-+            # (see e.g. offsetSpinbox binding to Offset2.Base.z). Fully matching the JCS
-+            # here - as done below for other joint types - would collapse that free DOF
-+            # onto the fixed part's position instead of preserving the part's own position
-+            # along the slide axis. This matters specifically because preSolve()/matchJCS()
-+            # can run before the mbD solver considers this joint "connected" - e.g. on the
-+            # very first recompute after loading a file, triggered indirectly by an
-+            # ExpressionEngine-bound Offset property re-evaluating - in which case this used
-+            # to snap the whole downstream chain onto the fixed part's slide position
-+            # (issue: chained Slider joints collapse to the grounded part's position on a
-+            # cold recompute).
-+            local = fixed_part_global_jcs.inverse() * moving_part_global_jcs
-+            correctedLocal = App.Placement(App.Vector(0, 0, local.Base.z), App.Rotation())
-+            correctedMovingGlobalJcs = fixed_part_global_jcs * correctedLocal
-+            transform_plc = correctedMovingGlobalJcs * moving_part_global_jcs.inverse()
-+        else:
-+            transform_plc = fixed_part_global_jcs * moving_part_global_jcs.inverse()
- 
-         for part in parts_to_move:
-             part.Placement = transform_plc * part.Placement
-@@ -1540,7 +1566,15 @@ class MakeJointSelGate:
-                 if parent.isDerivedFrom("App::LocalCoordinateSystem"):
-                     datum = parent
- 
--            if self.assembly.hasObject(datum) and hasattr(datum, "MapMode"):
-+            # hasObject() cannot check objects belonging to another document (e.g. a datum
-+            # reached through an App::Link into a different .FCStd file in multi-document
-+            # assemblies) and raises FreeCADError in that case - skip the membership/MapMode
-+            # check then and accept the datum, same as for empty links above.
-+            if (
-+                datum.Document is self.assembly.Document
-+                and self.assembly.hasObject(datum)
-+                and hasattr(datum, "MapMode")
-+            ):
-                 # accept only datum that are not attached
-                 return datum.MapMode == "Deactivated"
- 
-@@ -1635,11 +1669,18 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
-             self.createJointObject()
-             self.visibilityBackup = False
- 
--        self.jForm.angleSpinbox.valueChanged.connect(self.onAngleChanged)
--        self.jForm.distanceSpinbox.valueChanged.connect(self.onDistanceChanged)
--        self.jForm.distanceSpinbox2.valueChanged.connect(self.onDistance2Changed)
--        self.jForm.offsetSpinbox.valueChanged.connect(self.onOffsetChanged)
--        self.jForm.rotationSpinbox.valueChanged.connect(self.onRotationChanged)
-+        # valueChanged is overloaded (double / Base::Quantity) in C++, but PySide6 only exposes
-+        # the Base::Quantity variant to Python in this build, which it cannot marshal
-+        # ("parameter 0 of type Base::Quantity cannot be converted") - the slot is never even
-+        # invoked, so the typed value is silently lost. textChanged is emitted right after the
-+        # same internal value update (see QuantitySpinBox::updateFromCache) and is a plain
-+        # QString, so it connects safely; the handlers below ignore the argument anyway and
-+        # re-read rawValue from the spinbox.
-+        self.jForm.angleSpinbox.textChanged.connect(self.onAngleChanged)
-+        self.jForm.distanceSpinbox.textChanged.connect(self.onDistanceChanged)
-+        self.jForm.distanceSpinbox2.textChanged.connect(self.onDistance2Changed)
-+        self.jForm.offsetSpinbox.textChanged.connect(self.onOffsetChanged)
-+        self.jForm.rotationSpinbox.textChanged.connect(self.onRotationChanged)
-         bind = Gui.ExpressionBinding(self.jForm.angleSpinbox).bind(self.joint, "Angle")
-         bind = Gui.ExpressionBinding(self.jForm.distanceSpinbox).bind(self.joint, "Distance")
-         bind = Gui.ExpressionBinding(self.jForm.distanceSpinbox2).bind(self.joint, "Distance2")
-@@ -1663,10 +1704,12 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
-         self.jForm.limitCheckbox3.stateChanged.connect(self.adaptUi)
-         self.jForm.limitCheckbox4.stateChanged.connect(self.adaptUi)
- 
--        self.jForm.limitLenMinSpinbox.valueChanged.connect(self.onLimitLenMinChanged)
--        self.jForm.limitLenMaxSpinbox.valueChanged.connect(self.onLimitLenMaxChanged)
--        self.jForm.limitRotMinSpinbox.valueChanged.connect(self.onLimitRotMinChanged)
--        self.jForm.limitRotMaxSpinbox.valueChanged.connect(self.onLimitRotMaxChanged)
-+        # Gleicher valueChanged/Base::Quantity-Marshalling-Bug wie oben - textChanged statt
-+        # valueChanged verwenden (siehe Kommentar weiter oben).
-+        self.jForm.limitLenMinSpinbox.textChanged.connect(self.onLimitLenMinChanged)
-+        self.jForm.limitLenMaxSpinbox.textChanged.connect(self.onLimitLenMaxChanged)
-+        self.jForm.limitRotMinSpinbox.textChanged.connect(self.onLimitRotMinChanged)
-+        self.jForm.limitRotMaxSpinbox.textChanged.connect(self.onLimitRotMaxChanged)
-         bind = Gui.ExpressionBinding(self.jForm.limitLenMinSpinbox).bind(self.joint, "LengthMin")
-         bind = Gui.ExpressionBinding(self.jForm.limitLenMaxSpinbox).bind(self.joint, "LengthMax")
-         bind = Gui.ExpressionBinding(self.jForm.limitRotMinSpinbox).bind(self.joint, "AngleMin")
-@@ -1716,13 +1759,65 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
- 
-         self.assembly.recompute(True)
- 
-+        # WORKAROUND (FCProject-Patch, siehe patches/freecad-assembly-jointobject.patch):
-+        # bei Baugruppen mit dokumentuebergreifenden Referenzen (jedes Bauteil sein eigenes
-+        # .FCStd-Dokument, per App::Link eingebunden) kann die persistente Element-Referenz
-+        # (Reference1/Reference2) direkt nach dem ersten Recompute noch nicht aufloesbar sein
-+        # ("?" im Elementnamen, siehe execute()s "Broken link"-Check oben) - der Joint faellt
-+        # dadurch in execute() mit einer Exception in den Fehlerzustand und wird von
-+        # AssemblyObject::getJoints() komplett aus dem Verbindungsgraphen entfernt, wodurch das
-+        # zweite Bauteil sich danach lautlos nicht mehr ziehen laesst (kein Fehler in der UI).
-+        # Ein Suppress/Unsuppress-Zyklus zwingt eine erneute Aufloesung, die im zweiten Anlauf
-+        # i. d. R. gelingt (nur der zweite Recompute-Durchlauf ueber beide Dokumente hinweg
-+        # scheint die Namensaufloesung "heilen" zu koennen).
-+        # Bewusst KEIN stiller Fallback: nur ausfuehren, wenn der Fehlerfall tatsaechlich
-+        # eingetreten ist, und immer eine Konsolen-Meldung dazu - damit das nicht unbemerkt
-+        # durchlaeuft und man es im Log wiederfindet.
-+        if self.activeType == "Assembly" and "Invalid" in self.joint.State:
-+            App.Console.PrintWarning(
-+                translate(
-+                    "Assembly",
-+                    "FCProject-Workaround: Joint '{}' war nach dem Erstellen ungueltig"
-+                    " (vermutlich dokumentuebergreifende TNP-Referenz) - erzwinge Neuaufloesung"
-+                    " via Suppress/Unsuppress.\n",
-+                ).format(self.joint.Label)
-+            )
-+            self.joint.Suppressed = True
-+            self.assembly.recompute(True)
-+            self.joint.Suppressed = False
-+            self.assembly.recompute(True)
-+
-+            if "Invalid" in self.joint.State:
-+                App.Console.PrintError(
-+                    translate(
-+                        "Assembly",
-+                        "FCProject-Workaround: Neuaufloesung von Joint '{}' fehlgeschlagen -"
-+                        " bitte Referenzen manuell pruefen!\n",
-+                    ).format(self.joint.Label)
-+                )
-+
-         Gui.ActiveDocument.commitCommand()
-+
-+        # FCProject-Patch: Redraw erst hier, NACH dem finalen Commit/Recompute (siehe
-+        # ausfuehrlicher Kommentar in deactivate()) - macht die von clearIsolate()
-+        # zurueckgesetzten Bauteile sofort sichtbar, ohne den noch nicht fertig committeten
-+        # Joint-Zwischenzustand zu zeichnen. Gleiches Muster bereits in
-+        # CommandCreateSimulation.py verwendet ("Ensure the 3D view is redrawn").
-+        if self.activeType == "Assembly":
-+            Gui.updateGui()
-+
-         return True
- 
-     def reject(self):
-         self.deactivate()
-         Gui.ActiveDocument.abortCommand()
-         self.assembly.recompute(True)
-+
-+        # FCProject-Patch: siehe Kommentar in accept() - Redraw erst nach dem finalen
-+        # Recompute, nicht schon in deactivate().
-+        if self.activeType == "Assembly":
-+            Gui.updateGui()
-+
-         return True
- 
-     def autoClosedOnTransactionChange(self):
-@@ -1745,6 +1840,25 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
-             self.assembly.ViewObject.MoveOnlyPreselected = False
-             self.assembly.ViewObject.MoveInCommand = True
- 
-+            # FCProject-Patch: Falls der Nutzer die "Isolate"-Anzeige (Transparent/Wireframe/
-+            # Hidden) waehrend der Joint-Bearbeitung aktiv gelassen hat, statt sie manuell auf
-+            # "Disabled" zurueckzustellen, blieb Selectable=False auf den nicht isolierten
-+            # Bauteilen dauerhaft haengen - inklusive Speichern in die Datei, da der
-+            # Wiederherstellungs-Backup nur im RAM existiert und mit dem Dokument verloren geht.
-+            # clearIsolate() ist ein sicherer No-Op, wenn keine Isolation aktiv ist (iteriert nur
-+            # ueber ein ggf. leeres Backup), daher hier unbedingt bei jedem Verlassen des
-+            # Joint-Dialogs aufrufen statt nur beim manuellen Umschalten auf "Disabled".
-+            if hasattr(self.assembly.ViewObject, "clearIsolate"):
-+                self.assembly.ViewObject.clearIsolate()
-+                # HINWEIS: Der noetige Gui.updateGui()-Redraw (siehe unten in accept()/reject())
-+                # passiert bewusst NICHT hier, sondern erst ganz am Ende von accept()/reject() -
-+                # deactivate() laeuft VOR der finalen Commit-/Recompute-Sequenz
-+                # (generatePropertySettings/recompute in accept(), abortCommand/recompute in
-+                # reject()). Ein Gui.updateGui() an dieser Stelle pumpt die Qt-Eventqueue sofort
-+                # durch und kann so einen verfruehten Redraw/Recompute mit dem noch nicht
-+                # fertig committeten Joint-Zwischenzustand ausloesen - beobachtet als Bauteile,
-+                # die kurz auf Placement (0,0,0) zurueckspringen.
-+
-         Gui.Selection.removeSelectionGate()
-         Gui.Selection.removeObserver(self)
-         Gui.Selection.setSelectionStyle(Gui.Selection.SelectionStyle.NormalSelection)
-@@ -2309,5 +2423,19 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
-         self.presel_ref = [comp, [new_sub]]
- 
-     def clearSelection(self, doc_name):
-+        # FCPROJECT-PATCH (9): Gui.Selection ruft diesen Observer-Callback bei JEDEM Leeren der
-+        # globalen Auswahl auf - unabhaengig vom Grund (Klick auf leeren Raum in der 3D-Ansicht,
-+        # ein anderes Tree-Element ausgewaehlt, ...). Ohne diese Absicherung wurde ein bereits
-+        # vollstaendiger Joint (2 gueltige Referenzen, z.B. beim Oeffnen zum Bearbeiten aus
-+        # updateTaskboxFromJoint() geladen und in der 3D-Ansicht markiert) durch einen einzigen,
-+        # voellig harmlos wirkenden Klick daneben sofort zerstoert: self.refs wurde geleert und
-+        # ueber updateJoint() -> setJointConnectors() SOFORT (noch vor OK/Accept) Reference1 und
-+        # Reference2 auf None geschrieben - lautlos, ohne Bestaetigung. Ein bereits vollstaendiger
-+        # Pick (>= 2 Referenzen) wird deshalb hier bewusst NICHT durch ein blosses Leeren der
-+        # globalen Auswahl verworfen. Einzelne Referenzen lassen sich weiterhin gezielt durch
-+        # erneutes Anklicken abwaehlen (removeSelection()); nur das komplette, unbeabsichtigte
-+        # Leeren eines bereits fertigen Joints wird ignoriert.
-+        if len(self.refs) >= 2:
-+            return
-         self.refs.clear()
-         self.updateJoint()
 diff --git a/src/Mod/Assembly/App/AssemblyObject.cpp b/src/Mod/Assembly/App/AssemblyObject.cpp
-index 51d2b3230f..9d5b4dd8cf 100644
+index 51d2b3230f..c9573d6518 100644
 --- a/src/Mod/Assembly/App/AssemblyObject.cpp
 +++ b/src/Mod/Assembly/App/AssemblyObject.cpp
 @@ -152,8 +152,73 @@ void AssemblyObject::onChanged(const App::Property* prop)
@@ -302,7 +76,7 @@ index 51d2b3230f..9d5b4dd8cf 100644
      ensureIdentityPlacements();
  
      syncGroundedJoints();
-@@ -167,6 +232,10 @@ int AssemblyObject::solve(bool enableRedo)
+@@ -167,10 +232,17 @@ int AssemblyObject::solve(bool enableRedo)
      auto groundedObjs = fixGroundedParts();
      if (groundedObjs.empty()) {
          // If no part fixed we can't solve.
@@ -313,7 +87,15 @@ index 51d2b3230f..9d5b4dd8cf 100644
          return -6;
      }
  
-@@ -197,6 +266,35 @@ int AssemblyObject::solve(bool enableRedo)
+-    std::vector<App::DocumentObject*> joints = getJoints();
++    // verboseLog=true nur hier: dies ist der EINE echte, seltene solve()-Aufruf - nicht die
++    // haeufigen internen getJoints()-Aufrufe aus isPartConnected()/getJointsOfPart() waehrend
++    // einer interaktiven Zieh-Bewegung (siehe FCPROJECT-PATCH 16 in getJoints()).
++    std::vector<App::DocumentObject*> joints = getJoints(false, true, true);
+ 
+     removeUnconnectedJoints(joints, groundedObjs);
+ 
+@@ -197,6 +269,35 @@ int AssemblyObject::solve(bool enableRedo)
          return -1;
      }
  
@@ -349,7 +131,7 @@ index 51d2b3230f..9d5b4dd8cf 100644
      setNewPlacements();
      updateRigidPlacementCache();
  
-@@ -204,6 +302,25 @@ int AssemblyObject::solve(bool enableRedo)
+@@ -204,6 +305,25 @@ int AssemblyObject::solve(bool enableRedo)
  
      updateSolveStatus();
  
@@ -375,7 +157,112 @@ index 51d2b3230f..9d5b4dd8cf 100644
      return 0;
  }
  
-@@ -1167,8 +1284,16 @@ std::unordered_set<App::DocumentObject*> AssemblyObject::getGroundedParts()
+@@ -960,7 +1080,7 @@ ViewGroup* AssemblyObject::getExplodedViewGroup() const
+     return nullptr;
+ }
+ 
+-std::vector<App::DocumentObject*> AssemblyObject::getJoints(bool delBadJoints, bool subJoints)
++std::vector<App::DocumentObject*> AssemblyObject::getJoints(bool delBadJoints, bool subJoints, bool verboseLog)
+ {
+     std::vector<App::DocumentObject*> joints = {};
+ 
+@@ -969,6 +1089,19 @@ std::vector<App::DocumentObject*> AssemblyObject::getJoints(bool delBadJoints, b
+         return {};
+     }
+ 
++    // FCPROJECT-PATCH (16): Nutzerwunsch - sichtbar machen, WELCHE Joints hier pro Solve
++    // uebernommen und welche warum uebersprungen werden. Hintergrund: bei verschachtelten
++    // Baugruppen kann ein Joint STILLSCHWEIGEND rausfallen, wenn beide Referenzen ueber
++    // getMovingPartFromRef() auf DASSELBE aeussere Bauteil abgebildet werden (z.B. weil Rotor UND
++    // Gehaeuse beide innerhalb DERSELBEN als "Rigid" markierten Unter-Baugruppe liegen - dann
++    // sieht dieser Joint von hier aus wie ein selbst-verweisender/inkohaerenter Joint aus, obwohl
++    // er weiter unten in der eigentlich zustaendigen inneren Baugruppe voellig normal waere).
++    // Ohne diese Meldung ist das von aussen nicht von einem echten "Teil geloescht"-Leichenjoint
++    // zu unterscheiden - beide Faelle liefen bisher identisch lautlos durch.
++    // FCPROJECT-PATCH (16, nachgebessert): NUR noch hinter verboseLog, siehe Header-Kommentar -
++    // isPartConnected()/getJointsOfPart() rufen diese Funktion waehrend einer interaktiven
++    // Zieh-Bewegung (preDrag()) potenziell auf jedem Mausereignis auf; unbedingtes Logging hat dort
++    // spuerbar CPU gekostet (Report-View-Textausgabe ist pro Aufruf nicht billig).
+     Base::PyGILStateLocker lock;
+     for (auto joint : jointGroup->getObjects()) {
+         if (!joint) {
+@@ -978,6 +1111,16 @@ std::vector<App::DocumentObject*> AssemblyObject::getJoints(bool delBadJoints, b
+         auto* prop = dynamic_cast<App::PropertyBool*>(joint->getPropertyByName("Suppressed"));
+         if (joint->isError() || !prop || prop->getValue()) {
+             // Filter grounded joints and deactivated joints.
++            if (verboseLog) {
++                Base::Console().message(
++                    "Assembly: getJoints('%s') - Joint '%s' uebersprungen (isError=%d, "
++                    "Suppressed=%d).\n",
++                    getFullName(),
++                    joint->getNameInDocument(),
++                    joint->isError() ? 1 : 0,
++                    (prop && prop->getValue()) ? 1 : 0
++                );
++            }
+             continue;
+         }
+ 
+@@ -986,6 +1129,18 @@ std::vector<App::DocumentObject*> AssemblyObject::getJoints(bool delBadJoints, b
+         if (!part1 || !part2 || part1->getFullName() == part2->getFullName()) {
+             // Remove incomplete joints. Left-over when the user deletes a part.
+             // Remove incoherent joints (self-pointing joints)
++            if (verboseLog) {
++                Base::Console().message(
++                    "Assembly: getJoints('%s') - Joint '%s' uebersprungen: part1='%s', "
++                    "part2='%s' (unvollstaendig oder BEIDE Referenzen zeigen auf dasselbe "
++                    "aeussere Bauteil - z.B. weil beide innerhalb derselben Rigid-Unterbaugruppe "
++                    "liegen).\n",
++                    getFullName(),
++                    joint->getNameInDocument(),
++                    part1 ? part1->getFullName().c_str() : "<null>",
++                    part2 ? part2->getFullName().c_str() : "<null>"
++                );
++            }
+             if (delBadJoints) {
+                 getDocument()->removeObject(joint->getNameInDocument());
+             }
+@@ -995,14 +1150,39 @@ std::vector<App::DocumentObject*> AssemblyObject::getJoints(bool delBadJoints, b
+         auto proxy = dynamic_cast<App::PropertyPythonObject*>(joint->getPropertyByName("Proxy"));
+         if (proxy) {
+             if (proxy->getValue().hasAttr("setJointConnectors")) {
++                if (verboseLog) {
++                    Base::Console().message(
++                        "Assembly: getJoints('%s') - Joint '%s' UEBERNOMMEN: part1='%s', "
++                        "part2='%s'.\n",
++                        getFullName(),
++                        joint->getNameInDocument(),
++                        part1->getFullName().c_str(),
++                        part2->getFullName().c_str()
++                    );
++                }
+                 joints.push_back(joint);
+             }
++            else if (verboseLog) {
++                Base::Console().message(
++                    "Assembly: getJoints('%s') - Joint '%s' uebersprungen: Proxy hat keine "
++                    "setJointConnectors-Methode (kein normaler beweglicher Joint, z.B. Grounded/"
++                    "RigidGroup).\n",
++                    getFullName(),
++                    joint->getNameInDocument()
++                );
++            }
+         }
+     }
+ 
+     // add sub assemblies joints.
+     if (subJoints) {
+         for (auto& assembly : getSubAssemblies()) {
++            // Hinweis: AssemblyLink::getJoints() (0 Argumente) ist eine ANDERE, unabhaengige
++            // Funktion (reiner JointGroup-Zugriff, keine Instrumentierung aus Fix 16) - die
++            // 'CNC3018_067_A_NEMA17x33_III_Y' etc. Meldungen im Log kamen NICHT ueber diesen Pfad,
++            // sondern weil jede verschachtelte AssemblyLink waehrend desselben Recompute-Durchlaufs
++            // ihr EIGENES, unabhaengiges AssemblyObject::solve() ausloest (siehe
++            // project_fcproject_manual_placement_workaround_status.md).
+             auto subJoints = assembly->getJoints();
+             joints.insert(joints.end(), subJoints.begin(), subJoints.end());
+         }
+@@ -1167,8 +1347,16 @@ std::unordered_set<App::DocumentObject*> AssemblyObject::getGroundedParts()
          }
      }
  
@@ -394,7 +281,53 @@ index 51d2b3230f..9d5b4dd8cf 100644
  
      // Propagate grounding through active rigid clusters.
      std::vector<App::DocumentObject*> groundedSnapshot(groundedSet.begin(), groundedSet.end());
-@@ -2176,10 +2301,17 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
+@@ -1327,6 +1515,18 @@ void AssemblyObject::removeUnconnectedJoints(
+         traverseAndMarkConnectedParts(groundedObj, connectedParts, joints);
+     }
+ 
++    // FCPROJECT-PATCH (16): siehe getJoints() weiter oben - gleiches Prinzip, zweite Filterstufe.
++    // Hier faellt ein Joint raus, wenn eine seiner beiden Seiten NICHT ueber eine Kette von
++    // Joints von einem geerdeten Teil aus erreichbar ist (traverseAndMarkConnectedParts()).
++    Base::Console().message(
++        "Assembly: removeUnconnectedJoints('%s') - %zu geerdete(s) Teil(e), %zu erreichbare(s) "
++        "Teil(e), pruefe %zu Joint(s).\n",
++        getFullName(),
++        groundedObjs.size(),
++        connectedParts.size(),
++        joints.size()
++    );
++
+     // Filter out unconnected joints
+     joints.erase(
+         std::remove_if(
+@@ -1335,10 +1535,22 @@ void AssemblyObject::removeUnconnectedJoints(
+             [&](App::DocumentObject* joint) {
+                 App::DocumentObject* obj1 = getMovingPartFromRef(joint, "Reference1");
+                 App::DocumentObject* obj2 = getMovingPartFromRef(joint, "Reference2");
+-                return (
+-                    !isObjInSetOfObjRefs(obj1, connectedParts)
+-                    || !isObjInSetOfObjRefs(obj2, connectedParts)
+-                );
++                bool obj1Connected = isObjInSetOfObjRefs(obj1, connectedParts);
++                bool obj2Connected = isObjInSetOfObjRefs(obj2, connectedParts);
++                if (!obj1Connected || !obj2Connected) {
++                    Base::Console().message(
++                        "Assembly: removeUnconnectedJoints('%s') - Joint '%s' entfernt: "
++                        "part1='%s' (erreichbar=%d), part2='%s' (erreichbar=%d).\n",
++                        getFullName(),
++                        joint->getNameInDocument(),
++                        obj1 ? obj1->getFullName().c_str() : "<null>",
++                        obj1Connected ? 1 : 0,
++                        obj2 ? obj2->getFullName().c_str() : "<null>",
++                        obj2Connected ? 1 : 0
++                    );
++                    return true;
++                }
++                return false;
+             }
+         ),
+         joints.end()
+@@ -2176,10 +2388,17 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
  
      // If this joint is self-referential it must be ignored.
      if (getMbDPart(part1) == getMbDPart(part2)) {
@@ -413,6 +346,26 @@ index 51d2b3230f..9d5b4dd8cf 100644
          );
          return false;
      }
+diff --git a/src/Mod/Assembly/App/AssemblyObject.h b/src/Mod/Assembly/App/AssemblyObject.h
+index 07ac39e161..3dafbfe40a 100644
+--- a/src/Mod/Assembly/App/AssemblyObject.h
++++ b/src/Mod/Assembly/App/AssemblyObject.h
+@@ -159,7 +159,14 @@ public:
+     template<typename T>
+     T* getGroup();
+ 
+-    std::vector<App::DocumentObject*> getJoints(bool delBadJoints = false, bool subJoints = true);
++    // FCPROJECT-PATCH (16, nachgebessert): verboseLog-Parameter ergaenzt, default false. Grund:
++    // getJoints() wird nicht nur von solve() aufgerufen, sondern auch von isPartConnected()/
++    // getJointsOfPart() - und DIE laufen waehrend einer interaktiven Zieh-Bewegung (preDrag())
++    // potenziell auf JEDEM Mausereignis. Das Debug-Logging aus Fix 16 lief zunaechst unbedingt mit
++    // und hat dadurch beim Draggen im 3D-Fenster massiv CPU gekostet (Report-View-Textausgabe ist
++    // pro Aufruf nicht billig). Jetzt nur noch fuer den direkten solve()-Aufruf aktiviert.
++    std::vector<App::DocumentObject*>
++    getJoints(bool delBadJoints = false, bool subJoints = true, bool verboseLog = false);
+     std::vector<App::DocumentObject*> getGroundedJoints();
+     std::vector<App::DocumentObject*> getRigidGroups();
+     std::vector<App::DocumentObject*> getJointsOfObj(App::DocumentObject* obj);
 diff --git a/src/Mod/Assembly/CommandSolveAssembly.py b/src/Mod/Assembly/CommandSolveAssembly.py
 index 52820a8566..53a4f004b0 100644
 --- a/src/Mod/Assembly/CommandSolveAssembly.py
@@ -435,3 +388,229 @@ index 52820a8566..53a4f004b0 100644
          assembly.recompute(True)
          Gui.ActiveDocument.commitCommand()
  
+diff --git a/src/Mod/Assembly/JointObject.py b/src/Mod/Assembly/JointObject.py
+index f743aae434..77ab13752d 100644
+--- a/src/Mod/Assembly/JointObject.py
++++ b/src/Mod/Assembly/JointObject.py
+@@ -151,13 +151,22 @@ def solveIfAllowed(assembly, storePrev=False):
+ 
+ 
+ def getContext(obj):
+-    """Fetch the context of an object."""
++    """Fetch the context of an object.
++
++    FCPROJECT-PATCH (8): benutzt den internen, eindeutigen Object.Name statt
++    des Labels. Labels sind in vielen realen Baugruppen alles andere als
++    eindeutig (z.B. hat FreeCAD's eigener "Distance"-Joint-Standardtext das
++    Label "Abstand" fuer JEDEN so erzeugten Joint), wodurch Diagnose-Meldungen
++    wie "Assembly joint 'Baugruppe.Abstand' has an invalid Reference1..." den
++    betroffenen Joint unter mehreren gleich benannten nicht identifizieren
++    liessen - der eindeutige Name (z.B. "Joint013") laesst sich dagegen direkt
++    per getObject() im Python-Konsolen/Report-View wiederfinden.
++    """
+     context = []
+     current = obj
+ 
+     while current:
+-        # Add the object's Label at the beginning or the Name if label is empty
+-        context.insert(0, current.Label if current.Label else current.Name)
++        context.insert(0, current.Name)
+         # Get the immediate parent object
+         parents = getattr(current, "InList", [])
+         current = parents[0] if parents else None
+@@ -973,7 +982,24 @@ class Joint:
+         if not sameDir:
+             moving_part_global_jcs = UtilsAssembly.flipPlacement(moving_part_global_jcs)
+ 
+-        transform_plc = fixed_part_global_jcs * moving_part_global_jcs.inverse()
++        if joint.JointType == "Slider":
++            # A Slider joint has one free translational DOF along the JCS's local Z axis
++            # (see e.g. offsetSpinbox binding to Offset2.Base.z). Fully matching the JCS
++            # here - as done below for other joint types - would collapse that free DOF
++            # onto the fixed part's position instead of preserving the part's own position
++            # along the slide axis. This matters specifically because preSolve()/matchJCS()
++            # can run before the mbD solver considers this joint "connected" - e.g. on the
++            # very first recompute after loading a file, triggered indirectly by an
++            # ExpressionEngine-bound Offset property re-evaluating - in which case this used
++            # to snap the whole downstream chain onto the fixed part's slide position
++            # (issue: chained Slider joints collapse to the grounded part's position on a
++            # cold recompute).
++            local = fixed_part_global_jcs.inverse() * moving_part_global_jcs
++            correctedLocal = App.Placement(App.Vector(0, 0, local.Base.z), App.Rotation())
++            correctedMovingGlobalJcs = fixed_part_global_jcs * correctedLocal
++            transform_plc = correctedMovingGlobalJcs * moving_part_global_jcs.inverse()
++        else:
++            transform_plc = fixed_part_global_jcs * moving_part_global_jcs.inverse()
+ 
+         for part in parts_to_move:
+             part.Placement = transform_plc * part.Placement
+@@ -1695,7 +1721,15 @@ class MakeJointSelGate:
+                 if parent.isDerivedFrom("App::LocalCoordinateSystem"):
+                     datum = parent
+ 
+-            if self.assembly.hasObject(datum) and hasattr(datum, "MapMode"):
++            # hasObject() cannot check objects belonging to another document (e.g. a datum
++            # reached through an App::Link into a different .FCStd file in multi-document
++            # assemblies) and raises FreeCADError in that case - skip the membership/MapMode
++            # check then and accept the datum, same as for empty links above.
++            if (
++                datum.Document is self.assembly.Document
++                and self.assembly.hasObject(datum)
++                and hasattr(datum, "MapMode")
++            ):
+                 # accept only datum that are not attached
+                 return datum.MapMode == "Deactivated"
+ 
+@@ -1790,11 +1824,18 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+             self.createJointObject()
+             self.visibilityBackup = False
+ 
+-        self.jForm.angleSpinbox.valueChanged.connect(self.onAngleChanged)
+-        self.jForm.distanceSpinbox.valueChanged.connect(self.onDistanceChanged)
+-        self.jForm.distanceSpinbox2.valueChanged.connect(self.onDistance2Changed)
+-        self.jForm.offsetSpinbox.valueChanged.connect(self.onOffsetChanged)
+-        self.jForm.rotationSpinbox.valueChanged.connect(self.onRotationChanged)
++        # valueChanged is overloaded (double / Base::Quantity) in C++, but PySide6 only exposes
++        # the Base::Quantity variant to Python in this build, which it cannot marshal
++        # ("parameter 0 of type Base::Quantity cannot be converted") - the slot is never even
++        # invoked, so the typed value is silently lost. textChanged is emitted right after the
++        # same internal value update (see QuantitySpinBox::updateFromCache) and is a plain
++        # QString, so it connects safely; the handlers below ignore the argument anyway and
++        # re-read rawValue from the spinbox.
++        self.jForm.angleSpinbox.textChanged.connect(self.onAngleChanged)
++        self.jForm.distanceSpinbox.textChanged.connect(self.onDistanceChanged)
++        self.jForm.distanceSpinbox2.textChanged.connect(self.onDistance2Changed)
++        self.jForm.offsetSpinbox.textChanged.connect(self.onOffsetChanged)
++        self.jForm.rotationSpinbox.textChanged.connect(self.onRotationChanged)
+         bind = Gui.ExpressionBinding(self.jForm.angleSpinbox).bind(self.joint, "Angle")
+         bind = Gui.ExpressionBinding(self.jForm.distanceSpinbox).bind(self.joint, "Distance")
+         bind = Gui.ExpressionBinding(self.jForm.distanceSpinbox2).bind(self.joint, "Distance2")
+@@ -1818,10 +1859,12 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+         self.jForm.limitCheckbox3.stateChanged.connect(self.adaptUi)
+         self.jForm.limitCheckbox4.stateChanged.connect(self.adaptUi)
+ 
+-        self.jForm.limitLenMinSpinbox.valueChanged.connect(self.onLimitLenMinChanged)
+-        self.jForm.limitLenMaxSpinbox.valueChanged.connect(self.onLimitLenMaxChanged)
+-        self.jForm.limitRotMinSpinbox.valueChanged.connect(self.onLimitRotMinChanged)
+-        self.jForm.limitRotMaxSpinbox.valueChanged.connect(self.onLimitRotMaxChanged)
++        # Gleicher valueChanged/Base::Quantity-Marshalling-Bug wie oben - textChanged statt
++        # valueChanged verwenden (siehe Kommentar weiter oben).
++        self.jForm.limitLenMinSpinbox.textChanged.connect(self.onLimitLenMinChanged)
++        self.jForm.limitLenMaxSpinbox.textChanged.connect(self.onLimitLenMaxChanged)
++        self.jForm.limitRotMinSpinbox.textChanged.connect(self.onLimitRotMinChanged)
++        self.jForm.limitRotMaxSpinbox.textChanged.connect(self.onLimitRotMaxChanged)
+         bind = Gui.ExpressionBinding(self.jForm.limitLenMinSpinbox).bind(self.joint, "LengthMin")
+         bind = Gui.ExpressionBinding(self.jForm.limitLenMaxSpinbox).bind(self.joint, "LengthMax")
+         bind = Gui.ExpressionBinding(self.jForm.limitRotMinSpinbox).bind(self.joint, "AngleMin")
+@@ -1871,13 +1914,65 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+ 
+         self.assembly.recompute(True)
+ 
++        # WORKAROUND (FCProject-Patch, siehe patches/freecad-assembly-jointobject.patch):
++        # bei Baugruppen mit dokumentuebergreifenden Referenzen (jedes Bauteil sein eigenes
++        # .FCStd-Dokument, per App::Link eingebunden) kann die persistente Element-Referenz
++        # (Reference1/Reference2) direkt nach dem ersten Recompute noch nicht aufloesbar sein
++        # ("?" im Elementnamen, siehe execute()s "Broken link"-Check oben) - der Joint faellt
++        # dadurch in execute() mit einer Exception in den Fehlerzustand und wird von
++        # AssemblyObject::getJoints() komplett aus dem Verbindungsgraphen entfernt, wodurch das
++        # zweite Bauteil sich danach lautlos nicht mehr ziehen laesst (kein Fehler in der UI).
++        # Ein Suppress/Unsuppress-Zyklus zwingt eine erneute Aufloesung, die im zweiten Anlauf
++        # i. d. R. gelingt (nur der zweite Recompute-Durchlauf ueber beide Dokumente hinweg
++        # scheint die Namensaufloesung "heilen" zu koennen).
++        # Bewusst KEIN stiller Fallback: nur ausfuehren, wenn der Fehlerfall tatsaechlich
++        # eingetreten ist, und immer eine Konsolen-Meldung dazu - damit das nicht unbemerkt
++        # durchlaeuft und man es im Log wiederfindet.
++        if self.activeType == "Assembly" and "Invalid" in self.joint.State:
++            App.Console.PrintWarning(
++                translate(
++                    "Assembly",
++                    "FCProject-Workaround: Joint '{}' war nach dem Erstellen ungueltig"
++                    " (vermutlich dokumentuebergreifende TNP-Referenz) - erzwinge Neuaufloesung"
++                    " via Suppress/Unsuppress.\n",
++                ).format(self.joint.Label)
++            )
++            self.joint.Suppressed = True
++            self.assembly.recompute(True)
++            self.joint.Suppressed = False
++            self.assembly.recompute(True)
++
++            if "Invalid" in self.joint.State:
++                App.Console.PrintError(
++                    translate(
++                        "Assembly",
++                        "FCProject-Workaround: Neuaufloesung von Joint '{}' fehlgeschlagen -"
++                        " bitte Referenzen manuell pruefen!\n",
++                    ).format(self.joint.Label)
++                )
++
+         Gui.ActiveDocument.commitCommand()
++
++        # FCProject-Patch: Redraw erst hier, NACH dem finalen Commit/Recompute (siehe
++        # ausfuehrlicher Kommentar in deactivate()) - macht die von clearIsolate()
++        # zurueckgesetzten Bauteile sofort sichtbar, ohne den noch nicht fertig committeten
++        # Joint-Zwischenzustand zu zeichnen. Gleiches Muster bereits in
++        # CommandCreateSimulation.py verwendet ("Ensure the 3D view is redrawn").
++        if self.activeType == "Assembly":
++            Gui.updateGui()
++
+         return True
+ 
+     def reject(self):
+         self.deactivate()
+         Gui.ActiveDocument.abortCommand()
+         self.assembly.recompute(True)
++
++        # FCProject-Patch: siehe Kommentar in accept() - Redraw erst nach dem finalen
++        # Recompute, nicht schon in deactivate().
++        if self.activeType == "Assembly":
++            Gui.updateGui()
++
+         return True
+ 
+     def autoClosedOnTransactionChange(self):
+@@ -1900,6 +1995,25 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+             self.assembly.ViewObject.MoveOnlyPreselected = False
+             self.assembly.ViewObject.MoveInCommand = True
+ 
++            # FCProject-Patch: Falls der Nutzer die "Isolate"-Anzeige (Transparent/Wireframe/
++            # Hidden) waehrend der Joint-Bearbeitung aktiv gelassen hat, statt sie manuell auf
++            # "Disabled" zurueckzustellen, blieb Selectable=False auf den nicht isolierten
++            # Bauteilen dauerhaft haengen - inklusive Speichern in die Datei, da der
++            # Wiederherstellungs-Backup nur im RAM existiert und mit dem Dokument verloren geht.
++            # clearIsolate() ist ein sicherer No-Op, wenn keine Isolation aktiv ist (iteriert nur
++            # ueber ein ggf. leeres Backup), daher hier unbedingt bei jedem Verlassen des
++            # Joint-Dialogs aufrufen statt nur beim manuellen Umschalten auf "Disabled".
++            if hasattr(self.assembly.ViewObject, "clearIsolate"):
++                self.assembly.ViewObject.clearIsolate()
++                # HINWEIS: Der noetige Gui.updateGui()-Redraw (siehe unten in accept()/reject())
++                # passiert bewusst NICHT hier, sondern erst ganz am Ende von accept()/reject() -
++                # deactivate() laeuft VOR der finalen Commit-/Recompute-Sequenz
++                # (generatePropertySettings/recompute in accept(), abortCommand/recompute in
++                # reject()). Ein Gui.updateGui() an dieser Stelle pumpt die Qt-Eventqueue sofort
++                # durch und kann so einen verfruehten Redraw/Recompute mit dem noch nicht
++                # fertig committeten Joint-Zwischenzustand ausloesen - beobachtet als Bauteile,
++                # die kurz auf Placement (0,0,0) zurueckspringen.
++
+         Gui.Selection.removeSelectionGate()
+         Gui.Selection.removeObserver(self)
+         Gui.Selection.setSelectionStyle(Gui.Selection.SelectionStyle.NormalSelection)
+@@ -2464,5 +2578,19 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+         self.presel_ref = [comp, [new_sub]]
+ 
+     def clearSelection(self, doc_name):
++        # FCPROJECT-PATCH (9): Gui.Selection ruft diesen Observer-Callback bei JEDEM Leeren der
++        # globalen Auswahl auf - unabhaengig vom Grund (Klick auf leeren Raum in der 3D-Ansicht,
++        # ein anderes Tree-Element ausgewaehlt, ...). Ohne diese Absicherung wurde ein bereits
++        # vollstaendiger Joint (2 gueltige Referenzen, z.B. beim Oeffnen zum Bearbeiten aus
++        # updateTaskboxFromJoint() geladen und in der 3D-Ansicht markiert) durch einen einzigen,
++        # voellig harmlos wirkenden Klick daneben sofort zerstoert: self.refs wurde geleert und
++        # ueber updateJoint() -> setJointConnectors() SOFORT (noch vor OK/Accept) Reference1 und
++        # Reference2 auf None geschrieben - lautlos, ohne Bestaetigung. Ein bereits vollstaendiger
++        # Pick (>= 2 Referenzen) wird deshalb hier bewusst NICHT durch ein blosses Leeren der
++        # globalen Auswahl verworfen. Einzelne Referenzen lassen sich weiterhin gezielt durch
++        # erneutes Anklicken abwaehlen (removeSelection()); nur das komplette, unbeabsichtigte
++        # Leeren eines bereits fertigen Joints wird ignoriert.
++        if len(self.refs) >= 2:
++            return
+         self.refs.clear()
+         self.updateJoint()

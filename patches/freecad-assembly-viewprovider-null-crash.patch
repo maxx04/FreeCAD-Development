@@ -1,0 +1,37 @@
+diff --git a/src/Mod/Assembly/Gui/ViewProviderAssembly.cpp b/src/Mod/Assembly/Gui/ViewProviderAssembly.cpp
+index a751446264..5aded557f3 100644
+--- a/src/Mod/Assembly/Gui/ViewProviderAssembly.cpp
++++ b/src/Mod/Assembly/Gui/ViewProviderAssembly.cpp
+@@ -303,6 +303,14 @@ bool ViewProviderAssembly::setEdit(int mode)
+         updateTaskPanel(true);
+ 
+         auto* assembly = getObject<AssemblyObject>();
++        // FCPROJECT-PATCH (17, 2026-08-23): siehe UpdateSolverInformation() weiter unten fuer die
++        // volle Begruendung - getObject<AssemblyObject>() kann hier nullptr liefern (reproduzierbar
++        // beim Aktivieren direkt nach einem "Reload partial document"). Ohne diesen Guard stuerzt
++        // "assembly->signalSolverUpdate.connect(...)"/"assembly->recomputeFeature(true)" weiter
++        // unten sofort ab.
++        if (!assembly) {
++            return false;
++        }
+         connectSolverUpdate = assembly->signalSolverUpdate.connect([this] {
+             UpdateSolverInformation();
+         });
+@@ -1807,6 +1815,17 @@ void ViewProviderAssembly::UpdateSolverInformation()
+     // Updates Solver Information with the Last solver execution at AssemblyObject level
+     auto* assembly = getObject<AssemblyObject>();
+ 
++    // FCPROJECT-PATCH (17, 2026-08-23): getObject<AssemblyObject>() kann hier nullptr liefern -
++    // reproduzierbarer Absturz (SIGSEGV, freecad_cast schlaegt fehl) beim "Aktivieren" (setEdit())
++    // einer Baugruppe direkt nach einem "Reload partial document" (App::Document::afterRestore()),
++    // z.B. wenn eine per Link eingebundene Unter-Datei extern geaendert/gespeichert wurde. Der
++    // ViewProvider zeigt dabei kurzzeitig auf ein Objekt, das (noch) kein gueltiges AssemblyObject
++    // ist. objListHelper() (weiter unten in dieser Datei) prueft das bereits korrekt
++    // ("if (!assembly) return QString();") - hier fehlte der gleiche Guard.
++    if (!assembly) {
++        return;
++    }
++
+     int dofs = assembly->getLastDoF();
+     bool hasRedundancies = assembly->getLastHasRedundancies();
+     bool hasMalformed = assembly->getLastHasMalformedConstraints();
