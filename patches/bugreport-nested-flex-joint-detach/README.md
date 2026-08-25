@@ -80,6 +80,45 @@ nicht als Fehler erkennt/korrigiert - vermutlich weil ein AssemblyLink beim Spie
 Kinder deren Placement direkt uebernimmt, bevor/ohne dass das eigene, innere `solve()` sie noch
 einmal validiert.
 
+## Root Cause gefunden (2026-08-25, experimentell verifiziert, Fix wieder zurueckgerollt)
+
+Ueber ein testweises Umschalten von `assembly->getJoints(false, false)` auf
+`getJoints(false, true)` in `AssemblyLink::synchronizeJoints()` (`AssemblyLink.cpp`)
+bestaetigt: der zweite Parameter (`subJoints`) steuert, ob beim Hochspiegeln von Joints in
+eine Elternbaugruppe auch die Joints VERSCHACHTELTER Enkel-Baugruppen mitgenommen werden -
+Vanilla-Code uebergibt hier fest `false`. Deshalb erreicht ein zwei Ebenen tief liegender Joint
+(BoxA-BoxB) die Joint-Liste der aeussersten Baugruppe (GrandTop) nie - nicht gefiltert,
+strukturell nie kopiert.
+
+Mit `subJoints=true` erscheint der Joint tatsaechlich eine Ebene hoeher (als lokal gespiegeltes
+`Joint001`) - wird dann aber vom Solver selbst wieder verworfen:
+```
+Assembly: Ignoring joint (...Joint001) because its parts are connected by a fixed
+joint bundle. This joint is a conflicting or redundant constraint.
+```
+...aus `AssemblyObject::isMbDJointValid()`.
+
+**Warum:** `isMbDJointValid()` vergleicht `getMbDPart(part1) == getMbDPart(part2)`, wobei
+`part1`/`part2` ueber `getMovingPartFromRef()` (in `AssemblyUtils.cpp`) ermittelt werden - diese
+Funktion liefert NUR das direkt referenzierte Top-Level-Objekt einer `PropertyXLinkSub`, OHNE
+deren Sub-Element-Pfad zu beruecksichtigen. Beim Spiegeln des tiefen Joints musste
+`handleJointReference()` fuer BEIDE Enden (BoxA und BoxB, beides Enkelkinder) auf
+`findLocalAncestor()` zurueckfallen - und beide klettern zum SELBEN naechsten bekannten
+Vorfahren hoch: dem Wrapper-Objekt der verschachtelten Unter-Baugruppe. Reference1/Reference2
+zeigen danach zwar mit unterschiedlichen Sub-Pfaden auf dieses Wrapper-Objekt, aber
+`getMovingPartFromRef()` ignoriert den Sub-Pfad komplett - der Joint sieht dadurch aus wie ein
+Teil, das sich selbst referenziert (`part1 == part2`), obwohl beide Enden tatsaechlich
+unterschiedliche, echte Teile sind.
+
+**Ein vollstaendiger Fix braeuchte vermutlich zwei zusammenspielende Aenderungen:** (a)
+rekursives Joint-Spiegeln (`subJoints=true` o.ae.) UND (b) einen sub-pfad-bewussten
+Selbstreferenz-Check in `isMbDJointValid()`/`getMovingPartFromRef()` statt des reinen
+Top-Level-Objekt-Vergleichs. Der experimentelle Fix (nur Teil (a)) wurde NICHT dauerhaft
+uebernommen - gleiche gefaehrliche Codezone wie der bereits einmal abgestuerzte
+`synchronizeGroundedAndRigidJoints()`-Versuch (siehe patches/README.md), und ohne Teil (b)
+ohnehin nicht ausreichend. Vollstaendig als Kommentar im GitHub-Issue dokumentiert:
+https://github.com/FreeCAD/FreeCAD/issues/32171#issuecomment-5414455149
+
 ## Naechste Schritte
 
 - [x] Minimal-Repro als GitHub-Issue bei FreeCAD/FreeCAD eingereicht (2026-08-25):
