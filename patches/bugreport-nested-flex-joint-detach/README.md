@@ -82,12 +82,12 @@ einmal validiert.
 
 ## Naechste Schritte
 
+- [x] Minimal-Repro als GitHub-Issue bei FreeCAD/FreeCAD eingereicht (2026-08-25):
+  https://github.com/FreeCAD/FreeCAD/issues/32171
 - [ ] Root Cause im C++-Code lokalisieren (`AssemblyLink::updateContents()` /
   `ViewProviderAssembly::preDrag()` sind die naheliegendsten Ansatzpunkte, siehe
   `patches/freecad-assembly-grounded-joint-nested-flex.patch` fuer bereits vorhandene, verwandte
   Untersuchungen an `AssemblyLink.cpp`).
-- [ ] Minimal-Repro als GitHub-Issue bei FreeCAD/FreeCAD einreichen (Repro-ZIP + diese
-  Kontrollmatrix).
 - [ ] Bis dahin: PlacementGuard-Workaround (siehe `python/PlacementGuardFeature.py`) bleibt die
   einzige zuverlaessige Methode fuer mehrfach verschachtelte flexible Baugruppen wie
   TraegerBaugruppe_Z/Motor67/68.
