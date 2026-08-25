@@ -119,6 +119,20 @@ uebernommen - gleiche gefaehrliche Codezone wie der bereits einmal abgestuerzte
 ohnehin nicht ausreichend. Vollstaendig als Kommentar im GitHub-Issue dokumentiert:
 https://github.com/FreeCAD/FreeCAD/issues/32171#issuecomment-5414455149
 
+**Update: Teil (b) alleine waere KEIN sicherer Fix.** `isMbDJointValid()`s Pruefung ist nur ein
+Symptom-Wächter, nicht die eigentliche Grenze - die dahinterliegende `objectPartMap`/
+`getMbDData()`-Zuordnung (welcher starre MbD-Koerper zu welchem Teil gehoert) ist rein ueber
+`App::DocumentObject*` indiziert, komplett ohne Sub-Pfad-Bewusstsein. Selbst wenn die Pruefung
+selbst sub-pfad-bewusst gemacht wuerde und den Joint durchliesse, wuerden BoxA und BoxB
+darunter weiterhin demselben starren Koerper zugeordnet (da beide auf dasselbe Top-Level-Objekt
+aufloesen) - man wuerde also nur die Warnung stummschalten, die genau davor schuetzen soll,
+dem Solver einen echt entarteten/selbstreferenzierenden Joint zu geben (siehe Code-Kommentar:
+"The solver crash when fed such a bad joint"). Ein echter Fix braeuchte `objectPartMap` selbst
+sub-pfad-bewusst (Schluessel `(Objekt, Sub-Pfad)` statt nur `Objekt`) - eine groessere,
+invasivere Aenderung an der MbD-Koerper-Verwaltung, keine lokale Anpassung des einen Vergleichs.
+Deshalb NICHT versucht. Ebenfalls als Kommentar dokumentiert:
+https://github.com/FreeCAD/FreeCAD/issues/32171#issuecomment-5414646210
+
 ## Naechste Schritte
 
 - [x] Minimal-Repro als GitHub-Issue bei FreeCAD/FreeCAD eingereicht (2026-08-25):
