@@ -233,16 +233,16 @@ if _GUI_AVAILABLE:
             placement = self._build_placement()
             self.obj.Placement = placement
             if self.lock_checkbox.isChecked():
-                # Echtes, sichtbares Interface-Objekt statt nur der rohen Sperr-Eigenschaft
-                # (siehe InterfaceFeature.py) - setzt die Placement zusaetzlich nach jedem
+                # Echtes, sichtbares PlacementGuard-Objekt statt nur der rohen Sperr-Eigenschaft
+                # (siehe PlacementGuardFeature.py) - setzt die Placement zusaetzlich nach jedem
                 # Recompute aktiv durch, nicht nur einmalig.
-                import InterfaceFeature
-                InterfaceFeature.make_interface(
+                import PlacementGuardFeature
+                PlacementGuardFeature.make_placement_guard(
                     self.obj.Document, self.obj, placement,
                     note="Manuell gesetzt ueber FCProject_ManualPlacement"
                 )
-                InterfaceFeature.auto_save_document(
-                    self.obj.Document, reason=f"Interface fuer '{self.obj.Label}' gesperrt"
+                PlacementGuardFeature.auto_save_document(
+                    self.obj.Document, reason=f"PlacementGuard fuer '{self.obj.Label}' gesperrt"
                 )
             self.obj.Document.recompute()
             Gui.Control.closeDialog()

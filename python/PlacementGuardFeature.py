@@ -1,5 +1,17 @@
-# FCProject: "Interface" - sichtbares Objekt (aehnlich einem Joint), das ein Teil an einer fest
-# vorgegebenen Placement haelt.
+# FCProject: "PlacementGuard" - sichtbares Objekt (aehnlich einem Joint), das ein Teil an einer
+# fest vorgegebenen Placement haelt.
+#
+# Umbenannt (2026-08-24) von "Interface" - der Nutzer hat ein groesseres, eigenes "Interface"-
+# Konzept vor (Referenzelemente Achse+Flaeche am Teil + Gegenelemente bei Einbau -> solver-freie
+# Einmal-Ausrichtung, siehe project_fcproject_interface_feature_concept-Memory), das den Namen
+# "Interface" eigentlich fuer sich beansprucht. Diese Klasse hier macht etwas Kleineres/Anderes:
+# sie "bewacht" (guard) eine bereits bekannte Placement aktiv gegen den Solver, verteidigt sie
+# also, statt eine neue zu berechnen.
+#
+# Kein Kompatibilitaets-Stub (Nutzerentscheidung 2026-08-24): die alte Datei InterfaceFeature.py
+# wurde ersatzlos geloescht statt als Alias-Stub weitergefuehrt - bereits gespeicherte
+# "Interface"-Objekte in echten Projektdateien werden vom Nutzer manuell geloescht/neu angelegt,
+# statt sie ueber einen Kompat-Layer weiter zu unterstuetzen.
 #
 # Hintergrund (2026-08-23, Nutzer-Konzept): der native Assembly-Solver ist bei mehrfach
 # verschachtelten flexiblen Baugruppen nachweislich fehlerhaft (siehe patches/README.md,
@@ -9,10 +21,10 @@
 # GEGEN den Solver verteidigt.
 #
 # Anders als eine reine "Placement schreibgeschuetzt"-Markierung (die der Solver theoretisch
-# durch Auf-/Zusperren waehrend seines eigenen Ablaufs umgehen koennte) erzwingt Interface
+# durch Auf-/Zusperren waehrend seines eigenen Ablaufs umgehen koennte) erzwingt PlacementGuard
 # seinen Wert ZUSAETZLICH aktiv ueber DocObserver.py's slotRecomputedDocument()-Hook, der erst
 # NACH dem kompletten Dokument-Recompute (inklusive eines eventuell gelaufenen Assembly-Solves)
-# feuert - das Interface hat damit garantiert das letzte Wort, unabhaengig von der internen
+# feuert - der Guard hat damit garantiert das letzte Wort, unabhaengig von der internen
 # Reihenfolge des Solvers.
 import os
 
@@ -31,8 +43,8 @@ ICON_DIR = os.path.join(os.path.dirname(__file__), 'resources', 'icons')
 # Lauf im Speicher korrekt aussah, aber nicht per Strg+S gespeichert wurde - ein spaeterer
 # "Reload partial document"-Vorgang (ausgeloest durch eine ANDERE, separat gespeicherte Datei)
 # hat den ungespeicherten Stand dann stillschweigend verworfen und durch die alte Version
-# ersetzt. Deshalb speichern make_interface()-basierte Werkzeuge das betroffene Dokument jetzt
-# automatisch. ABSCHALTBAR ueber FreeCADs eigenen Parameter-Editor (Werkzeuge -> Parameter
+# ersetzt. Deshalb speichern make_placement_guard()-basierte Werkzeuge das betroffene Dokument
+# jetzt automatisch. ABSCHALTBAR ueber FreeCADs eigenen Parameter-Editor (Werkzeuge -> Parameter
 # bearbeiten, oder Bearbeiten -> Einstellungen falls dort verdrahtet) unter:
 #   BaseApp/Preferences/Mod/FCProject -> AutoSaveAfterRestore (Bool) -> auf false setzen.
 # Default: true (an).
@@ -81,11 +93,11 @@ def set_placement_readonly(obj, value):
         obj.setPropertyStatus("LinkPlacement", tag)
 
 
-def enforce_all_interfaces(doc):
-    """Setzt fuer JEDES Interface-Objekt in 'doc' die gespeicherte LockedPlacement erneut auf
-    dessen TargetObject durch - aufgerufen aus DocObserver.slotRecomputedDocument(), also nach
-    jedem vollstaendigen Recompute. Reine Eigenschaftszuweisung, kein weiterer recompute()-Aufruf
-    hier (sonst Rekursionsgefahr ueber signalRecomputed erneut)."""
+def enforce_all_placement_guards(doc):
+    """Setzt fuer JEDES PlacementGuard-Objekt in 'doc' die gespeicherte LockedPlacement erneut
+    auf dessen TargetObject durch - aufgerufen aus DocObserver.slotRecomputedDocument(), also
+    nach jedem vollstaendigen Recompute. Reine Eigenschaftszuweisung, kein weiterer
+    recompute()-Aufruf hier (sonst Rekursionsgefahr ueber signalRecomputed erneut)."""
     for obj in doc.Objects:
         if obj.TypeId != "App::FeaturePython" or not hasattr(obj, "LockedPlacement"):
             continue
@@ -96,7 +108,7 @@ def enforce_all_interfaces(doc):
             if target.Placement != obj.LockedPlacement:
                 set_placement_readonly(target, False)
                 target.Placement = obj.LockedPlacement
-                # FreeCAD kennt die Rueckwaerts-Abhaengigkeit Interface->Ziel nicht (ein
+                # FreeCAD kennt die Rueckwaerts-Abhaengigkeit PlacementGuard->Ziel nicht (ein
                 # PropertyLink bedeutet fuer FreeCADs Abhaengigkeitsgraph normalerweise "ich
                 # haenge vom Ziel ab", nicht umgekehrt) - das Ziel bleibt nach dieser Zuweisung
                 # "touched" haengen und FreeCAD meldet "still touched after recompute"
@@ -107,12 +119,12 @@ def enforce_all_interfaces(doc):
             set_placement_readonly(target, True)
         except Exception as exc:
             App.Console.PrintWarning(
-                f"FCProject: Interface '{obj.Label}' konnte nicht durchgesetzt werden: {exc}\n"
+                f"FCProject: PlacementGuard '{obj.Label}' konnte nicht durchgesetzt werden: {exc}\n"
             )
 
 
-class InterfaceProxy:
-    """Proxy fuer ein Interface-Objekt (App::FeaturePython)."""
+class PlacementGuardProxy:
+    """Proxy fuer ein PlacementGuard-Objekt (App::FeaturePython)."""
 
     def __init__(self, obj):
         self._add_properties(obj)
@@ -120,25 +132,25 @@ class InterfaceProxy:
 
     def _add_properties(self, obj):
         if not hasattr(obj, 'TargetObject'):
-            # App::PropertyLinkGlobal statt PropertyLink (2026-08-23-Fix): das Interface-Objekt
-            # liegt meist im Top-Level-Dokument, das Zielobjekt aber innerhalb einer geerdeten
-            # Unterbaugruppe (anderer Scope) - mit einfachem PropertyLink meldet FreeCAD "links
-            # are out of scope" und die betroffenen Objekte bleiben nach dem Recompute dauerhaft
-            # "touched". Gleiche Ursache/Loesung wie bei ObjectToGround/ObjectsToRigidGroup im
-            # FreeCAD-Kern (siehe patches/README.md).
+            # App::PropertyLinkGlobal statt PropertyLink (2026-08-23-Fix): das PlacementGuard-
+            # Objekt liegt meist im Top-Level-Dokument, das Zielobjekt aber innerhalb einer
+            # geerdeten Unterbaugruppe (anderer Scope) - mit einfachem PropertyLink meldet
+            # FreeCAD "links are out of scope" und die betroffenen Objekte bleiben nach dem
+            # Recompute dauerhaft "touched". Gleiche Ursache/Loesung wie bei
+            # ObjectToGround/ObjectsToRigidGroup im FreeCAD-Kern (siehe patches/README.md).
             obj.addProperty(
-                "App::PropertyLinkGlobal", "TargetObject", "Interface",
+                "App::PropertyLinkGlobal", "TargetObject", "PlacementGuard",
                 "Das Teil, dessen Placement hier fest vorgegeben wird"
             )
         if not hasattr(obj, 'LockedPlacement'):
             obj.addProperty(
-                "App::PropertyPlacement", "LockedPlacement", "Interface",
+                "App::PropertyPlacement", "LockedPlacement", "PlacementGuard",
                 "Die fest vorgegebene Placement - wird nach jeder Neuberechnung erneut auf "
                 "TargetObject angewendet, unabhaengig davon, was der Assembly-Solver berechnet"
             )
         if not hasattr(obj, 'Note'):
             obj.addProperty(
-                "App::PropertyString", "Note", "Interface",
+                "App::PropertyString", "Note", "PlacementGuard",
                 "Freitext, z.B. woher die Placement uebernommen wurde"
             )
 
@@ -146,14 +158,14 @@ class InterfaceProxy:
         # Erster, "normaler" Durchsetzungsversuch im regulaeren Recompute-Ablauf - reicht
         # alleine NICHT (der Assembly-Solve kann je nach Abhaengigkeitsreihenfolge NACH diesem
         # Aufruf laufen und die Placement wieder ueberschreiben), deshalb zusaetzlich
-        # enforce_all_interfaces() ueber den DocObserver-Hook nach dem GESAMTEN Recompute.
+        # enforce_all_placement_guards() ueber den DocObserver-Hook nach dem GESAMTEN Recompute.
         target = obj.TargetObject
         if target is None:
-            App.Console.PrintWarning(f"FCProject: Interface '{obj.Label}' hat kein TargetObject.\n")
+            App.Console.PrintWarning(f"FCProject: PlacementGuard '{obj.Label}' hat kein TargetObject.\n")
             return
         set_placement_readonly(target, False)
         target.Placement = obj.LockedPlacement
-        target.purgeTouched()  # siehe enforce_all_interfaces() fuer die Begruendung
+        target.purgeTouched()  # siehe enforce_all_placement_guards() fuer die Begruendung
         set_placement_readonly(target, True)
 
     def onDocumentRestored(self, obj):
@@ -168,7 +180,7 @@ class InterfaceProxy:
 
 
 if _GUI_AVAILABLE:
-    class ViewProviderInterface:
+    class ViewProviderPlacementGuard:
         def __init__(self, vobj):
             vobj.Proxy = self
 
@@ -176,7 +188,7 @@ if _GUI_AVAILABLE:
             self.Object = vobj.Object
 
         def getIcon(self):
-            return os.path.join(ICON_DIR, 'interface.svg')
+            return os.path.join(ICON_DIR, 'placement_guard.svg')
 
         def doubleClicked(self, vobj):
             target = getattr(vobj.Object, "TargetObject", None)
@@ -192,12 +204,13 @@ if _GUI_AVAILABLE:
             return None
 
 
-def find_interface_for(doc, target):
-    """Findet das bestehende Interface-Objekt fuer 'target' in 'doc', falls vorhanden - sonst
-    None. Fuer Werkzeuge, die ein bereits gesperrtes Teil NICHT ungefragt ueberschreiben wollen
-    (siehe RestoreJointPositionCommand.py: ein Anker kann ueber mehrere Joints gleichzeitig an
-    bereits korrekt positionierte Teile grenzen - ohne diese Pruefung wuerde ein spaeterer,
-    weniger autoritativer Anker ein zuvor korrekt gesetztes Teil wieder ueberschreiben)."""
+def find_placement_guard_for(doc, target):
+    """Findet das bestehende PlacementGuard-Objekt fuer 'target' in 'doc', falls vorhanden -
+    sonst None. Fuer Werkzeuge, die ein bereits gesperrtes Teil NICHT ungefragt ueberschreiben
+    wollen (siehe RestoreJointPositionCommand.py: ein Anker kann ueber mehrere Joints
+    gleichzeitig an bereits korrekt positionierte Teile grenzen - ohne diese Pruefung wuerde ein
+    spaeterer, weniger autoritativer Anker ein zuvor korrekt gesetztes Teil wieder
+    ueberschreiben)."""
     for obj in doc.Objects:
         if obj.TypeId == "App::FeaturePython" and hasattr(obj, "TargetObject") and hasattr(obj, "LockedPlacement"):
             if obj.TargetObject is target:
@@ -205,48 +218,47 @@ def find_interface_for(doc, target):
     return None
 
 
-def make_interface(doc, target, placement, note=""):
-    """Erstellt ein neues Interface-Objekt fuer 'target' mit der gegebenen Placement. Falls fuer
-    'target' bereits ein Interface existiert, wird DIESES aktualisiert statt ein zweites
-    anzulegen (ein Teil soll nicht durch mehrere Interfaces gleichzeitig 'verteidigt' werden -
+def make_placement_guard(doc, target, placement, note=""):
+    """Erstellt ein neues PlacementGuard-Objekt fuer 'target' mit der gegebenen Placement. Falls
+    fuer 'target' bereits ein PlacementGuard existiert, wird DIESER aktualisiert statt ein
+    zweiter angelegt (ein Teil soll nicht durch mehrere Guards gleichzeitig 'verteidigt' werden -
     das waere ein Widerspruch in sich)."""
-    for obj in doc.Objects:
-        if obj.TypeId == "App::FeaturePython" and hasattr(obj, "TargetObject") and hasattr(obj, "LockedPlacement"):
-            if obj.TargetObject is target:
-                obj.LockedPlacement = placement
-                if note:
-                    obj.Note = note
-                doc.recompute()
-                return obj
+    existing = find_placement_guard_for(doc, target)
+    if existing is not None:
+        existing.LockedPlacement = placement
+        if note:
+            existing.Note = note
+        doc.recompute()
+        return existing
 
-    obj = doc.addObject("App::FeaturePython", "Interface")
-    obj.Label = f"Interface: {target.Label}"
-    InterfaceProxy(obj)
+    obj = doc.addObject("App::FeaturePython", "PlacementGuard")
+    obj.Label = f"PlacementGuard: {target.Label}"
+    PlacementGuardProxy(obj)
     obj.TargetObject = target
     obj.LockedPlacement = placement
     obj.Note = note
 
     if _GUI_AVAILABLE and obj.ViewObject:
-        ViewProviderInterface(obj.ViewObject)
+        ViewProviderPlacementGuard(obj.ViewObject)
 
     doc.recompute()
     return obj
 
 
 if _GUI_AVAILABLE:
-    class CommandCreateInterface:
-        """Befehl: sperrt das AKTUELLE Placement des ausgewaehlten Teils per Interface-Objekt -
-        ohne erst das Placement-Panel (ManualPlacementCommand.py) zu oeffnen. Fuer den Fall, dass
-        die Position schon stimmt und nur noch gegen den (bei verschachtelten flexiblen
-        Baugruppen fehlerhaften) Assembly-Solver abgesichert werden soll."""
+    class CommandCreatePlacementGuard:
+        """Befehl: sperrt das AKTUELLE Placement des ausgewaehlten Teils per PlacementGuard-
+        Objekt - ohne erst das Placement-Panel (ManualPlacementCommand.py) zu oeffnen. Fuer den
+        Fall, dass die Position schon stimmt und nur noch gegen den (bei verschachtelten
+        flexiblen Baugruppen fehlerhaften) Assembly-Solver abgesichert werden soll."""
 
         def GetResources(self):
             return {
-                'Pixmap': os.path.join(ICON_DIR, 'interface.svg'),
-                'MenuText': 'FCProject: Interface (Placement sperren)',
+                'Pixmap': os.path.join(ICON_DIR, 'placement_guard.svg'),
+                'MenuText': 'FCProject: PlacementGuard (Placement sperren)',
                 'ToolTip': (
                     'Sperrt das aktuelle Placement des ausgewaehlten Teils dauerhaft per '
-                    'sichtbarem Interface-Objekt - haelt es auch gegen einen fehlerhaften '
+                    'sichtbarem PlacementGuard-Objekt - haelt es auch gegen einen fehlerhaften '
                     'Assembly-Solver fest, ohne das Placement-Panel oeffnen zu muessen.'
                 )
             }
@@ -283,13 +295,13 @@ if _GUI_AVAILABLE:
                 )
                 return
 
-            make_interface(
+            make_placement_guard(
                 obj.Document, obj, App.Placement(obj.Placement),
-                note="Aktuelles Placement gesperrt ueber FCProject_CreateInterface"
+                note="Aktuelles Placement gesperrt ueber FCProject_CreatePlacementGuard"
             )
-            auto_save_document(obj.Document, reason=f"Interface fuer '{obj.Label}' gesperrt")
+            auto_save_document(obj.Document, reason=f"PlacementGuard fuer '{obj.Label}' gesperrt")
 
         def IsActive(self):
             return App.ActiveDocument is not None
 
-    Gui.addCommand('FCProject_CreateInterface', CommandCreateInterface())
+    Gui.addCommand('FCProject_CreatePlacementGuard', CommandCreatePlacementGuard())

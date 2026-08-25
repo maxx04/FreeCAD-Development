@@ -126,7 +126,7 @@ if _GUI_AVAILABLE:
             if target_doc is None:
                 return
 
-            # Gleiche Mirror-Aufloesung wie in ManualPlacementCommand.py/InterfaceFeature.py
+            # Gleiche Mirror-Aufloesung wie in ManualPlacementCommand.py/PlacementGuardFeature.py
             # (siehe project_fcproject_selection_raw_source_vs_mirror_link): die Baumauswahl kann
             # das rohe Quellobjekt (z.B. ein BaseFeature) statt die lokale Link-Instanz mit der
             # tatsaechlich relevanten Placement liefern.
@@ -179,12 +179,13 @@ if _GUI_AVAILABLE:
             # aus Solver-Sicht schlicht NICHT geerdet, egal wie korrekt die Zahl gerade steht. Ein
             # abhaengiger Joint (z.B. ein Revolute-Joint zum Rotor) hat dann keine feste Referenz
             # zum Loesen. Deshalb werden alle wiederhergestellten Teile hier zusaetzlich per
-            # InterfaceFeature.make_interface() ECHT gesperrt (Placement.ReadOnly=True + dauerhafte
-            # DocObserver-Durchsetzung), statt nur den vorherigen ReadOnly-Status wiederherzustellen.
-            import InterfaceFeature
+            # PlacementGuardFeature.make_placement_guard() ECHT gesperrt (Placement.ReadOnly=True +
+            # dauerhafte DocObserver-Durchsetzung), statt nur den vorherigen ReadOnly-Status
+            # wiederherzustellen.
+            import PlacementGuardFeature
 
             note = f"Wiederhergestellt aus Rigid Group '{rigid_group.Label}' ({rigid_group.Document.Name})"
-            InterfaceFeature.make_interface(target_doc, anchor_local, anchor_new_placement, note=note)
+            PlacementGuardFeature.make_placement_guard(target_doc, anchor_local, anchor_new_placement, note=note)
 
             updated = []
             skipped = []
@@ -199,7 +200,7 @@ if _GUI_AVAILABLE:
                 relative = anchor_old_inverse.multiply(member_source.Placement)
                 new_placement = anchor_new_placement.multiply(relative)
 
-                InterfaceFeature.make_interface(target_doc, local_instance, new_placement, note=note)
+                PlacementGuardFeature.make_placement_guard(target_doc, local_instance, new_placement, note=note)
                 updated.append(local_instance.Label)
 
             Gui.updateGui()
@@ -211,11 +212,11 @@ if _GUI_AVAILABLE:
             )
             if skipped:
                 msg += f", {len(skipped)} Teil(e) uebersprungen (keine lokale Instanz gefunden: {', '.join(skipped)})"
-            msg += ". Bitte pruefen und bei Bedarf per Interface sperren.\n"
+            msg += ". Bitte pruefen und bei Bedarf per PlacementGuard sperren.\n"
             App.Console.PrintMessage(msg)
 
             if updated:
-                InterfaceFeature.auto_save_document(
+                PlacementGuardFeature.auto_save_document(
                     target_doc, reason=f"Rigid Group '{rigid_group.Label}' wiederhergestellt"
                 )
 

@@ -9,7 +9,8 @@
 # Gehaeuse selbst schon korrekt gesperrt ist.
 #
 # Gleiches Prinzip wie RestoreRigidGroupCommand.py (siehe dort fuer die volle Begruendung, warum
-# eine reine Placement-Zuweisung nicht reicht und InterfaceFeature.make_interface() noetig ist),
+# eine reine Placement-Zuweisung nicht reicht und PlacementGuardFeature.make_placement_guard()
+# noetig ist),
 # nur fuer normale Joint-Paare statt eine ganze RigidGroupJoint-Mitgliederliste: ausgehend von
 # einem bereits korrekt positionierten Anker-Teil werden ALLE ORIGINALEN Joints gefunden, die
 # dieses Teil referenzieren (ein Anker kann an mehreren Joints gleichzeitig haengen, z.B. eine
@@ -199,7 +200,7 @@ if _GUI_AVAILABLE:
                 return
 
             anchor_new_placement = App.Placement(anchor_local.Placement)
-            import InterfaceFeature
+            import PlacementGuardFeature
 
             updated = []
             skipped = []
@@ -219,7 +220,7 @@ if _GUI_AVAILABLE:
                 # bereits korrekten Rotor wieder ueberschreiben und aus der Kette werfen). Bereits
                 # gesperrte Teile deshalb NICHT anfassen, damit die Reihenfolge der Anker-Klicks
                 # (Gehaeuse -> Rotor+Buchse, dann Buchse -> Gewindestange/-stifte) stabil bleibt.
-                existing = InterfaceFeature.find_interface_for(target_doc, local_other)
+                existing = PlacementGuardFeature.find_placement_guard_for(target_doc, local_other)
                 if existing is not None:
                     already_locked.append(f"{local_other.Label} (Joint '{joint.Label}')")
                     continue
@@ -234,12 +235,13 @@ if _GUI_AVAILABLE:
 
                 # WICHTIG (siehe RestoreRigidGroupCommand.py): reine Placement-Zuweisung reicht
                 # nicht, der Solver erdet nur ueber Placement.isReadOnly() - deshalb ueber
-                # InterfaceFeature.make_interface() echt sperren statt nur den Wert zu setzen.
+                # PlacementGuardFeature.make_placement_guard() echt sperren statt nur den Wert zu
+                # setzen.
                 note = (
                     f"Wiederhergestellt aus Joint '{joint.Label}' ({joint.Document.Name}), "
                     f"relativ zu '{anchor_local.Label}'"
                 )
-                InterfaceFeature.make_interface(target_doc, local_other, new_placement, note=note)
+                PlacementGuardFeature.make_placement_guard(target_doc, local_other, new_placement, note=note)
                 updated.append(f"{local_other.Label} (Joint '{joint.Label}')")
 
             Gui.updateGui()
@@ -258,7 +260,7 @@ if _GUI_AVAILABLE:
             App.Console.PrintMessage(msg + "\n")
 
             if updated:
-                InterfaceFeature.auto_save_document(
+                PlacementGuardFeature.auto_save_document(
                     target_doc, reason=f"relativ zu '{anchor_local.Label}' neu positioniert"
                 )
 

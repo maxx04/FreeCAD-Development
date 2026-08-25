@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "../assembly-solver-sandbox"
+		},
+		{
+			"path": "../../CAD_Workspace/PROJ_CNC3018"
 		}
 	],
 	"settings": {

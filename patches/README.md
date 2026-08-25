@@ -356,6 +356,21 @@ Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
     setzt ihn auf `true`. Wie Fix 10/11/13 in `AssemblyObject.cpp`/`.h` -
     braucht einen Rebuild des `Assembly`-Targets.
 
+17. **Offene Frage: was zählt der Solver als "redundant"?** (2026-08-24, kein
+    Fix, sondern eine dokumentierte offene Frage): beim Aufbau einer neuen,
+    bewusst per Einzel-Joints (statt Rigid Group) strukturierten Version der
+    NEMA17x33-Motor-Baugruppe meldete der Solver zwei Joints als redundant
+    (`Joint003`/`Joint004`, beide zwischen demselben Teile-Paar), obwohl
+    empirisch bestätigt (einzeln unterdrückt, neu berechnet, Bewegung
+    beobachtet) BEIDE tatsächlich nötig sind - sie sperren unterschiedliche,
+    sich nicht überschneidende Freiheitsgrade (X bzw. Z). Verdacht: die
+    Redundanz-Erkennung prüft eher "verbindet ein weiterer Joint dasselbe
+    Teile-Paar erneut?" als eine echte Rang-Analyse der Constraint-Matrix -
+    passt auch zum verwandten, bereits bekannten Thema
+    [[project_fcproject_redundant_fixed_joint_rigidgroup_fix]]. Volle
+    Fragestellung + Repro-Baugruppe als ZIP:
+    `patches/bugreport-redundant-joint-false-positive/Questions.md`.
+
 **Hinweis (2026-08-18, `update-and-rebuild-freecad.sh`-Lauf):** Upstream hat
 mit "Assembly: Add RigidGroup (#29605)" (11. Aug 2026) `AssemblyObject.cpp`
 strukturell verändert (neue `rebuildRigidClusters()`/
@@ -506,6 +521,19 @@ Verhaltensänderung im Erfolgsfall.
 `nullptr`, andere Verwendungsstelle in `setEdit()` selbst) - erst nach BEIDEN Guards blieb der
 Prozess über 60 Sekunden stabil (vorher crashte er jedes Mal innerhalb von 15-50 Sekunden).
 
+**Dritter Fund, gleiche Bug-Klasse** (2026-08-25, Nutzer-Repro: "Absturz, ich habe PartDesign
+ausgewählt" - diesmal direkt mit vollem Stacktrace im Live-Log erfasst, kein gdb nötig):
+SIGSEGV in `App::DocumentObject::getDocument()`, aufgerufen aus
+`ViewProviderAssembly::updateTaskPanel(bool)`, ausgelöst durch einen Workbench-Wechsel
+(`StdCmdWorkbench` -> `Gui::MainWindow::activateWorkbench()` -> `onWorkbenchActivated()` ->
+`updateTaskPanel()`). Diese Funktion ruft `this->getObject()->getDocument()` an ZWEI Stellen auf,
+ohne `getObject()` vorher auf `nullptr` zu prüfen - beim Workbench-Wechsel wird sie für JEDEN
+offenen `ViewProviderAssembly` aufgerufen, unabhängig davon, ob dessen Dokumentobjekt noch gültig
+ist (z.B. kurz nach dem Schließen eines Dokuments, wie es beim Experimentieren mit mehreren
+verschachtelten Test-Dokumenten in [[project_fcproject_nested_flex_drag_detach_bug]] passiert
+ist). Fix: `App::DocumentObject* obj = this->getObject(); if (!obj) return;` vor beiden
+Verwendungsstellen - exakt dasselbe Muster wie bei den ersten beiden Funden.
+
 Anwenden:
 
 ```bash
@@ -525,6 +553,18 @@ beim Laden, siehe Vorfall 2026-08-23 in [[project_fcproject_manual_placement_wor
 
 **⚠️ Aktuell WIRKUNGSLOS (Aufruf auskommentiert) - hat live einen FreeCAD-Absturz verursacht,
 NICHT ohne Reentrancy-Fix reaktivieren.** Betrifft `src/Mod/Assembly/App/AssemblyLink.{cpp,h}`.
+
+**Update (2026-08-25): sauberes Minimal-Repro fuer den zugrundeliegenden Bug gefunden**, siehe
+`patches/bugreport-nested-flex-joint-detach/README.md` - ab ZWEI Ebenen flexibler
+Verschachtelung (nicht schon bei einer!) wird ein Joint innerhalb der tiefsten eingebetteten
+Sub-Baugruppe beim interaktiven Ziehen komplett ignoriert und bleibt auch nach komplettem
+Recompute dauerhaft falsch. Live rekonstruiert: waehrend des Ziehens loest nur die AEUSSERSTE
+Assembly, die inneren `AssemblyObject::solve()`-Aufrufe der tieferen Ebenen laufen dabei gar
+nicht mit. Das ist vermutlich die eigentliche Ursache hinter allen "Baugruppe zerschossen"-
+Vorfaellen dieser Woche mit Motor67/68 in TraegerBaugruppe_Z (siehe
+[[project_fcproject_motor68_traegerbg_integration]]) - naheliegende Ansatzpunkte fuer einen
+echten Fix waeren `AssemblyLink::updateContents()` oder `ViewProviderAssembly::preDrag()`, noch
+nicht untersucht.
 
 **Seit 2026-08-23: alleiniger Eigentümer dieser beiden Dateien** - enthält jetzt zusätzlich
 den kompletten, weiterhin aktiven Inhalt von `freecad-assembly-link-delete-hang.patch`
