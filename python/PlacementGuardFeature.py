@@ -204,6 +204,21 @@ if _GUI_AVAILABLE:
             return None
 
 
+def ensure_placement_guard_group(doc):
+    """Liefert die (bei Bedarf neu angelegte) 'PlacementGuards'-Gruppe in 'doc' - fasst alle neu
+    erstellten PlacementGuard-Objekte an einer Stelle im Baum zusammen, analog zur nativen
+    'Joints'-Gruppe einer Assembly (Nutzerwunsch 2026-08-26). Bereits VOR dieser Aenderung
+    angelegte Guards bleiben dort stehen, wo sie sind - find_placement_guard_for()/
+    enforce_all_placement_guards() suchen ohnehin ueber alle doc.Objects, unabhaengig von der
+    Gruppenzugehoerigkeit."""
+    for obj in doc.Objects:
+        if obj.TypeId == "App::DocumentObjectGroup" and obj.Name == "PlacementGuards":
+            return obj
+    group = doc.addObject("App::DocumentObjectGroup", "PlacementGuards")
+    group.Label = "PlacementGuards"
+    return group
+
+
 def find_placement_guard_for(doc, target):
     """Findet das bestehende PlacementGuard-Objekt fuer 'target' in 'doc', falls vorhanden -
     sonst None. Fuer Werkzeuge, die ein bereits gesperrtes Teil NICHT ungefragt ueberschreiben
@@ -241,8 +256,19 @@ def make_placement_guard(doc, target, placement, note=""):
     if _GUI_AVAILABLE and obj.ViewObject:
         ViewProviderPlacementGuard(obj.ViewObject)
 
+    ensure_placement_guard_group(doc).addObject(obj)
+
     doc.recompute()
     return obj
+
+
+# Objekttypen, die beim Baugruppen-Modus (siehe CommandCreatePlacementGuard._guard_assembly())
+# NICHT als "Komponente" gezaehlt werden - Ursprungs-Hilfselemente, native Joint/View-Gruppen
+# und unsere eigene PlacementGuards-Gruppe selbst.
+_ASSEMBLY_MEMBER_SKIP_TYPES = {
+    "App::Origin", "App::Line", "App::Plane", "App::Point",
+    "Assembly::JointGroup", "Assembly::ViewGroup", "App::DocumentObjectGroup",
+}
 
 
 if _GUI_AVAILABLE:
@@ -250,7 +276,16 @@ if _GUI_AVAILABLE:
         """Befehl: sperrt das AKTUELLE Placement des ausgewaehlten Teils per PlacementGuard-
         Objekt - ohne erst das Placement-Panel (ManualPlacementCommand.py) zu oeffnen. Fuer den
         Fall, dass die Position schon stimmt und nur noch gegen den (bei verschachtelten
-        flexiblen Baugruppen fehlerhaften) Assembly-Solver abgesichert werden soll."""
+        flexiblen Baugruppen fehlerhaften) Assembly-Solver abgesichert werden soll.
+
+        Baugruppen-Modus (Nutzerwunsch 2026-08-26): ist die Auswahl statt eines einzelnen Teils
+        eine ganze Assembly (Assembly::AssemblyObject oder Assembly::AssemblyLink), wird fuer
+        JEDES direkte Mitglied ein eigener PlacementGuard erstellt/aktualisiert - automatisiert
+        genau den zuvor manuellen "jedes Teil einzeln anklicken"-Ablauf fuer eine bereits korrekt
+        zusammengebaute Unterbaugruppe. Geht bewusst nur EINE Ebene tief (keine Rekursion in
+        verschachtelte Sub-Baugruppen) - fuer eine tiefer verschachtelte Sub-Baugruppe wird der
+        Befehl einfach ein zweites Mal auf DEREN Assembly-Knoten ausgefuehrt, genau wie beim
+        bisherigen manuellen Vorgehen Ebene fuer Ebene."""
 
         def GetResources(self):
             return {
@@ -259,7 +294,9 @@ if _GUI_AVAILABLE:
                 'ToolTip': (
                     'Sperrt das aktuelle Placement des ausgewaehlten Teils dauerhaft per '
                     'sichtbarem PlacementGuard-Objekt - haelt es auch gegen einen fehlerhaften '
-                    'Assembly-Solver fest, ohne das Placement-Panel oeffnen zu muessen.'
+                    'Assembly-Solver fest, ohne das Placement-Panel oeffnen zu muessen. Bei '
+                    'Auswahl einer ganzen Baugruppe: erstellt einen Guard fuer JEDES ihrer '
+                    'direkten Mitglieder auf einmal.'
                 )
             }
 
@@ -268,9 +305,21 @@ if _GUI_AVAILABLE:
             main_win = Gui.getMainWindow()
             sel = Gui.Selection.getSelection()
             if len(sel) != 1:
-                QtWidgets.QMessageBox.warning(main_win, "FCProject", "Bitte genau ein Teil auswaehlen.")
+                QtWidgets.QMessageBox.warning(
+                    main_win, "FCProject", "Bitte genau ein Teil oder eine Baugruppe auswaehlen."
+                )
                 return
             obj = sel[0]
+
+            if obj.TypeId in ("Assembly::AssemblyObject", "Assembly::AssemblyLink"):
+                self._guard_assembly(obj)
+                return
+
+            self._guard_single_part(obj)
+
+        def _guard_single_part(self, obj):
+            from PySide6 import QtWidgets
+            main_win = Gui.getMainWindow()
 
             active_doc = App.ActiveDocument
             if active_doc is not None:
@@ -300,6 +349,52 @@ if _GUI_AVAILABLE:
                 note="Aktuelles Placement gesperrt ueber FCProject_CreatePlacementGuard"
             )
             auto_save_document(obj.Document, reason=f"PlacementGuard fuer '{obj.Label}' gesperrt")
+
+        def _guard_assembly(self, assembly):
+            doc = assembly.Document
+            members = getattr(assembly, "Group", None) or []
+
+            created, already_locked, skipped = [], [], []
+            for member in members:
+                if member is None or member.TypeId in _ASSEMBLY_MEMBER_SKIP_TYPES:
+                    continue
+                if not hasattr(member, "Placement"):
+                    skipped.append(f"{member.Label} (keine Placement-Eigenschaft)")
+                    continue
+
+                # WICHTIG (Nutzerentscheidung 2026-08-26): bereits gesperrte Teile NICHT
+                # anfassen/aktualisieren - gleiches Prinzip wie in RestoreJointPositionCommand.py
+                # (siehe dort fuer die volle Begruendung). Ein bereits vorhandener Guard gilt als
+                # autoritativ (z.B. praeziser ueber RestoreRigidGroupCommand/
+                # RestoreJointPositionCommand berechnet statt nur "aktuelle Placement uebernommen")
+                # - dieser Befehl soll nur LUECKEN fuellen, nichts Bestehendes ueberschreiben.
+                if find_placement_guard_for(doc, member) is not None:
+                    already_locked.append(member.Label)
+                    continue
+
+                make_placement_guard(
+                    doc, member, App.Placement(member.Placement),
+                    note=f"Aktuelles Placement gesperrt ueber PlacementGuard-Baugruppen-Modus "
+                         f"('{assembly.Label}')"
+                )
+                created.append(member.Label)
+
+            App.Console.PrintMessage(
+                f"FCProject: PlacementGuard fuer Baugruppe '{assembly.Label}': "
+                f"{len(created)} neu erstellt"
+                + (f" ({', '.join(created)})" if created else "")
+                + (
+                    f", {len(already_locked)} uebersprungen (bereits gesperrt: "
+                    f"{', '.join(already_locked)})" if already_locked else ""
+                )
+                + (f", {len(skipped)} uebersprungen ({', '.join(skipped)})" if skipped else "")
+                + ".\n"
+            )
+
+            if created:
+                auto_save_document(
+                    doc, reason=f"PlacementGuards fuer Baugruppe '{assembly.Label}' erstellt"
+                )
 
         def IsActive(self):
             return App.ActiveDocument is not None
