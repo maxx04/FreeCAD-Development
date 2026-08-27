@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Import-Component Icon - Box mit Pfeil rein (Import) und Schloss (Placement gesperrt) -->
+  <defs>
+    <linearGradient id="icgrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4A90E2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#357ABD;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" fill="white" opacity="0"/>
+
+  <!-- Ziel-Box (isometrisch, blau) -->
+  <g transform="translate(16, 30)">
+    <rect x="0" y="0" width="22" height="18" fill="url(#icgrad1)" stroke="#1F4E79" stroke-width="0.5"/>
+    <polygon points="0,0 6,-5 28,-5 22,0" fill="#8AB6F0" opacity="0.8"/>
+    <polygon points="22,0 28,-5 28,13 22,18" fill="#1F4E79" opacity="0.6"/>
+  </g>
+
+  <!-- Pfeil, der von aussen reinzeigt (Import) -->
+  <path d="M 4 20 L 20 20" fill="none" stroke="#555555" stroke-width="3" marker-end="url(#arrowheadIn)"/>
+  <defs>
+    <marker id="arrowheadIn" markerWidth="8" markerHeight="6" refX="4" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#555555"/>
+    </marker>
+  </defs>
+
+  <!-- Schloss oben rechts (Placement gesperrt) -->
+  <g transform="translate(42, 8)">
+    <rect x="0" y="6" width="14" height="11" rx="1.5" fill="#E2A64A" stroke="#8B5E1E" stroke-width="0.7"/>
+    <path d="M 2.5 6 V 3.5 A 4.5 4.5 0 0 1 11.5 3.5 V 6" fill="none" stroke="#8B5E1E" stroke-width="1.6"/>
+    <circle cx="7" cy="11" r="1.6" fill="#5A3D10"/>
+  </g>
+</svg>
