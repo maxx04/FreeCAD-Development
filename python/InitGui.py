@@ -30,6 +30,7 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         import SelectableRepairCommand as SelectableRepairCommand
         import SectionSketchFeature as SectionSketchFeature
         import ImportComponentCommand as ImportComponentCommand
+        import InterfacePositionCommand as InterfacePositionCommand
         import DocObserver
         DocObserver.register()
 
@@ -41,7 +42,8 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
             "FCProject_PartExchange",
             "FCProject_RepairSelectable",
             "FCProject_CreateSectionSketch",
-            "FCProject_ImportComponent"
+            "FCProject_ImportComponent",
+            "FCProject_PositionByInterface"
         ])
 
 
