@@ -9,14 +9,13 @@ def floatGerman(value, default=0.0):
 
 def add_local_coordinate_system(container, name="LCS"):
     """Fügt dem übergebenen Container (App::Part/PartDesign::Body/Assembly::AssemblyObject) ein
-    ECHTES Part::LocalCoordinateSystem hinzu (Identity-Placement am lokalen Ursprung des
-    Containers, keine eigene Positionierung nötig) - siehe resources/docs/CONSTRAINTS.md: jedes
-    PDM-Objekt (P/A/R/G/B) soll ein echtes LCS besitzen. Der automatische App::Origin-Container ist
-    zwar technisch selbst auch ein App::LocalCoordinateSystem (App::Origin erbt in FreeCAD davon,
-    siehe App/Origin.h), zählt seit dem AssemblyPatternCreator-Fix aber bewusst NICHT mehr als
-    Pattern-/Joint-Referenz (siehe [[project_fcproject_assembly_pattern_origin_lcs_bug]]) - ohne
-    ein zusätzliches echtes LCS bekommt ein gepattertes Objekt sonst nur die Warnung "Keine
-    LCS-Referenz gefunden".
+    ECHTES Part::LocalCoordinateSystem hinzu, per FreeCAD-Attachment auf die XY-Ebene des
+    Containers gestützt (siehe resources/docs/CONSTRAINTS.md: jedes PDM-Objekt (P/A/R/G/B) soll
+    ein echtes LCS besitzen). Der automatische App::Origin-Container ist zwar technisch selbst
+    auch ein App::LocalCoordinateSystem (App::Origin erbt in FreeCAD davon, siehe App/Origin.h),
+    zählt seit dem AssemblyPatternCreator-Fix aber bewusst NICHT mehr als Pattern-/Joint-Referenz
+    (siehe [[project_fcproject_assembly_pattern_origin_lcs_bug]]) - ohne ein zusätzliches echtes
+    LCS bekommt ein gepattertes Objekt sonst nur die Warnung "Keine LCS-Referenz gefunden".
 
     Part::LocalCoordinateSystem ist der Standard-Typ des Part-Werkbench-Befehls
     "Part_CoordinateSystem" (Part/Gui/Command.cpp) - erbt von App::LocalCoordinateSystem und ist
@@ -24,8 +23,19 @@ def add_local_coordinate_system(container, name="LCS"):
     in App::Part/Assembly::AssemblyObject (beide über GeoFeatureGroupExtension generell offen für
     beliebige Kind-Objekte).
 
-    Scheitert rein defensiv (nur Konsolen-Warnung) - ein LCS-Problem soll nie die eigentliche
-    PDM-Erstellung blockieren."""
+    Nutzerwunsch (2026-08-29): das LCS soll "eingebunden sein, kein Overlay" - eine reine
+    Identity-Placement ohne echten Support wirkte wie lose über dem Teil schwebend. Deshalb wird
+    das LCS jetzt zusätzlich per Attachment (AttachmentSupport + MapMode="ObjectXY") auf die
+    XY-Ebene des Containers gestützt (App::Origin.OriginFeatures, gefunden über die Rolle
+    "XY_Plane" - siehe FreeCAD-Kern App/Datums.h: `PlaneRoles[3] = {"XY_Plane", "XZ_Plane",
+    "YZ_Plane"}`). Ergebnis geometrisch identisch zur vorherigen Identity-Placement (die
+    XY-Ebene liegt selbst am Container-Ursprung), aber jetzt ein ECHTES Attachment statt einer
+    freischwebenden Placement - konsistent mit jedem anderen per Attachment positionierten
+    FreeCAD-Objekt. Scheitert defensiv auf die alte Identity-Placement zurück, falls Origin/
+    XY_Plane aus irgendeinem Grund nicht gefunden werden (z.B. Container ohne eigenes Origin).
+
+    Scheitert insgesamt rein defensiv (nur Konsolen-Warnung) - ein LCS-Problem soll nie die
+    eigentliche PDM-Erstellung blockieren."""
     if container is None:
         return None
     try:
@@ -34,6 +44,30 @@ def add_local_coordinate_system(container, name="LCS"):
         lcs.Label = name
         if hasattr(container, "addObject"):
             container.addObject(lcs)
+
+        origin = getattr(container, "Origin", None)
+        xy_plane = None
+        if origin is not None:
+            xy_plane = next(
+                (f for f in getattr(origin, "OriginFeatures", [])
+                 if getattr(f, "Role", None) == "XY_Plane"),
+                None
+            )
+        if xy_plane is not None:
+            try:
+                lcs.AttachmentSupport = [(xy_plane, "")]
+                lcs.MapMode = "ObjectXY"
+            except Exception as e:
+                App.Console.PrintWarning(
+                    f"FCProject: LCS für '{getattr(container, 'Label', '?')}' konnte nicht auf "
+                    f"die XY-Ebene gestützt werden, bleibt bei Identity-Placement: {str(e)}\n"
+                )
+        else:
+            App.Console.PrintWarning(
+                f"FCProject: Keine XY-Ebene im Origin von '{getattr(container, 'Label', '?')}' "
+                "gefunden - LCS bleibt ungestützt (Identity-Placement).\n"
+            )
+
         # Sichtbarkeit bewusst AUS (Standard von Part::LocalCoordinateSystem ist ohnehin
         # unsichtbar, siehe ViewProviderCoordinateSystem::ViewProviderCoordinateSystem() im
         # FreeCAD-Kern - hier trotzdem explizit gesetzt statt sich nur auf den Kern-Default zu
