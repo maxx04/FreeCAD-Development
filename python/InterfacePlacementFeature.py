@@ -122,7 +122,7 @@ class InterfacePlacementProxy:
         target_global = App.Placement(target_lcs.Placement)
         new_placement = target_global.multiply(source_local.inverse())
 
-        if not import_link.Placement.isSame(new_placement, 1e-7, 1e-7):
+        if not import_link.Placement.isSame(new_placement, 1e-7):
             import_link.Placement = new_placement
 
     def onDocumentRestored(self, obj):
