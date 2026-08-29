@@ -96,12 +96,30 @@ def make_import_component(active_doc, source_path):
     Placement bleibt UNGESPERRT, der Nutzer positioniert danach selbst. Landet als Mitglied der
     gerade aktiven Assembly (siehe find_active_assembly()), falls eine im Bearbeiten-Modus ist -
     sonst lose im Dokument-Root."""
+    # WICHTIG: die aktive Assembly VOR dem Oeffnen des Quelldokuments merken, nicht danach -
+    # get_or_open_document()/App.openDocument() wechselt das aktive Dokument, und dieser
+    # Dokumentwechsel beendet den Bearbeiten-Modus der gerade editierten Assembly (FreeCAD-
+    # Kernverhalten, nicht rueckgaengig zu machen, indem man hinterher nur das Dokument
+    # zurueckschaltet - der Bearbeiten-Modus selbst bleibt beendet). Ein erneuter
+    # find_active_assembly()-Aufruf NACH dem Dokumentwechsel wuerde deshalb faelschlich None
+    # liefern, obwohl der Nutzer gerade noch eine Baugruppe aktiv bearbeitet hat (siehe
+    # Regression 2026-08-29: Import landete wieder lose im Dokument-Root).
+    active_assembly = find_active_assembly()
+
     source_doc = get_or_open_document(source_path)
+
+    # Aktives Dokument/Fenster sofort zurueck auf die Ziel-Baugruppe schalten (Nutzerwunsch
+    # 2026-08-29): App.openDocument() aktiviert das neu geoeffnete Quelldokument automatisch mit
+    # (wechselt auch sichtbar den GUI-Tab dorthin) - ungewollt, der Nutzer soll in der
+    # Ziel-Baugruppe bleiben.
+    App.setActiveDocument(active_doc.Name)
+    if _GUI_AVAILABLE:
+        Gui.ActiveDocument = Gui.getDocument(active_doc)
+
     target = find_top_assembly(source_doc)
     if target is None:
         raise RuntimeError(f"Kein geeignetes Objekt in '{source_doc.Name}' gefunden.")
 
-    active_assembly = find_active_assembly()
     if active_assembly is not None and active_assembly.Document is active_doc:
         link = active_assembly.newObject("App::Link", "Import")
     else:
