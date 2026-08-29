@@ -6,9 +6,19 @@
 # Skript benutzen, wenn ein Live-Test speziell FUER den Agenten gebraucht wird - niemals die
 # normale run-freecad-26.3.sh dafuer zweckentfremden, das war Ursache des ABI-Vorfalls.
 #
-# Ansonsten identisches Qt/venv-Setup wie run-freecad-26.3.sh (siehe dort fuer die volle
-# Begruendung der einzelnen Umgebungsvariablen).
+# WICHTIG (2026-08-29, Nachtrag): dieses Skript (bzw. das gepinnte Desktop-Icon "FreeCAD Sandbox")
+# hatte urspruenglich KEIN eigenes Nutzerprofil und teilte sich dadurch versehentlich
+# ~/.config/FreeCAD/v26-3/user.cfg mit der echten, taeglich genutzten Installation - ein
+# Testlauf darueber hat dabei einmal die komplette Fensteranordnung des Nutzers ueberschrieben.
+# Deshalb jetzt per FREECAD_USER_HOME (App::Application::getCustomPaths(),
+# src/App/Application.cpp) ein eigenes, dauerhaftes Profil-Verzeichnis erzwungen - Falle dabei:
+# das Zielverzeichnis MUSS schon existieren, sonst wird der Wert stillschweigend verworfen und
+# FreeCAD faellt auf den echten, geteilten Pfad zurueck (deshalb IMMER zuerst mkdir -p).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ISOLATED_PROFILE="${SCRIPT_DIR}/freecad-sandbox-profile"
+mkdir -p "$ISOLATED_PROFILE"
+export FREECAD_USER_HOME="$ISOLATED_PROFILE"
+
 FALLBACK_VENV_DIR="/home/maxx/Dokumente/FreeCAD-Development/.venv"
 if VENV_DIR="$(cd "${SCRIPT_DIR}/../../.venv" 2>/dev/null && pwd)"; then
     :
