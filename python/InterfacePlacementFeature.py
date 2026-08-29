@@ -219,14 +219,15 @@ if _GUI_AVAILABLE:
             self._refresh_labels()
 
         def _add_pick_row(self, layout, which):
-            row = QtWidgets.QHBoxLayout()
+            # Zeile + Knopf UNTEREINANDER statt nebeneinander (Nutzerwunsch 2026-08-29): das
+            # Aufgabenfenster ist standardmaessig schmal, der Knopf wurde bei nebeneinander
+            # liegenden Widgets am rechten Rand abgeschnitten/verschwand.
             edit = QtWidgets.QLineEdit()
             edit.setReadOnly(True)
-            row.addWidget(edit)
+            layout.addWidget(edit)
             button = QtWidgets.QPushButton("Waehlen...")
             button.clicked.connect(lambda: self._start_picking(which))
-            row.addWidget(button)
-            layout.addLayout(row)
+            layout.addWidget(button)
             return edit, button
 
         def _refresh_labels(self):
