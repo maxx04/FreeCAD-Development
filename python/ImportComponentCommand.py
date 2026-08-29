@@ -156,8 +156,12 @@ if _GUI_AVAILABLE:
                 QtWidgets.QMessageBox.warning(main_win, "FCProject", "Kein aktives Dokument geoeffnet.")
                 return
 
+            # Startverzeichnis: das Projektverzeichnis der aktiven Datei (Nutzerwunsch,
+            # 2026-08-29) statt des von Qt selbst gemerkten letzten Verzeichnisses - importierte
+            # Unterbaugruppen liegen so gut wie immer im selben Projektordner.
+            start_dir = os.path.dirname(active_doc.FileName) if active_doc.FileName else ""
             path, _ = QtWidgets.QFileDialog.getOpenFileName(
-                main_win, "FCProject: Unterbaugruppe importieren", "", "FreeCAD-Dateien (*.FCStd)"
+                main_win, "FCProject: Unterbaugruppe importieren", start_dir, "FreeCAD-Dateien (*.FCStd)"
             )
             if not path:
                 return

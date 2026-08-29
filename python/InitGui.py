@@ -30,7 +30,7 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         import SelectableRepairCommand as SelectableRepairCommand
         import SectionSketchFeature as SectionSketchFeature
         import ImportComponentCommand as ImportComponentCommand
-        import InterfacePositionCommand as InterfacePositionCommand
+        import InterfacePlacementFeature as InterfacePlacementFeature
         import DocObserver
         DocObserver.register()
 
