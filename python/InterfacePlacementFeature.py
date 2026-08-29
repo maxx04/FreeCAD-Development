@@ -201,7 +201,7 @@ if _GUI_AVAILABLE:
             # standardmaessig schmal, ein langer Import-Label lief sonst quer ueber den Rand
             # hinaus bzw. wurde abgeschnitten (Nutzerwunsch 2026-08-29).
             target_name = obj.ImportComponent.Label if obj.ImportComponent else "-"
-            layout.addWidget(QtWidgets.QLabel("Import-Komponente:"))
+            layout.addWidget(QtWidgets.QLabel("Importierende-Komponente:"))
             import_value_label = QtWidgets.QLabel(target_name)
             import_value_label.setWordWrap(True)
             layout.addWidget(import_value_label)
