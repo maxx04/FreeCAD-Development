@@ -5,17 +5,21 @@
 # Interfaces Anfang" - statt eines eigenen Referenzelement-Systems nutzen wir FreeCADs eigenes,
 # bewaehrtes Attachment-System (Part::LocalCoordinateSystem) als Referenzelement-Typ).
 #
-# Ablauf: der Nutzer legt in der QUELLE (dem zu importierenden Dokument) ein LCS an der
-# gewuenschten Andock-Stelle an (per normalem FreeCAD-Attachment - Flaeche/Kante waehlen), und in
-# der ZIEL-Baugruppe ein zweites LCS an der Gegenstelle. Dieser Befehl waehlt beide (erst Quelle,
-# dann Ziel) aus und legt daraus ein ECHTES FeaturePython-Objekt ("InterfacePlacement") an, das
-# bei JEDER Neuberechnung die Placement der Import-Komponente automatisch neu aus der aktuellen
-# Lage beider LCS berechnet (Nutzerwunsch 2026-08-29: "Interfaces als Features haben die bei
-# Neuberechnung auch aktualisiert werden" - Ablösung der fruehren reinen Einmal-Berechnung ohne
-# gespeichertes Feature-Objekt). Kein lebendiger Joint, keine Solver-Abhaengigkeit - nur eine
-# direkte geometrische Berechnung, die aber (anders als vorher) bei jedem Recompute automatisch
-# neu ausgefuehrt wird, falls sich eine der beiden LCS verschoben hat.
+# Ablauf (2026-08-29, nach Nutzer-Feedback auf FeaturePython umgebaut): der Nutzer legt in der
+# QUELLE (dem zu importierenden Dokument) ein LCS an der gewuenschten Andock-Stelle an (per
+# normalem FreeCAD-Attachment - Flaeche/Kante waehlen), und in der ZIEL-Baugruppe ein zweites LCS
+# an der Gegenstelle. Zum Anlegen eines Interfaces waehlt der Nutzer zuerst die Import-Komponente
+# aus und startet den Befehl - das legt ein neues, leeres InterfacePlacement-Feature in der
+# "Interfaces"-Gruppe an (analog zur "Joints"-Gruppe von FreeCADs eigenem Assembly-Modul) und
+# oeffnet direkt dessen Aufgabenfenster, in dem Quell-/Ziel-LCS per Knopfdruck + Anklicken im
+# Baum/3D-Fenster ausgewaehlt werden (kein Vorab-Auswaehlen zweier LCS mehr noetig). Ein
+# Doppelklick auf ein bestehendes Interface im Baum oeffnet dasselbe Aufgabenfenster wieder, um
+# die Zuordnung nachzuschauen/zu korrigieren. Das Feature berechnet bei JEDER Neuberechnung die
+# Placement der Import-Komponente automatisch aus der aktuellen Lage beider LCS neu (Nutzerwunsch:
+# "bei jedem Umrechnen die zwei LCS zusammenhalten") - kein lebendiger Joint, keine
+# Solver-Abhaengigkeit, nur eine direkte geometrische Berechnung.
 import os
+import weakref
 
 import FreeCAD as App
 
@@ -29,48 +33,24 @@ except ImportError:
 ICON_DIR = os.path.join(os.path.dirname(__file__), 'resources', 'icons')
 
 LCS_TYPE = "Part::LocalCoordinateSystem"
-
-
-def find_import_component_for(active_doc, source_lcs):
-    """Findet die (einzige) Import-Komponente in 'active_doc', deren LinkedObject im selben
-    Dokument wie 'source_lcs' liegt - siehe ImportComponentCommand.py fuer die
-    FCProjectImport-Markierung. Wirft eine aussagekraeftige Meldung statt eines stillen Fehlers,
-    falls keine oder mehrere passen (spaetere Ausbaustufe: explizite Auswahl statt Auto-Erkennung)."""
-    candidates = []
-    for obj in active_doc.Objects:
-        if obj.TypeId != "App::Link" or not hasattr(obj, "FCProjectImport"):
-            continue
-        linked = getattr(obj, "LinkedObject", None)
-        if linked is not None and linked.Document is source_lcs.Document:
-            candidates.append(obj)
-
-    if not candidates:
-        raise RuntimeError(
-            f"Keine Import-Komponente in '{active_doc.Name}' gefunden, deren Quelle "
-            f"'{source_lcs.Document.Name}' ist. Bitte zuerst per FCProject_ImportComponent "
-            "importieren."
-        )
-    if len(candidates) > 1:
-        names = ", ".join(c.Label for c in candidates)
-        raise RuntimeError(
-            f"Mehrere Import-Komponenten mit derselben Quelle gefunden ({names}) - "
-            "Auto-Erkennung ist damit mehrdeutig. Bitte die betroffene Import-Komponente vorerst "
-            "manuell eindeutig machen (z.B. umbenennen) oder diesen Befehl erweitern."
-        )
-    return candidates[0]
+INTERFACES_GROUP_LABEL = "Interfaces"
 
 
 def find_interface_placement_for(import_link):
     """Findet ein bereits bestehendes InterfacePlacement-Feature fuer 'import_link', falls
-    vorhanden - Nutzer soll beim erneuten Auswaehlen zweier LCS nicht versehentlich ein ZWEITES
-    Feature anlegen, das gegen dasselbe Import-Objekt schreibt (zwei Features, die dieselbe
-    ImportComponent.Placement setzen, wuerden sich in der Recompute-Reihenfolge gegenseitig
-    ueberschreiben - nicht diagnostizierbar, welches zuletzt gewinnt)."""
+    vorhanden - beim erneuten Bearbeiten soll kein ZWEITES Feature entstehen, das gegen dasselbe
+    Import-Objekt schreibt (zwei Features, die dieselbe ImportComponent.Placement setzen, wuerden
+    sich in der Recompute-Reihenfolge gegenseitig ueberschreiben - nicht diagnostizierbar, welches
+    zuletzt gewinnt)."""
     for obj in import_link.Document.Objects:
         if isinstance(getattr(obj, "Proxy", None), InterfacePlacementProxy):
             if getattr(obj, "ImportComponent", None) is import_link:
                 return obj
     return None
+
+
+def is_interface_placement(obj):
+    return obj is not None and isinstance(getattr(obj, "Proxy", None), InterfacePlacementProxy)
 
 
 class InterfacePlacementProxy:
@@ -124,10 +104,8 @@ class InterfacePlacementProxy:
         import_link = obj.ImportComponent
 
         if source_lcs is None or target_lcs is None:
-            App.Console.PrintWarning(
-                f"FCProject: InterfacePlacement '{obj.Label}' hat keine vollstaendigen "
-                "LCS-Referenzen.\n"
-            )
+            # Kein Fehler: ein frisch angelegtes Interface hat noch keine LCS zugewiesen, bis der
+            # Nutzer sie im Aufgabenfenster auswaehlt - stiller Rueckzug statt Warnspam.
             return
         if import_link is None:
             App.Console.PrintWarning(
@@ -159,6 +137,136 @@ class InterfacePlacementProxy:
 
 
 if _GUI_AVAILABLE:
+    class _InterfaceLCSPickObserver:
+        """Gui.Selection-Beobachter fuer das Aufgabenfenster: nimmt den naechsten Klick im
+        Baum/3D-Fenster (in JEDEM offenen Dokument - die Quell-LCS liegt typischerweise in einem
+        anderen Dokument als die Ziel-LCS) als Quell- oder Ziel-LCS entgegen, waehrend
+        Panel._picking gesetzt ist. Nutzt weakref wie _ReplacementSelectionObserver in
+        PartExchangeWindow.py, damit ein verwaistes Panel den Observer nicht dauerhaft haengen
+        laesst."""
+
+        def __init__(self, panel):
+            self._panel_ref = weakref.ref(panel)
+
+        def _panel(self):
+            panel = self._panel_ref()
+            if panel is None:
+                try:
+                    Gui.Selection.removeObserver(self)
+                except Exception:
+                    pass
+            return panel
+
+        def addSelection(self, doc_name, obj_name, sub_name, x=0, y=0, z=0):
+            panel = self._panel()
+            if panel is None or panel._picking is None:
+                return
+            doc = App.getDocument(doc_name)
+            obj = doc.getObject(obj_name) if doc is not None else None
+            if obj is None:
+                return
+            panel._on_pick(obj)
+
+        def removeSelection(self, doc_name, obj_name, sub_name):
+            pass
+
+        def clearSelection(self, doc_name):
+            pass
+
+        def setSelection(self, doc_name):
+            pass
+
+
+    class InterfacePlacementTaskPanel:
+        """Aufgabenfenster (Gui.Control-Task-Panel) zum Anlegen/Bearbeiten eines
+        InterfacePlacement-Features - Quell-/Ziel-LCS werden per Knopf + Anklicken im
+        Baum/3D-Fenster gewaehlt, keine Vorab-Selektion noetig."""
+
+        def __init__(self, obj):
+            self.obj = obj
+            self._snapshot = {
+                'SourceLCS': obj.SourceLCS,
+                'TargetLCS': obj.TargetLCS,
+                'Active': obj.Active,
+            }
+            self._picking = None  # 'source' | 'target' | None
+            self._observer = _InterfaceLCSPickObserver(self)
+            Gui.Selection.addObserver(self._observer)
+
+            self.form = QtWidgets.QWidget()
+            self.form.setWindowTitle("FCProject: Interface bearbeiten")
+            layout = QtWidgets.QVBoxLayout(self.form)
+
+            target_name = obj.ImportComponent.Label if obj.ImportComponent else "-"
+            layout.addWidget(QtWidgets.QLabel(f"Import-Komponente: {target_name}"))
+
+            layout.addWidget(QtWidgets.QLabel("Quell-LCS (Andock-Stelle am importierten Teil):"))
+            self.source_edit, self.source_button = self._add_pick_row(layout, 'source')
+
+            layout.addWidget(QtWidgets.QLabel("Ziel-LCS (Gegenstelle in der Baugruppe):"))
+            self.target_edit, self.target_button = self._add_pick_row(layout, 'target')
+
+            self.status_label = QtWidgets.QLabel("")
+            self.status_label.setStyleSheet("color: #888;")
+            layout.addWidget(self.status_label)
+
+            self._refresh_labels()
+
+        def _add_pick_row(self, layout, which):
+            row = QtWidgets.QHBoxLayout()
+            edit = QtWidgets.QLineEdit()
+            edit.setReadOnly(True)
+            row.addWidget(edit)
+            button = QtWidgets.QPushButton("Waehlen...")
+            button.clicked.connect(lambda: self._start_picking(which))
+            row.addWidget(button)
+            layout.addLayout(row)
+            return edit, button
+
+        def _refresh_labels(self):
+            self.source_edit.setText(self.obj.SourceLCS.Label if self.obj.SourceLCS else "-")
+            self.target_edit.setText(self.obj.TargetLCS.Label if self.obj.TargetLCS else "-")
+
+        def _start_picking(self, which):
+            self._picking = which
+            Gui.Selection.clearSelection()
+            hint = "Quell-LCS" if which == 'source' else "Ziel-LCS"
+            self.status_label.setText(f"Bitte jetzt die {hint} im Baum oder 3D-Fenster anklicken...")
+
+        def _on_pick(self, picked_obj):
+            if picked_obj.TypeId != LCS_TYPE:
+                self.status_label.setText(
+                    f"'{picked_obj.Label}' ist kein Local Coordinate System - bitte erneut waehlen."
+                )
+                return
+            if self._picking == 'source':
+                self.obj.SourceLCS = picked_obj
+            else:
+                self.obj.TargetLCS = picked_obj
+            self._picking = None
+            self.status_label.setText("")
+            self._refresh_labels()
+            self.obj.Document.recompute()
+
+        def accept(self):
+            Gui.Selection.removeObserver(self._observer)
+            self.obj.Document.recompute()
+            Gui.ActiveDocument.resetEdit()
+            return True
+
+        def reject(self):
+            Gui.Selection.removeObserver(self._observer)
+            self.obj.SourceLCS = self._snapshot['SourceLCS']
+            self.obj.TargetLCS = self._snapshot['TargetLCS']
+            self.obj.Active = self._snapshot['Active']
+            self.obj.Document.recompute()
+            Gui.ActiveDocument.resetEdit()
+            return True
+
+        def getStandardButtons(self):
+            return int(QtWidgets.QDialogButtonBox.Ok.value) | int(QtWidgets.QDialogButtonBox.Cancel.value)
+
+
     class ViewProviderInterfacePlacement:
         def __init__(self, vobj):
             vobj.Proxy = self
@@ -170,14 +278,15 @@ if _GUI_AVAILABLE:
             return os.path.join(ICON_DIR, 'interface_position.svg')
 
         def doubleClicked(self, vobj):
-            # Kein eigenes TaskPanel bisher - Doppelklick markiert zumindest die beiden
-            # verwendeten LCS, damit man sie im Modellbaum wiederfindet.
-            Gui.Selection.clearSelection()
-            obj = vobj.Object
-            if obj.SourceLCS is not None:
-                Gui.Selection.addSelection(obj.SourceLCS)
-            if obj.TargetLCS is not None:
-                Gui.Selection.addSelection(obj.TargetLCS)
+            Gui.ActiveDocument.setEdit(vobj.Object.Name)
+            return True
+
+        def setEdit(self, vobj, mode=0):
+            Gui.Control.showDialog(InterfacePlacementTaskPanel(vobj.Object))
+            return True
+
+        def unsetEdit(self, vobj, mode=0):
+            Gui.Control.closeDialog()
             return True
 
         def __getstate__(self):
@@ -196,36 +305,46 @@ def find_active_assembly():
         return None
 
 
-def make_interface_placement(active_doc, import_link, source_lcs, target_lcs):
-    """Erstellt (oder aktualisiert, falls fuer 'import_link' schon eines existiert) das
-    InterfacePlacement-Feature und stoesst danach ein Recompute an, das execute() sofort einmal
-    ausfuehrt."""
-    existing = find_interface_placement_for(import_link)
-    if existing is not None:
-        existing.SourceLCS = source_lcs
-        existing.TargetLCS = target_lcs
-        active_doc.recompute()
-        return existing, True
+def ensure_interfaces_group(active_doc):
+    """Findet/erstellt die "Interfaces"-Gruppe als Kind der aktiven Baugruppe (analog zur
+    "Joints"-Gruppe von FreeCADs eigenem Assembly-Modul) - oder im Dokument-Root, falls gerade
+    keine Baugruppe im Bearbeiten-Modus ist."""
+    active_assembly = find_active_assembly()
+    container = active_assembly if (active_assembly is not None and active_assembly.Document is active_doc) else None
+    children = container.Group if container is not None else [
+        obj for obj in active_doc.Objects if obj.getParentGeoFeatureGroup() is None
+    ]
+    for obj in children:
+        if obj.TypeId == "App::DocumentObjectGroup" and obj.Label == INTERFACES_GROUP_LABEL:
+            return obj
+
+    group = active_doc.addObject("App::DocumentObjectGroup", "Interfaces")
+    group.Label = INTERFACES_GROUP_LABEL
+    if container is not None:
+        container.addObject(group)
+    return group
+
+
+def make_interface_placement(active_doc, import_link):
+    """Erstellt ein neues, noch leeres InterfacePlacement-Feature fuer 'import_link' in der
+    "Interfaces"-Gruppe - die eigentliche LCS-Auswahl passiert danach im Aufgabenfenster
+    (InterfacePlacementTaskPanel), nicht mehr hier."""
+    group = ensure_interfaces_group(active_doc)
 
     active_doc.openTransaction("FCProject Interface Placement")
     try:
         obj = active_doc.addObject("App::FeaturePython", "InterfacePlacement")
         obj.Label = f"Interface: {import_link.Label}"
         InterfacePlacementProxy(obj)
-        obj.SourceLCS = source_lcs
-        obj.TargetLCS = target_lcs
         obj.ImportComponent = import_link
-
-        active_assembly = find_active_assembly()
-        if active_assembly is not None and active_assembly.Document is active_doc:
-            active_assembly.addObject(obj)
+        group.addObject(obj)
 
         if _GUI_AVAILABLE and obj.ViewObject:
             ViewProviderInterfacePlacement(obj.ViewObject)
 
         active_doc.recompute()
         active_doc.commitTransaction()
-        return obj, False
+        return obj
     except Exception:
         active_doc.abortTransaction()
         raise
@@ -236,59 +355,64 @@ if _GUI_AVAILABLE:
         def GetResources(self):
             return {
                 'Pixmap': os.path.join(ICON_DIR, 'interface_position.svg'),
-                'MenuText': 'FCProject: Nach Interface positionieren',
+                'MenuText': 'FCProject: Interface anlegen/bearbeiten',
                 'ToolTip': (
-                    'Legt ein InterfacePlacement-Feature an, das eine Import-Komponente anhand '
-                    'zweier lokaler Koordinatensysteme (LCS) ausrichtet - erst das LCS in der '
-                    'Quelle (Andock-Stelle am importierten Teil), dann das LCS im Ziel '
-                    '(Gegenstelle in der Baugruppe) auswaehlen. Aktualisiert sich bei jeder '
-                    'Neuberechnung automatisch mit, falls sich eine der beiden LCS verschiebt '
-                    '(ueber "Active" abschaltbar) - keine laufende Solver-Abhaengigkeit sonst.'
+                    'Erstellt (oder bearbeitet) ein InterfacePlacement-Feature in der '
+                    '"Interfaces"-Gruppe: richtet eine Import-Komponente anhand zweier lokaler '
+                    'Koordinatensysteme (LCS) aus, im Aufgabenfenster per Knopf + Anklicken '
+                    'ausgewaehlt. Aktualisiert sich bei jeder Neuberechnung automatisch mit, '
+                    'falls sich eine der beiden LCS verschiebt - keine laufende '
+                    'Solver-Abhaengigkeit.\n\n'
+                    'Import-Komponente ausgewaehlt: legt ein neues Interface dafuer an.\n'
+                    'Bestehendes Interface ausgewaehlt: oeffnet es zum Bearbeiten.'
                 )
             }
 
         def Activated(self):
+            from ImportComponentCommand import is_import_component
             main_win = Gui.getMainWindow()
             sel = Gui.Selection.getSelection()
 
-            if len(sel) != 2:
+            if len(sel) != 1:
                 QtWidgets.QMessageBox.warning(
                     main_win, "FCProject",
-                    "Bitte genau zwei LCS auswaehlen: erst die Quell-LCS (am zu importierenden "
-                    "Teil), dann die Ziel-LCS (in der Baugruppe)."
+                    "Bitte entweder eine Import-Komponente auswaehlen (legt ein neues Interface "
+                    "an) oder ein bestehendes Interface-Objekt (zum Bearbeiten)."
                 )
                 return
 
-            source_lcs, target_lcs = sel[0], sel[1]
-            for obj, role in ((source_lcs, "Quell"), (target_lcs, "Ziel")):
-                if obj.TypeId != LCS_TYPE:
-                    QtWidgets.QMessageBox.warning(
-                        main_win, "FCProject",
-                        f"'{obj.Label}' ist kein Local Coordinate System (erwartet als "
-                        f"{role}-LCS)."
-                    )
-                    return
+            selected = sel[0]
+
+            if is_interface_placement(selected):
+                Gui.ActiveDocument.setEdit(selected.Name)
+                return
+
+            if not is_import_component(selected):
+                QtWidgets.QMessageBox.warning(
+                    main_win, "FCProject",
+                    f"'{selected.Label}' ist weder eine Import-Komponente noch ein bestehendes "
+                    "Interface-Objekt."
+                )
+                return
 
             active_doc = App.ActiveDocument
-            if active_doc is None:
+            if active_doc is None or selected.Document is not active_doc:
                 QtWidgets.QMessageBox.warning(main_win, "FCProject", "Kein aktives Dokument geoeffnet.")
                 return
 
+            existing = find_interface_placement_for(selected)
+            if existing is not None:
+                Gui.ActiveDocument.setEdit(existing.Name)
+                return
+
             try:
-                import_link = find_import_component_for(active_doc, source_lcs)
-                feature, was_update = make_interface_placement(
-                    active_doc, import_link, source_lcs, target_lcs
-                )
+                feature = make_interface_placement(active_doc, selected)
             except Exception as exc:
                 QtWidgets.QMessageBox.warning(main_win, "FCProject", str(exc))
                 return
 
-            verb = "aktualisiert" if was_update else "angelegt"
-            App.Console.PrintMessage(
-                f"FCProject: InterfacePlacement '{feature.Label}' {verb} "
-                f"('{source_lcs.Label}' -> '{target_lcs.Label}'), '{import_link.Label}' neu "
-                f"positioniert: {import_link.Placement}.\n"
-            )
+            Gui.Selection.clearSelection()
+            Gui.ActiveDocument.setEdit(feature.Name)
 
         def IsActive(self):
             return App.ActiveDocument is not None
