@@ -139,3 +139,16 @@ install(FILES resources/freecaad.desktop
     DESTINATION "/home/maxx/.local/share/applications"
     RENAME "freecad-26-3.desktop"
 )
+
+# Sandbox-Starter fuer den Hintergrund-Agenten (immer fuer Live-Tests SEINER Diagnose-/Fix-Builds
+# benutzen, niemals die normale run-freecad-26.3.sh dafuer - siehe Betriebs-Lektion zum
+# ABI-Vorfall vom 2026-08-28 in project_fcproject_solver_data_fix_and_import_component-Memory).
+install(PROGRAMS resources/run-freecad-sandbox.sh
+    DESTINATION "/home/maxx/freecad"
+)
+install(FILES resources/logo-freecad-sandbox.svg
+    DESTINATION "/home/maxx/freecad"
+)
+install(FILES resources/freecad-sandbox.desktop
+    DESTINATION "/home/maxx/.local/share/applications"
+)
