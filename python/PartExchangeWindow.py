@@ -654,24 +654,52 @@ class PartExchangeWindow(QtWidgets.QDialog):
             )
 
     @staticmethod
-    def _fit_view_to_object(view, doc, focus_obj):
+    def _collect_keep_set(focus_obj):
+        """Liefert focus_obj + all seine Vorfahren (damit sie als Container sichtbar bleiben)
+        + all seine Nachfahren (gehoeren optisch mit dazu) - alles ausserhalb dieser Menge darf
+        fuer den Fokus-Zoom ausgeblendet werden."""
+        keep = {id(focus_obj)}
+
+        ancestor = focus_obj
+        while True:
+            parent = ancestor.getParentGeoFeatureGroup()
+            if parent is None or id(parent) in keep:
+                break
+            keep.add(id(parent))
+            ancestor = parent
+
+        stack = [focus_obj]
+        while stack:
+            current = stack.pop()
+            children = list(getattr(current, "Group", []) or []) + list(getattr(current, "OutList", []) or [])
+            for child in children:
+                if id(child) not in keep:
+                    keep.add(id(child))
+                    stack.append(child)
+
+        return keep
+
+    @classmethod
+    def _fit_view_to_object(cls, view, doc, focus_obj):
         """Zoomt `view` gezielt auf `focus_obj`, nicht auf das ganze Dokument - View3DInventorPy
         hat keine eigene "auf Objekt X einpassen"-API, nur fitAll() ueber ALLE sichtbaren
-        Objekte. Blendet dafuer kurzzeitig alle anderen TOP-LEVEL-Geschwister aus (Kinder von
-        focus_obj bleiben unberuehrt, die gehoeren optisch mit dazu), ruft fitAll() auf und
-        stellt die urspruengliche Sichtbarkeit danach wieder her.
+        Objekte. In einer Assembly-Datei haengen praktisch ALLE Teile unter demselben EINEN
+        Assembly-Container - ein reiner "keinen Elternteil"-Filter (echtes Top-Level) trifft
+        deshalb fast nie zu und blendet nichts aus. Stattdessen werden gezielt alle Objekte
+        ausserhalb von focus_objs eigenem Vorfahren-/Nachfahren-Pfad ausgeblendet (siehe
+        _collect_keep_set()), fitAll() aufgerufen, danach die urspruengliche Sichtbarkeit wieder
+        hergestellt.
 
         Ohne das zeigten beide eingebetteten Ansichten (Original UND Ersatzteil) schlicht die
         komplette Baugruppe, sobald beide im selben Dokument liegen - nicht zu unterscheiden,
         welche Ansicht wozu gehoert (Nutzer-Report 2026-08-30)."""
         hidden = []
+        keep = cls._collect_keep_set(focus_obj)
         focus_vobj = getattr(focus_obj, "ViewObject", None)
         was_hidden = focus_vobj is not None and not focus_vobj.Visibility
         try:
             for obj in doc.Objects:
-                if obj is focus_obj:
-                    continue
-                if obj.getParentGeoFeatureGroup() is not None:
+                if id(obj) in keep:
                     continue
                 vobj = getattr(obj, "ViewObject", None)
                 if vobj is None or not vobj.Visibility:
