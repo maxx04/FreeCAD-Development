@@ -58,12 +58,19 @@ class PartExchangeSelectDialog(QtWidgets.QDialog):
         self._populate_candidates(self.original_obj.Document)
 
     def _populate_candidates(self, doc):
+        # WICHTIG (2026-08-30, Nutzer-Report): Label ist NICHT eindeutig - z.B. nach "Einfache
+        # Kopie erstellen" tragen Original und Kopie dasselbe Label, aber unterschiedliche
+        # .Name. Intern wird zur Adressierung bereits korrekt .Name verwendet (siehe
+        # _on_confirm()), aber wenn die Anzeige nur das Label zeigt, sind zwei gleich
+        # benannte Objekte in der Liste nicht unterscheidbar und man waehlt leicht das
+        # falsche aus. Deshalb den internen Namen mit anzeigen, sobald er vom Label abweicht.
         self.candidate_combo.clear()
         for obj in doc.Objects:
             if obj is self.original_obj:
                 continue
             if is_valid_exchange_candidate(obj):
-                self.candidate_combo.addItem(f"{obj.Label}  [{doc.Name}]", (doc.Name, obj.Name))
+                display = obj.Label if obj.Label == obj.Name else f"{obj.Label} ({obj.Name})"
+                self.candidate_combo.addItem(f"{display}  [{doc.Name}]", (doc.Name, obj.Name))
 
     def _on_browse_file(self):
         start_dir = os.getcwd()

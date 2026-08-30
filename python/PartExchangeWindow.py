@@ -15,7 +15,7 @@ import FreeCADGui as Gui
 from PySide6 import QtWidgets, QtCore
 
 from PartExchangeAnalyzer import (
-    compute_rewired_offset, subpath_for_descendant, full_reference_path, find_assembly,
+    subpath_for_descendant, full_reference_path, find_assembly,
     find_all_project_joints_referencing
 )
 
@@ -933,6 +933,31 @@ class PartExchangeWindow(QtWidgets.QDialog):
                 except Exception:
                     pass
 
+            # WICHTIG (2026-08-30, Nutzer-Report "Teil springt nicht zur Stange"): Bevor das
+            # frisch erzeugte/platzierte Ersatzteil-Objekt einer Joint-Referenz (Reference1/2)
+            # zugewiesen wird, MUSS es einmal neu berechnet werden. FreeCAD legt beim Zuweisen
+            # einer Sub-Element-Referenz einen "Shadow"-Hash zur robusten Kanten-Wiedererkennung
+            # an - wird der auf Basis eines noch nicht fertig berechneten Shapes erzeugt, zeigt er
+            # spaeter auf die falsche Kante, obwohl die Nummer (z.B. "Edge34") gleich bleibt.
+            # Bestaetigt per Live-Test: manuelles Neu-Anklicken derselben Kante NACH einem
+            # Recompute hat das Problem behoben, ohne dass Kante oder Offset2 sich geaendert
+            # haetten - die Ersatzteil-Seite (nicht die unveraenderte Original-Seite) war
+            # betroffen.
+            # WICHTIG (2026-08-30, Nutzer-Report "Stange hat sich gedreht, ohne dass ich
+            # etwas berechnet habe"): doc.recompute() loest bei Assembly-Dokumenten IMMER
+            # automatisch einen internen Solve aus (FreeCAD koppelt das fest, laesst sich
+            # nicht abschalten) - schon das Entfernen des expliziten _solve_assembly_for()-
+            # Aufrufs reicht also NICHT. Per git-Vergleich (vor/nach-Commit) belegt: Ondsels
+            # automatische Redundant-Constraint-Aufloesung kann dabei den per GroundedJoint
+            # fest geerdeten Teil selbst verschieben, obwohl der per Definition unbeweglich
+            # sein soll. Deshalb: Placement aller geerdeten Teile VOR dem Recompute sichern
+            # und danach explizit zurueckschreiben, falls der Solve sie trotzdem verschoben
+            # hat.
+            try:
+                self._recompute_preserving_grounded(doc)
+            except Exception:
+                pass
+
             applied_here = 0
             joint_names_here = []
             for entry in doc_entries:
@@ -963,11 +988,9 @@ class PartExchangeWindow(QtWidgets.QDialog):
                     pass
 
             try:
-                doc.recompute()
+                self._recompute_preserving_grounded(doc)
             except Exception as e:
                 errors.append(f"Neuberechnung von '{doc.Name}' fehlgeschlagen: {str(e)}")
-
-            self._solve_assembly_for(doc, errors, assembly_obj)
 
             # Alle Dokumente AUSSER dem eigenen, gerade im Fenster gezeigten Original-Dokument
             # gleich speichern - bei vielen betroffenen Dateien sollen die nicht alle offen und
@@ -1070,7 +1093,72 @@ class PartExchangeWindow(QtWidgets.QDialog):
         return link
 
     @staticmethod
+    def _recompute_preserving_grounded(doc):
+        """doc.recompute(), aber mit Schutz fuer per GroundedJoint fest geerdete Teile.
+
+        WICHTIG (2026-08-30, Nutzer-Report "Stange hat sich nach dem Ersetzen gedreht, ohne
+        dass ich etwas berechnet habe"): doc.recompute() loest bei Assembly-Dokumenten IMMER
+        automatisch einen internen Solve aus (FreeCAD koppelt das fest, laesst sich nicht per
+        Parameter abschalten). Per git-Vergleich (vor/nach-Commit derselben Aktion) belegt:
+        Ondsels automatische Redundant-Constraint-Aufloesung kann dabei den per GroundedJoint
+        fest geerdeten Teil selbst verschieben, obwohl der per Definition unbeweglich sein
+        soll - ein Solver-Verhalten, kein Referenz-/Offset-Fehler unsererseits. Deshalb wird
+        das Placement aller geerdeten Teile vor dem Recompute gesichert und danach explizit
+        zurueckgeschrieben, falls der Solve sie trotzdem verschoben hat.
+        """
+        grounded_before = {}
+        for obj in doc.Objects:
+            target = getattr(obj, "ObjectToGround", None)
+            if target is not None:
+                try:
+                    grounded_before[target.Name] = App.Placement(target.Placement)
+                except Exception:
+                    pass
+
+        doc.recompute()
+
+        for name, placement in grounded_before.items():
+            target = doc.getObject(name)
+            if target is None:
+                continue
+            try:
+                if not target.Placement.isSame(placement):
+                    target.Placement = placement
+            except Exception:
+                pass
+
+    # Eigenschaften, die FreeCAD beim Setzen einer neuen Reference1/Reference2 auf einem
+    # BESTEHENDEN Joint-Objekt als Nebeneffekt automatisch neu berechnet/zuruecksetzt (aus
+    # Assembly/JointObject.py: Offset1/Offset2 = eingefrorene Connector-Transformation,
+    # Distance/Distance2/Angle = Joint-Wert je nach Typ, LengthMin/Max/AngleMin/Max +
+    # zugehoerige Enable-Flags = Verfahr-/Winkelgrenzen). Werden hier VOR dem Referenz-Wechsel
+    # gesichert und danach wiederhergestellt (siehe _rewire_joint()-Docstring).
+    _PRESERVED_JOINT_PROPS = [
+        "Offset1", "Offset2", "Angle", "Distance", "Distance2",
+        "LengthMin", "LengthMax", "AngleMin", "AngleMax",
+        "EnableLengthMin", "EnableLengthMax", "EnableAngleMin", "EnableAngleMax",
+    ]
+
+    @staticmethod
     def _rewire_joint(joint, side, replacement_obj, replacement_sub, errors):
+        # WICHTIG (2026-08-30, Nutzer-Report "Teile haben Position verloren"/Solver divergiert
+        # massiv nach dem Umhaengen, spaeter auch "Maximale Laenge steht jetzt auf 0"):
+        # Nutzer-Entscheidung "alles soll unangetastet bleiben beim Teiletausch" - FreeCAD
+        # berechnet aber beim Setzen einer neuen Reference1/Reference2 auf einem BESTEHENDEN
+        # Joint-Objekt mehrere abgeleitete Eigenschaften automatisch neu (nicht nur Offset2,
+        # sondern z.B. auch LengthMax bei Gleitverbindungen - bestaetigt per Nutzer-Test: nach
+        # dem Umhaengen stand LengthMax auf 0, obwohl unser Code diese Eigenschaft nirgends
+        # anfasst). Deshalb werden jetzt ALLE bekannten "eingefrorenen" Joint-Eigenschaften vor
+        # dem Referenz-Wechsel gesichert und danach explizit wiederhergestellt, statt nur
+        # Offset2 unangetastet zu lassen.
+        saved = {}
+        for prop in PartExchangeWindow._PRESERVED_JOINT_PROPS:
+            if hasattr(joint, prop):
+                try:
+                    saved[prop] = getattr(joint, prop)
+                except Exception:
+                    pass
+
         new_ref = [replacement_obj, [replacement_sub or "", ""]]
         try:
             if side == 1:
@@ -1081,22 +1169,11 @@ class PartExchangeWindow(QtWidgets.QDialog):
             errors.append(f"Joint '{joint.Label}': Referenz konnte nicht gesetzt werden ({str(e)})")
             return False
 
-        # WICHTIG (2026-08-30, Nutzer-Report "Teile haben Position verloren"/Solver divergiert
-        # massiv nach dem Umhaengen): compute_rewired_offset() berechnet laut eigenem Docstring
-        # NUR fuer FIXED-Joints eine sinnvolle Offset2 (die volle eingefrorene 6-DoF-
-        # Transformation). Bei anderen Jointtypen - z.B. "Abstand"/Distance, RackPinion, Screw,
-        # Gears, Belt - bedeutet Offset2 etwas ANDERES; die volle Fixed-Transformation dort
-        # blind hineinzuschreiben ergab einen geometrisch unsinnigen Wert und liess den
-        # MbD-Solver mit exponentiell wachsenden Convergence-Werten divergieren (bis zu 3.6e16
-        # im Log) statt sauber zu loesen. Deshalb jetzt nur noch fuer echte Fixed-Joints
-        # anwenden - bei anderen Jointtypen bleibt Offset2 unangetastet (der Nutzer muss den
-        # eigentlichen Wert - z.B. Distance - danach ggf. manuell pruefen/anpassen, aber der
-        # Solver divergiert dann nicht mehr).
-        if getattr(joint, "JointType", None) == "Fixed":
-            offset = compute_rewired_offset(joint.Reference1, joint.Reference2)
-            if offset is not None:
-                try:
-                    joint.Offset2 = offset
-                except Exception as e:
-                    errors.append(f"Joint '{joint.Label}': Offset2 konnte nicht aktualisiert werden ({str(e)})")
+        for prop, value in saved.items():
+            try:
+                setattr(joint, prop, value)
+            except Exception as e:
+                errors.append(
+                    f"Joint '{joint.Label}': '{prop}' konnte nicht wiederhergestellt werden ({str(e)})"
+                )
         return True

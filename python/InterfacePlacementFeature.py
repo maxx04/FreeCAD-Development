@@ -322,11 +322,21 @@ def ensure_interfaces_group(active_doc):
         obj for obj in active_doc.Objects if obj.getParentGeoFeatureGroup() is None
     ]
     for obj in children:
-        if obj.TypeId == "App::DocumentObjectGroup" and obj.Label == INTERFACES_GROUP_LABEL:
+        # WICHTIG (2026-08-30, Nutzer-Vorgabe "niemals Label zur Adressierung"): .Label ist
+        # nicht eindeutig und kann vom Nutzer umbenannt werden - stattdessen ueber eine feste
+        # Marker-Property identifizieren (analog FCProjectExchangeLink in PartExchangeWindow.py).
+        if obj.TypeId == "App::DocumentObjectGroup" and getattr(obj, "FCProjectInterfacesGroup", False):
             return obj
 
     group = active_doc.addObject("App::DocumentObjectGroup", "Interfaces")
     group.Label = INTERFACES_GROUP_LABEL
+    group.addProperty(
+        "App::PropertyBool", "FCProjectInterfacesGroup", "FCProject",
+        "Marker: dies ist die von FCProject verwaltete Interfaces-Gruppe (Identifikation "
+        "ueber diese Property statt ueber das umbenennbare Label)."
+    )
+    group.FCProjectInterfacesGroup = True
+    group.setPropertyStatus("FCProjectInterfacesGroup", "Hidden")
     if container is not None:
         container.addObject(group)
     return group
