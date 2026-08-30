@@ -542,14 +542,10 @@ class PartExchangeWindow(QtWidgets.QDialog):
     # ------------------------------------------------------- Fenster-Layout
 
     @staticmethod
-    def _resolve_display_doc(obj):
-        """Das Dokument, in dem `obj` tatsächlich seine Geometrie zeigt.
-
-        Für App::Link-Ketten (z.B. Pattern-Kopie → Assembly-Link → Teil-Dokument)
-        wird die gesamte LinkedObject-Kette durchlaufen, bis kein weiterer Link
-        mehr folgt. Das stellt sicher, dass auch Pattern-Kopien das eigentliche
-        Teil-Dokument statt der Assembly liefern.
-        """
+    def _resolve_display_obj(obj):
+        """Das Objekt, das `obj`s tatsächliche Geometrie traegt (fuer App::Link-Ketten, z.B.
+        Pattern-Kopie → Assembly-Link → Teil-Dokument, wird die gesamte LinkedObject-Kette
+        durchlaufen, bis kein weiterer Link mehr folgt)."""
         seen = set()
         current = obj
         while True:
@@ -561,7 +557,13 @@ class PartExchangeWindow(QtWidgets.QDialog):
             if linked is None:
                 break
             current = linked
-        return current.Document
+        return current
+
+    @staticmethod
+    def _resolve_display_doc(obj):
+        """Das Dokument, in dem `obj` tatsächlich seine Geometrie zeigt - siehe
+        _resolve_display_obj()."""
+        return PartExchangeWindow._resolve_display_obj(obj).Document
 
     def _embed_3d_views(self):
         """Erzeugt für Original und Ersatzteil je eine ZUSÄTZLICHE 3D-Ansicht und bettet
@@ -581,7 +583,8 @@ class PartExchangeWindow(QtWidgets.QDialog):
         mdi_area = main_win.findChild(QtWidgets.QMdiArea)
         if mdi_area is None:
             return
-        self._embed_one(mdi_area, self.original_display_doc, self.original_view_container)
+        original_focus = self._resolve_display_obj(self.original_obj)
+        self._embed_one(mdi_area, self.original_display_doc, self.original_view_container, original_focus)
         # IMMER eine eigene Ansicht fuers Ersatzteil erzeugen, auch wenn Original und Ersatzteil
         # im selben Dokument liegen (z.B. beide direkt in derselben Baugruppe eingefuegt statt in
         # getrennten Dokumenten) - Gui::View3DInventor unterstuetzt mehrere unabhaengige Ansichten
@@ -589,9 +592,10 @@ class PartExchangeWindow(QtWidgets.QDialog):
         # uebersprungen (Annahme: "sieht man ja schon in der ersten Ansicht") - das liess den
         # rechten Bereich komplett leer und war verwirrend, obwohl die Auswahl selbst technisch
         # funktionierte (Nutzer-Report 2026-08-30: "Ersatzteil wird nicht angezeigt").
-        self._embed_one(mdi_area, self.replacement_doc, self.replacement_view_container)
+        replacement_focus = self._resolve_display_obj(self.replacement_obj)
+        self._embed_one(mdi_area, self.replacement_doc, self.replacement_view_container, replacement_focus)
 
-    def _embed_one(self, mdi_area, doc, container_layout):
+    def _embed_one(self, mdi_area, doc, container_layout, focus_obj=None):
         try:
             gui_doc = Gui.getDocument(doc.Name)
             gui_doc.createView("Gui::View3DInventor")
@@ -630,7 +634,10 @@ class PartExchangeWindow(QtWidgets.QDialog):
                 # ist seit FreeCAD 26.3 deprecated und wird in 27.2 entfernt.
                 gui_doc = Gui.getDocument(doc.Name)
                 if gui_doc and gui_doc.ActiveView:
-                    gui_doc.ActiveView.fitAll()
+                    if focus_obj is not None and focus_obj.Document is doc:
+                        self._fit_view_to_object(gui_doc.ActiveView, doc, focus_obj)
+                    else:
+                        gui_doc.ActiveView.fitAll()
             except Exception:
                 pass
 
@@ -645,6 +652,46 @@ class PartExchangeWindow(QtWidgets.QDialog):
             App.Console.PrintWarning(
                 f"FCProject PartExchange: 3D-Ansicht für '{doc.Name}' konnte nicht eingebettet werden: {str(e)}\n"
             )
+
+    @staticmethod
+    def _fit_view_to_object(view, doc, focus_obj):
+        """Zoomt `view` gezielt auf `focus_obj`, nicht auf das ganze Dokument - View3DInventorPy
+        hat keine eigene "auf Objekt X einpassen"-API, nur fitAll() ueber ALLE sichtbaren
+        Objekte. Blendet dafuer kurzzeitig alle anderen TOP-LEVEL-Geschwister aus (Kinder von
+        focus_obj bleiben unberuehrt, die gehoeren optisch mit dazu), ruft fitAll() auf und
+        stellt die urspruengliche Sichtbarkeit danach wieder her.
+
+        Ohne das zeigten beide eingebetteten Ansichten (Original UND Ersatzteil) schlicht die
+        komplette Baugruppe, sobald beide im selben Dokument liegen - nicht zu unterscheiden,
+        welche Ansicht wozu gehoert (Nutzer-Report 2026-08-30)."""
+        hidden = []
+        focus_vobj = getattr(focus_obj, "ViewObject", None)
+        was_hidden = focus_vobj is not None and not focus_vobj.Visibility
+        try:
+            for obj in doc.Objects:
+                if obj is focus_obj:
+                    continue
+                if obj.getParentGeoFeatureGroup() is not None:
+                    continue
+                vobj = getattr(obj, "ViewObject", None)
+                if vobj is None or not vobj.Visibility:
+                    continue
+                hidden.append(vobj)
+                vobj.Visibility = False
+            if was_hidden:
+                focus_vobj.Visibility = True
+            view.fitAll()
+        finally:
+            for vobj in hidden:
+                try:
+                    vobj.Visibility = True
+                except Exception:
+                    pass
+            if was_hidden:
+                try:
+                    focus_vobj.Visibility = False
+                except Exception:
+                    pass
 
     _DATUM_TYPES = (
         "App::Origin",
