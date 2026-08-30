@@ -582,8 +582,14 @@ class PartExchangeWindow(QtWidgets.QDialog):
         if mdi_area is None:
             return
         self._embed_one(mdi_area, self.original_display_doc, self.original_view_container)
-        if self.replacement_doc is not self.original_display_doc:
-            self._embed_one(mdi_area, self.replacement_doc, self.replacement_view_container)
+        # IMMER eine eigene Ansicht fuers Ersatzteil erzeugen, auch wenn Original und Ersatzteil
+        # im selben Dokument liegen (z.B. beide direkt in derselben Baugruppe eingefuegt statt in
+        # getrennten Dokumenten) - Gui::View3DInventor unterstuetzt mehrere unabhaengige Ansichten
+        # desselben Dokuments problemlos. Vorher wurde die zweite Ansicht in diesem Fall
+        # uebersprungen (Annahme: "sieht man ja schon in der ersten Ansicht") - das liess den
+        # rechten Bereich komplett leer und war verwirrend, obwohl die Auswahl selbst technisch
+        # funktionierte (Nutzer-Report 2026-08-30: "Ersatzteil wird nicht angezeigt").
+        self._embed_one(mdi_area, self.replacement_doc, self.replacement_view_container)
 
     def _embed_one(self, mdi_area, doc, container_layout):
         try:
