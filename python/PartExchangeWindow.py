@@ -15,11 +15,14 @@ import FreeCADGui as Gui
 from PySide6 import QtWidgets, QtCore
 
 from PartExchangeAnalyzer import (
-    subpath_for_descendant, full_reference_path, find_assembly,
-    find_all_project_joints_referencing
+    find_reference_root_and_path, full_reference_path, find_assembly,
+    find_all_project_joints_referencing, GROUND_SIDE, RIGID_GROUP_SIDE
 )
 
+WHOLE_OBJECT_SIDES = (GROUND_SIDE, RIGID_GROUP_SIDE)  # kein Face/Edge-Konzept, keine manuelle Zuordnung noetig
+
 ENTRY_ROLE = QtCore.Qt.UserRole
+FILE_PATH_ROLE = QtCore.Qt.UserRole + 1
 
 # Subname-Endung (z.B. "Face14") -> ViewProvider-Property mit einer Farbe pro Element.
 # Teil von ViewProviderPartExt (Mod/Part/Gui/ViewProviderExt.h) - unabhängig von
@@ -35,7 +38,11 @@ def _entry_original_obj(entry):
     ANDEREN Projektdatei stammen kann (find_all_project_joints_referencing(), 2026-08-30). Ohne
     das versuchte die Hervorhebung frueher immer relativ zum lokalen original_obj aufzuloesen,
     obwohl das Sub-Element (z.B. "Halter008.Face16") nur in der abweichenden Struktur der
-    externen Datei existiert - fuehrte zu "Sub-object ... not found" (Nutzer-Report 2026-08-30)."""
+    externen Datei existiert - fuehrte zu "Sub-object ... not found" (Nutzer-Report 2026-08-30).
+    GroundedJoint.ObjectToGround/RigidGroupJoint.ObjectsToRigidGroup referenzieren das Objekt
+    nicht ueber ein [obj, sub]-Tupel - dafuer traegt der Eintrag "target_obj" direkt."""
+    if entry["joint_side"] in WHOLE_OBJECT_SIDES:
+        return entry.get("target_obj")
     ref = entry["joint_obj"].Reference1 if entry["joint_side"] == 1 else entry["joint_obj"].Reference2
     return ref[0] if ref else None
 
@@ -175,7 +182,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
         left_layout.addLayout(self.original_view_container, stretch=1)
         columns.addWidget(left_box)
 
-        right_box = QtWidgets.QGroupBox(f"Ersatzteil: {self.replacement_obj.Label}")
+        self.right_box = right_box = QtWidgets.QGroupBox(f"Ersatzteil: {self.replacement_obj.Label}")
         right_layout = QtWidgets.QVBoxLayout(right_box)
         right_layout.addWidget(QtWidgets.QLabel(
             "Fläche/Kante/LCS am Ersatzteil im 3D-Fenster ODER im Baum anklicken "
@@ -212,6 +219,17 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self.project_scope_label.setWordWrap(True)
         main_layout.addWidget(self.project_scope_label)
 
+        # Datei-Auswahl (Nutzerwunsch 2026-08-30): der Nutzer soll explizit per Haken
+        # bestaetigen muessen, in WELCHEN der gefundenen Dateien tatsaechlich umgehaengt
+        # werden soll, statt dass "Uebernehmen" automatisch ALLE betroffenen Dateien anfasst.
+        # Alle Haken sind per Default gesetzt (bisheriges Verhalten bleibt Standard).
+        file_box = QtWidgets.QGroupBox("In diesen Dateien ersetzen:")
+        file_layout = QtWidgets.QVBoxLayout(file_box)
+        self.file_checklist = QtWidgets.QListWidget()
+        self.file_checklist.setMaximumHeight(110)
+        file_layout.addWidget(self.file_checklist)
+        main_layout.addWidget(file_box)
+
         mapping_box = QtWidgets.QGroupBox("Zuordnungen (Referenz → Ersatzteil-Referenz)")
         mapping_layout = QtWidgets.QVBoxLayout(mapping_box)
         self.mapping_table = QtWidgets.QTableWidget(0, 3)
@@ -247,7 +265,17 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self.joint_list.clear()
         groups = {}
         order = []
+        auto_entries = []  # GroundedJoint/RigidGroupJoint - keine manuelle Zuordnung noetig
         for entry in self._original_joints:
+            # GroundedJoint.ObjectToGround/RigidGroupJoint.ObjectsToRigidGroup referenzieren
+            # immer das GANZE Ersatzteil-Objekt - es gibt kein Face/Edge zum Anklicken, also
+            # keine manuelle Zuordnung noetig. Wird in _on_apply() automatisch mit umgehaengt
+            # (siehe dortige Sonderbehandlung), taucht deshalb hier nicht in der
+            # Zuordnungsliste auf (2026-08-30, Nutzer-Report "GroundedJoint ist beim alten
+            # Original geblieben", analog fuer RigidGroup vorbereitet).
+            if entry["joint_side"] in WHOLE_OBJECT_SIDES:
+                auto_entries.append(entry)
+                continue
             key = _joint_key(entry)
             if key not in groups:
                 groups[key] = []
@@ -269,11 +297,33 @@ class PartExchangeWindow(QtWidgets.QDialog):
         if not self._original_joints:
             self.joint_list.addItem("(keine Referenzen gefunden)")
             self.joint_list.setEnabled(False)
+        elif not order and auto_entries:
+            # Nur GroundedJoint/RigidGroupJoint gefunden, keine normalen Referenzen zum
+            # Zuordnen - Liste bliebe sonst ohne Erklaerung leer.
+            self.joint_list.addItem("(nur Erdung/Rigid Group - siehe Hinweis unten, keine Zuordnung nötig)")
+            self.joint_list.setEnabled(False)
 
         files_involved = {e["file_path"] for e in self._original_joints}
+
+        self.file_checklist.clear()
+        for path in sorted(files_involved):
+            # file_path ist entweder ein voller Dateipfad oder (falls ungespeichertes
+            # Dokument) einfach der Dokumentname - os.path.basename() liefert in beiden
+            # Faellen den richtigen Anzeigetext.
+            item = QtWidgets.QListWidgetItem(os.path.basename(path))
+            item.setData(FILE_PATH_ROLE, path)
+            item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
+            item.setCheckState(QtCore.Qt.Checked)
+            self.file_checklist.addItem(item)
+
         parts = []
         if files_involved:
             parts.append(f"Betrifft {len(files_involved)} Datei(en), {len(order)} eindeutige Referenz(en).")
+        if auto_entries:
+            parts.append(
+                f"{len(auto_entries)} GroundedJoint(s)/RigidGroup-Mitgliedschaft(en) werden "
+                "automatisch mit auf das Ersatzteil umgehängt, ohne separate Zuordnung."
+            )
         if self._skipped_files_log:
             parts.append(
                 f"{len(self._skipped_files_log)} weitere Kandidatendatei(en) übersprungen "
@@ -320,10 +370,16 @@ class PartExchangeWindow(QtWidgets.QDialog):
             return
 
         sel_obj = selection[-1]
-        # subpath_for_descendant() deckt jetzt einheitlich BEIDE Faelle ab: direkter Treffer
-        # (liefert "") UND beliebig tief verschachtelte/verlinkte Kind-Elemente (liefert den
-        # vollen Pfad, loest dabei auch Link-Ketten auf - siehe dortige Docstring-Begruendung).
-        path_to_obj = subpath_for_descendant(self.replacement_obj, sel_obj.Object)
+        # find_reference_root_and_path() deckt jetzt einheitlich alle Faelle ab: direkter
+        # Treffer, beliebig tief verschachtelte/verlinkte Kind-Elemente (Link-Ketten aufgeloest -
+        # siehe subpath_for_descendant()-Docstring), UND ein automatischer Aufstieg zum
+        # umschliessenden Body/Part, falls das gewaehlte Ersatzteil-Objekt selbst nur ein
+        # einzelnes internes Feature ist (z.B. "BaseFeature") und die geklickte Referenz ein
+        # GESCHWISTER-Feature desselben Body ist (z.B. eine spaeter hinzugefuegte Bohrung) -
+        # der Nutzer soll ein einzelnes Feature bewusst als Ersatzteil waehlen duerfen, ohne
+        # dass spaetere Referenzen am selben Body faelschlich als "gehoert nicht zu" abgelehnt
+        # werden (2026-08-30, Nutzer-Report).
+        actual_root, path_to_obj = find_reference_root_and_path(self.replacement_obj, sel_obj.Object)
         if path_to_obj is None:
             QtWidgets.QMessageBox.warning(
                 self, "FCProject",
@@ -332,6 +388,12 @@ class PartExchangeWindow(QtWidgets.QDialog):
                 "(z.B. eine Origin-Achse/-Ebene oder ein LCS)."
             )
             return
+        if actual_root is not self.replacement_obj:
+            # Aufstieg war noetig - der umschliessende Body/Part ist der eigentlich gemeinte
+            # Ersatzteil-Anker, alle folgenden Referenzen dieser Sitzung sollen relativ zu ihm
+            # gebildet werden (sonst waere die gespeicherte Reference1/2 nicht konsistent).
+            self.replacement_obj = actual_root
+            self.right_box.setTitle(f"Ersatzteil: {self.replacement_obj.Label}")
         # Sub-Element-Name (Face/Edge/Vertex) anhängen, damit _set_element_color später den
         # Index auflösen und die spezifische Fläche einfärben kann.
         sub_el = sel_obj.SubElementNames[0] if sel_obj.SubElementNames else ""
@@ -629,9 +691,18 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._highlight_reference(self.replacement_obj, replacement_sub, (0.0, 1.0, 1.0))
 
     def _update_apply_button_state(self):
-        required_keys = {_joint_key(entry) for entry in self._original_joints}
+        # GroundedJoint-/RigidGroup-Eintraege brauchen keine manuelle Zuordnung (siehe
+        # _populate_joint_list()) - sonst bliebe "Übernehmen" dauerhaft deaktiviert, weil fuer
+        # sie nie ein Mapping erstellt werden kann (2026-08-30, Nutzer-Report).
+        required_keys = {
+            _joint_key(entry) for entry in self._original_joints
+            if entry["joint_side"] not in WHOLE_OBJECT_SIDES
+        }
         mapped_keys = {_joint_key(m["original"]) for m in self._mappings}
-        self.apply_btn.setEnabled(len(required_keys) > 0 and required_keys.issubset(mapped_keys))
+        has_ground_only = bool(self._original_joints) and not required_keys
+        self.apply_btn.setEnabled(
+            has_ground_only or (len(required_keys) > 0 and required_keys.issubset(mapped_keys))
+        )
 
     # ------------------------------------------------------- Fenster-Layout
 
@@ -908,8 +979,26 @@ class PartExchangeWindow(QtWidgets.QDialog):
         rewired_joints = 0
         mapping_by_key = {_joint_key(m["original"]): m for m in self._mappings}
 
+        # Nur Dateien beruecksichtigen, die der Nutzer in der Checkliste angehakt hat
+        # (Nutzerwunsch 2026-08-30: explizite Bestaetigung statt automatisch ALLE Dateien).
+        checked_paths = set()
+        for i in range(self.file_checklist.count()):
+            item = self.file_checklist.item(i)
+            if item.checkState() == QtCore.Qt.Checked:
+                checked_paths.add(item.data(FILE_PATH_ROLE))
+
+        if not checked_paths:
+            QtWidgets.QMessageBox.warning(
+                self, "FCProject",
+                "Bitte mindestens eine Datei in der Liste \"In diesen Dateien ersetzen\" "
+                "anhaken, bevor du übernimmst."
+            )
+            return
+
         entries_by_doc = {}
         for entry in self._original_joints:
+            if entry["file_path"] not in checked_paths:
+                continue
             entries_by_doc.setdefault(entry["joint_obj"].Document, []).append(entry)
 
         touched_docs = []  # nur Dokumente, in denen tatsaechlich etwas umgehaengt wurde
@@ -961,6 +1050,47 @@ class PartExchangeWindow(QtWidgets.QDialog):
             applied_here = 0
             joint_names_here = []
             for entry in doc_entries:
+                # GroundedJoint braucht keine manuelle Zuordnung (kein Face/Edge-Konzept -
+                # ObjectToGround erdet immer das GANZE Objekt) - wird deshalb hier immer
+                # automatisch auf das Ersatzteil umgehaengt, unabhaengig von den Nutzer-
+                # Zuordnungen (2026-08-30, Nutzer-Report "GroundedJoint ist beim alten
+                # Original geblieben").
+                if entry["joint_side"] == GROUND_SIDE:
+                    try:
+                        entry["joint_obj"].ObjectToGround = local_replacement
+                        rewired_joints += 1
+                        applied_here += 1
+                        joint_names_here.append(entry["joint_obj"].Name)
+                    except Exception as e:
+                        errors.append(
+                            f"GroundedJoint '{entry['joint_obj'].Label}': ObjectToGround "
+                            f"konnte nicht umgehängt werden ({str(e)})"
+                        )
+                    continue
+
+                if entry["joint_side"] == RIGID_GROUP_SIDE:
+                    # RigidGroupJoint.ObjectsToRigidGroup ist eine LISTE - das alte Original
+                    # (entry["target_obj"]) muss darin durch das Ersatzteil ERSETZT werden,
+                    # nicht die ganze Liste ueberschrieben werden (andere Mitglieder bleiben
+                    # unveraendert). Analog zu GroundedJoint keine manuelle Zuordnung noetig.
+                    try:
+                        original_member = entry.get("target_obj")
+                        members = list(entry["joint_obj"].ObjectsToRigidGroup or [])
+                        members = [
+                            local_replacement if m is original_member else m
+                            for m in members
+                        ]
+                        entry["joint_obj"].ObjectsToRigidGroup = members
+                        rewired_joints += 1
+                        applied_here += 1
+                        joint_names_here.append(entry["joint_obj"].Name)
+                    except Exception as e:
+                        errors.append(
+                            f"RigidGroup '{entry['joint_obj'].Label}': Mitgliedschaft "
+                            f"konnte nicht umgehängt werden ({str(e)})"
+                        )
+                    continue
+
                 mapping = mapping_by_key.get(_joint_key(entry))
                 if mapping is None:
                     continue

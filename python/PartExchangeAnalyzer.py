@@ -146,8 +146,25 @@ def find_assembly(doc):
 
 
 def is_joint(obj):
-    """Pragmatische Joint-Erkennung: kein fester TypeId verfügbar, daher Attribut-Check."""
-    return hasattr(obj, 'Reference1') and hasattr(obj, 'Reference2')
+    """Pragmatische Joint-Erkennung: kein fester TypeId verfügbar, daher Attribut-Check.
+
+    WICHTIG (2026-08-30, Nutzer-Report "GroundedJoint ist beim alten Original geblieben"):
+    GroundedJoint hat KEINE Reference1/Reference2 - nur "ObjectToGround" (das ganze Objekt,
+    keine Sub-Element-Referenz). Fiel bisher komplett durchs Raster dieser Funktion und wurde
+    von der gesamten Referenz-Sammlung (find_joints_referencing() etc.) nie gesehen, blieb
+    beim Teiletausch also immer unveraendert auf dem alten Original stehen - das Ersatzteil
+    hatte dadurch gar keinen Erdungs-Bezug mehr und "schwebte" nur ueber seine uebrigen
+    Fixed-Joints. Jetzt auch als Joint erkannt."""
+    if hasattr(obj, 'Reference1') and hasattr(obj, 'Reference2'):
+        return True
+    if hasattr(obj, 'ObjectToGround'):
+        return True
+    # RigidGroupJoint (siehe Assembly/JointObject.py): buendelt mehrere Teile zu EINEM
+    # starren MbD-Koerper ueber eine Liste "ObjectsToRigidGroup" statt Reference1/2 -
+    # analog zu GroundedJoint muss auch dessen Mitgliederliste beim Teiletausch aktualisiert
+    # werden, sonst bliebe das alte Original dauerhaft Mitglied der Rigid Group (gleiche
+    # Bug-Klasse wie GroundedJoint, siehe [[project_fcproject_redundant_fixed_joint_rigidgroup_fix]]).
+    return hasattr(obj, 'ObjectsToRigidGroup')
 
 
 def iter_joints(doc):
@@ -156,6 +173,10 @@ def iter_joints(doc):
     if joint_group is None or not hasattr(joint_group, 'Group'):
         return []
     return [obj for obj in joint_group.Group if obj is not None and is_joint(obj)]
+
+
+GROUND_SIDE = "ground"  # Marker-Wert fuer GroundedJoint.ObjectToGround statt Reference1/2-Seite 1/2
+RIGID_GROUP_SIDE = "rigidgroup"  # Marker-Wert fuer Mitgliedschaft in RigidGroupJoint.ObjectsToRigidGroup
 
 
 def _joint_sides_for(joint, target):
@@ -170,11 +191,26 @@ def _joint_sides_for(joint, target):
             sides.append(2)
     except Exception:
         pass
+    try:
+        if getattr(joint, "ObjectToGround", None) is target:
+            sides.append(GROUND_SIDE)
+    except Exception:
+        pass
+    try:
+        if any(m is target for m in (getattr(joint, "ObjectsToRigidGroup", None) or [])):
+            sides.append(RIGID_GROUP_SIDE)
+    except Exception:
+        pass
     return sides
 
 
 def subelement_for_side(joint, side):
-    """Liefert den ersten nicht-leeren Subnamen der Joint-Referenz (z.B. eine Fläche/LCS)."""
+    """Liefert den ersten nicht-leeren Subnamen der Joint-Referenz (z.B. eine Fläche/LCS).
+
+    GroundedJoint/RigidGroupJoint haben kein Sub-Element - beide referenzieren immer das
+    GANZE Objekt, nicht eine einzelne Flaeche/Kante davon."""
+    if side in (GROUND_SIDE, RIGID_GROUP_SIDE):
+        return ""
     ref = joint.Reference1 if side == 1 else joint.Reference2
     try:
         subs = ref[1] if ref and len(ref) > 1 else None
@@ -264,13 +300,23 @@ def find_joints_referencing(obj):
         for side in _joint_sides_for(joint, obj):
             sub = subelement_for_side(joint, side)
             full_path = full_reference_path(obj, sub)
-            label = f'Joint "{joint.Label}" (Reference{side}) – {full_path}'
+            if side == GROUND_SIDE:
+                label = f'GroundedJoint "{joint.Label}" (Erdung) – {full_path}'
+            elif side == RIGID_GROUP_SIDE:
+                label = f'RigidGroup "{joint.Label}" (Mitgliedschaft) – {full_path}'
+            else:
+                label = f'Joint "{joint.Label}" (Reference{side}) – {full_path}'
             entries.append({
                 "label": label,
                 "joint_obj": joint,
                 "joint_side": side,
                 "subelement": sub,
                 "full_path": full_path,
+                # GroundedJoint/RigidGroupJoint referenzieren `obj` nicht ueber ein
+                # [Objekt, Sub]-Tupel wie Reference1/2, sondern direkt/als Listenmitglied -
+                # `obj` hier explizit mitspeichern, damit _entry_original_obj() in
+                # PartExchangeWindow.py es fuer beide Faelle einheitlich auflösen kann.
+                "target_obj": obj,
             })
     return entries
 
@@ -351,6 +397,40 @@ def subpath_for_descendant(root, descendant):
                 return child_path
             stack.append((child, f"{child_path}."))
     return None
+
+
+def find_reference_root_and_path(preferred_root, descendant):
+    """Wie subpath_for_descendant(), aber mit automatischem Aufstieg um GENAU EINE Ebene
+    zum umschliessenden Body/Part, falls `descendant` von `preferred_root` aus nicht
+    erreichbar ist.
+
+    WICHTIG (2026-08-30, Nutzer-Report): Als Ersatzteil kann auch ein einzelnes internes
+    PartDesign-Feature gewaehlt werden (z.B. "BaseFeature" statt des ganzen Body) - das ist
+    laut Nutzer bewusst zulaessig ("das kann in Konstruktion benutzt werden"), soll aber
+    NICHT dazu fuehren, dass eine spaeter am selben Body hinzugefuegte Geschwister-Referenz
+    (z.B. eine neue Bohrung "Pocket") als "gehoert nicht zu" abgelehnt wird - fachlich ist
+    das derselbe Body, nur ein anderes Feature davon. Deshalb: erst wie gewohnt vom
+    gewaehlten Ersatzteil-Objekt aus suchen, bei Fehlschlag GENAU EINMAL beim direkt
+    umschliessenden GeoFeatureGroup (Body/Part) erneut versuchen - bewusst nicht beliebig
+    weit nach oben (siehe CONSTRAINTS.md). Gibt (tatsaechlicher_root, pfad) zurueck, oder
+    (None, None) falls auch das nicht passt - der Aufrufer soll dann den tatsaechlichen
+    root als neues Ersatzteil-Objekt uebernehmen, nicht mehr den urspruenglich gewaehlten.
+    """
+    path = subpath_for_descendant(preferred_root, descendant)
+    if path is not None:
+        return preferred_root, path
+
+    try:
+        parent = preferred_root.getParentGeoFeatureGroup()
+    except Exception:
+        parent = None
+    if parent is None:
+        return None, None
+
+    path = subpath_for_descendant(parent, descendant)
+    if path is not None:
+        return parent, path
+    return None, None
 
 
 def compute_rewired_offset(ref1, ref2):

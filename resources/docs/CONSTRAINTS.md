@@ -31,3 +31,12 @@ Projektordner (Konvention: nächster `PROJ_`-Ordner in der Verzeichnis-Hierarchi
 Dateien selbst zu öffnen, funktioniert also auch für nicht geladene Dokumente. Ergebnis wird im
 PartExchange-Fenster als rote Warnung angezeigt, blockiert aber nichts automatisch - der Nutzer
 entscheidet selbst, ob er trotzdem fortfährt.
+1. **Beim Ersatzteil-Referenz-Klick (PartExchange) wird bei Fehlschlag nur GENAU EINE Ebene
+höher gesucht, nicht beliebig weit.** Wird als Ersatzteil ein einzelnes internes
+PartDesign-Feature gewählt (z.B. "BaseFeature" statt des ganzen Body - bewusst zulässig,
+kann in Konstruktion benutzt werden), soll eine später am selben Body hinzugefügte
+Geschwister-Referenz (z.B. eine neue Bohrung "Pocket") trotzdem als gültig erkannt werden.
+`PartExchangeAnalyzer.find_reference_root_and_path()` versucht deshalb bei Fehlschlag GENAU
+EINMAL den direkt umschließenden `getParentGeoFeatureGroup()` (Body/Part) als Ersatz-Root -
+kein Schleifen-Aufstieg über mehrere Ebenen. Findet sich das Element auch dort nicht, gilt
+die Referenz als ungültig ("gehört nicht zu").
