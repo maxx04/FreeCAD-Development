@@ -192,6 +192,68 @@ def full_reference_path(obj, sub):
     return f"{obj.Label}.{sub}" if sub else obj.Label
 
 
+def find_all_project_joints_referencing(obj, log=None):
+    """Sammelt ALLE echten Joints im GESAMTEN Projekt, die `obj` (bzw. ein gleichnamiges Objekt
+    in einer anderen Datei) referenzieren - nicht nur im lokalen Dokument wie
+    find_joints_referencing(). Oeffnet dafuer jede von find_external_project_references()
+    gefundene Kandidatendatei (falls noch nicht offen) und prueft dort auf einen ECHTEN Joint,
+    genau wie es vorher die einzelnen, gefuehrten Fenster pro Datei manuell taten - hier aber
+    ohne Zwischenfenster, als eine einzige gesammelte Liste (Nutzerwunsch 2026-08-30: bei vielen
+    betroffenen Dateien - z.B. 58 - ist ein Fenster pro Datei nicht praktikabel).
+
+    `log`, falls uebergeben, bekommt menschenlesbare Zeilen zu uebersprungenen Dateien
+    angehaengt (kein Objekt/kein echter Joint gefunden) - rein informativ fuers Fenster.
+
+    Jeder Eintrag wie bei find_joints_referencing(), zusaetzlich "file_path"."""
+    entries = []
+    for entry in find_joints_referencing(obj):
+        entry = dict(entry)
+        entry["file_path"] = obj.Document.FileName or obj.Document.Name
+        entries.append(entry)
+
+    try:
+        hits = find_external_project_references(obj)
+    except Exception as e:
+        if log is not None:
+            log.append(f"Projektweite Suche fehlgeschlagen: {str(e)}")
+        return entries
+
+    for path, _count in hits:
+        try:
+            already_open_name = None
+            for doc_name, d in App.listDocuments().items():
+                if getattr(d, "FileName", None) and os.path.abspath(d.FileName) == os.path.abspath(path):
+                    already_open_name = doc_name
+                    break
+            ext_doc = App.getDocument(already_open_name) if already_open_name else App.openDocument(path)
+        except Exception as e:
+            if log is not None:
+                log.append(f"{os.path.basename(path)}: konnte nicht geöffnet werden ({str(e)}).")
+            continue
+
+        ext_obj = ext_doc.getObject(obj.Name)
+        if ext_obj is None:
+            if log is not None:
+                log.append(f"{os.path.basename(path)}: kein Objekt '{obj.Name}' gefunden - übersprungen.")
+            continue
+
+        ext_joints = find_joints_referencing(ext_obj)
+        if not ext_joints:
+            if log is not None:
+                log.append(
+                    f"{os.path.basename(path)}: kein echter Joint auf '{ext_obj.Label}' gefunden "
+                    "(vermutlich nur ein automatischer Assembly-Mirror-Eintrag) - übersprungen."
+                )
+            continue
+
+        for entry in ext_joints:
+            entry = dict(entry)
+            entry["file_path"] = path
+            entries.append(entry)
+
+    return entries
+
+
 def find_joints_referencing(obj):
     """Liefert alle Joints, die `obj` referenzieren (Original-Seite des Tauschs).
 
@@ -239,12 +301,37 @@ def _structural_children(obj):
     return children
 
 
+def _resolve_link_target(obj):
+    """Loest die komplette LinkedObject-Kette von `obj` bis zum letzten echten Zielobjekt auf
+    (z.B. Baugruppe -> Link-Mirror -> Link-Mirror -> rohes Quellobjekt in einer eigenen Datei) -
+    liefert `obj` selbst zurueck, falls es kein Link ist."""
+    seen = set()
+    current = obj
+    while True:
+        obj_id = id(current)
+        if obj_id in seen:
+            break
+        seen.add(obj_id)
+        linked = getattr(current, "LinkedObject", None)
+        if linked is None:
+            break
+        current = linked
+    return current
+
+
 def subpath_for_descendant(root, descendant):
     """Ermittelt den Subnamen-Pfad von `descendant` relativ zu `root`.
 
     Wird benötigt, wenn die Ersatzteil-Referenz im Baum statt im 3D-Fenster
     gewählt wird (z.B. eine Origin-Achse/-Ebene oder ein LCS, das einzeln im
-    Baum liegt und in der 3D-Ansicht kaum treffsicher anklickbar ist).
+    Baum liegt und in der 3D-Ansicht kaum treffsicher anklickbar ist), UND wenn
+    ein 3D-Klick bei mehrstufig verschachtelten Baugruppen das ROHE Quellobjekt
+    aus einer eigenen, tiefer verschachtelten Datei liefert statt des direkten
+    Link-Mirrors (2026-08-30, Nutzer-Report - Debug-Log bestaetigte einen Klick
+    zwei Verlinkungsebenen unter dem erwarteten Ersatzteil-Dokument). Prueft
+    deshalb bei jedem Kind zusaetzlich, ob dessen AUFGELOESTE LinkedObject-Kette
+    (siehe _resolve_link_target()) auf `descendant` fuehrt, nicht nur reine
+    Objekt-Identitaet.
     """
     if root is None or descendant is None:
         return None
@@ -260,7 +347,7 @@ def subpath_for_descendant(root, descendant):
         visited.add(current.Name)
         for child in _structural_children(current):
             child_path = f"{prefix}{child.Name}"
-            if child is descendant:
+            if child is descendant or _resolve_link_target(child) is descendant:
                 return child_path
             stack.append((child, f"{child_path}."))
     return None

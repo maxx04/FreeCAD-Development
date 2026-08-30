@@ -15,8 +15,8 @@ import FreeCADGui as Gui
 from PySide6 import QtWidgets, QtCore
 
 from PartExchangeAnalyzer import (
-    find_joints_referencing, compute_rewired_offset, subpath_for_descendant, full_reference_path, find_assembly,
-    find_external_project_references
+    compute_rewired_offset, subpath_for_descendant, full_reference_path, find_assembly,
+    find_all_project_joints_referencing
 )
 
 ENTRY_ROLE = QtCore.Qt.UserRole
@@ -29,8 +29,24 @@ _ELEMENT_COLOR_PROP = {"Face": "DiffuseColor", "Edge": "LineColorArray", "Vertex
 _ELEMENT_COUNT_ATTR = {"Face": "Faces", "Edge": "Edges", "Vertex": "Vertexes"}
 
 
+def _entry_original_obj(entry):
+    """Liefert das TATSAECHLICHE Objekt, auf das dieser Eintrag zeigt (Reference1/2[0] je nach
+    joint_side) - NICHT zwingend self.original_obj des Fensters, seit ein Eintrag auch aus einer
+    ANDEREN Projektdatei stammen kann (find_all_project_joints_referencing(), 2026-08-30). Ohne
+    das versuchte die Hervorhebung frueher immer relativ zum lokalen original_obj aufzuloesen,
+    obwohl das Sub-Element (z.B. "Halter008.Face16") nur in der abweichenden Struktur der
+    externen Datei existiert - fuehrte zu "Sub-object ... not found" (Nutzer-Report 2026-08-30)."""
+    ref = entry["joint_obj"].Reference1 if entry["joint_side"] == 1 else entry["joint_obj"].Reference2
+    return ref[0] if ref else None
+
+
 def _joint_key(entry):
-    return (entry["joint_obj"].Document.Name, entry["joint_obj"].Name, entry["joint_side"])
+    """Dedup-/Mapping-Schluessel: NUR die referenzierte Fläche/Kante/LCS selbst (z.B. "Face9"),
+    NICHT mehr welcher Joint/welches Dokument sie benutzt (2026-08-30, Nutzerwunsch). Dieselbe
+    Referenz kann in mehreren Joints ueber mehrere Projektdateien hinweg auftauchen - der Nutzer
+    soll sie nur EINMAL zuordnen muessen, _on_apply() wendet dieselbe Zuordnung dann auf ALLE
+    Vorkommen an."""
+    return entry["subelement"]
 
 
 class _ReplacementSelectionObserver:
@@ -47,7 +63,15 @@ class _ReplacementSelectionObserver:
 
     def __init__(self, window):
         self._win_ref = weakref.ref(window)
-        self._replacement_doc_name = window.replacement_doc.Name
+        # KEIN Dokument-Filter mehr (2026-08-30, Nutzer-Report): ein Klick auf eine Flaeche kann
+        # je nach Verschachtelungstiefe des Ersatzteils (Baugruppe -> Unterbaugruppe -> Einzelteil
+        # -> ...) ein rohes Quellobjekt aus einem BELIEBIG tief verschachtelten, eigenen Dokument
+        # liefern - eine einzelne LinkedObject-Aufloesung (siehe fruehere Version) deckt nur EINE
+        # Ebene ab und griff bei mehrstufiger Verschachtelung nicht mehr (Diagnose bestaetigt per
+        # Debug-Log: Klick landete in "CNC3018_006_B_Halter", zwei Ebenen unter dem erwarteten
+        # "CNC3018_023_A_Halterbaugruppe"). Die Live-Vorschau ist rein informativ - zeigt jetzt
+        # einfach JEDE Auswahl an, unabhaengig vom Dokument; die eigentliche Pruefung/Anwendung
+        # passiert erst in _on_use_selection_clicked().
 
     def _get_win(self):
         """Gibt das Fenster zurück oder None (und entfernt sich selbst falls weg)."""
@@ -60,8 +84,6 @@ class _ReplacementSelectionObserver:
         return win
 
     def addSelection(self, doc_name, obj_name, sub_name, x=0, y=0, z=0):
-        if doc_name != self._replacement_doc_name:
-            return
         win = self._get_win()
         if win is None:
             return
@@ -80,8 +102,9 @@ class _ReplacementSelectionObserver:
         pass
 
     def clearSelection(self, doc_name):
-        if doc_name != self._replacement_doc_name:
-            return
+        # KEIN Dokument-Filter mehr (siehe addSelection oben) - clearSelection() feuert bei
+        # jeder Aufhebung einer Auswahl in IRGENDEINEM Dokument, unabhaengig davon, wo die
+        # zuletzt gezeigte Auswahl herkam; das Label wird trotzdem einfach zurueckgesetzt.
         win = self._get_win()
         if win is None:
             return
@@ -96,45 +119,40 @@ class _ReplacementSelectionObserver:
 class PartExchangeWindow(QtWidgets.QDialog):
     """Nicht-modales Fenster: Joint-Referenzen des Originals auf das Ersatzteil ummappen."""
 
-    def __init__(self, original_obj, replacement_obj, parent=None, inherited_queue=None, progress=None):
-        """`inherited_queue`/`progress` werden NUR von _continue_to_next_external_reference()
-        gesetzt, wenn dieses Fenster als Teil eines gefuehrten Mehrdatei-Ablaufs geoeffnet wird
-        (siehe dort) - dann wird KEINE eigene, neue Projektsuche gestartet, sondern die vom
-        aufrufenden Fenster bereits ermittelte, verbleibende Warteschlange weiterverwendet und
-        derselbe Fortschrittszaehler ("Datei X von Y") ueber alle verketteten Fenster hinweg
-        fortgeschrieben (Nutzerwunsch 2026-08-30: "das wiederholt sich und weiss man nicht wo
-        man steht")."""
+    def __init__(self, original_obj, replacement_obj, parent=None):
         super().__init__(parent or Gui.getMainWindow())
         self.original_obj = original_obj
         self.replacement_obj = replacement_obj
         self.original_doc = original_obj.Document
         self.replacement_doc = replacement_obj.Document
-        self._inherited_external_queue = inherited_queue
-        self._progress = progress
         # Anzeige-Dokument des Originals: das eigentliche Teil-Dokument (z.B.
         # NM3_017_P_Einzelteil_), nicht die Baugruppe - in der Baugruppe muss
         # für die Referenzprüfung nichts selektiert werden.
         self.original_display_doc = self._resolve_display_doc(original_obj)
 
-        self._original_joints = find_joints_referencing(original_obj)
+        # Sammelt ALLE echten Joints im GESAMTEN Projekt (nicht nur im lokalen Dokument) - siehe
+        # find_all_project_joints_referencing() (2026-08-30, ersetzt den fruaeheren "ein Fenster
+        # pro externer Datei"-Ablauf, den der Nutzer bei vielen Treffern - z.B. 58 - als nicht
+        # praktikabel verworfen hat). _skipped_files_log sammelt menschenlesbare Hinweise zu
+        # uebersprungenen Kandidatendateien (kein Objekt/kein echter Joint gefunden).
+        self._skipped_files_log = []
+        self._original_joints = find_all_project_joints_referencing(original_obj, log=self._skipped_files_log)
         self._mappings = []  # [{"original": entry, "replacement_subelement": str}]
         self._pending_original = None
         self._forced_visible = []  # ViewObjects, die für die Hervorhebung sichtbar gemacht wurden
         self._color_overrides = {}  # (doc.Name, obj.Name, prop) -> (ViewObject, prop, Original-Farbliste)
         self._embedded_views = []  # [(widget, doc)] - aus dem Haupt-MDI-Bereich ausgeliehene 3D-Ansichten
         self._highlighted_docs = set()  # doc.Name - für Datum-Hervorhebung (Gui.Selection) benutzte Dokumente
-        self._external_hit_queue = []  # [(pfad, anzahl)] - noch zu prüfende externe Projektdateien
         self._sel_observer = _ReplacementSelectionObserver(self)
         Gui.Selection.addObserver(self._sel_observer)
 
-        self.setWindowTitle("FCProject: Part/Assembly ersetzen – Joint-Zuordnung")
+        self.setWindowTitle("FCProject: Part/Assembly ersetzen – Referenz-Zuordnung")
         self.setModal(False)
 
         self._build_ui()
         self._populate_joint_list()
         self._update_pending_label()
         self._update_apply_button_state()
-        self._check_external_project_references()
 
         self._embed_3d_views()
         self._position_below_main_window()
@@ -148,7 +166,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
 
         left_box = QtWidgets.QGroupBox(f"Original: {self.original_obj.Label}")
         left_layout = QtWidgets.QVBoxLayout(left_box)
-        left_layout.addWidget(QtWidgets.QLabel("Joints, die dieses Teil referenzieren:"), stretch=0)
+        left_layout.addWidget(QtWidgets.QLabel("Referenzen, die dieses Teil verwenden:"), stretch=0)
         self.joint_list = QtWidgets.QListWidget()
         self.joint_list.setMaximumHeight(110)
         self.joint_list.itemClicked.connect(self._on_joint_clicked)
@@ -184,39 +202,20 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self.highlight_warning_label.setVisible(False)
         main_layout.addWidget(self.highlight_warning_label)
 
-        # Projektweite Referenz-Warnung (Nutzerwunsch 2026-08-30): find_joints_referencing()
-        # sucht nur im eigenen Dokument, FreeCADs eigener "Objektabhaengigkeiten"-Warndialog
-        # beim Loeschen nur in GERADE GEOEFFNETEN Dokumenten - eine nicht offene Baugruppe, die
-        # das Original direkt referenziert, wuerde sonst still durchrutschen. Rot statt Gelb
-        # (dringlicher als die andere Warnung), da es um moeglichen Datenverlust in einer ganz
-        # ANDEREN, evtl. gar nicht offenen Datei geht.
-        self.external_ref_warning_label = QtWidgets.QLabel()
-        self.external_ref_warning_label.setStyleSheet("color: #c0392b; font-weight: bold;")
-        self.external_ref_warning_label.setWordWrap(True)
-        self.external_ref_warning_label.setVisible(False)
-        main_layout.addWidget(self.external_ref_warning_label)
+        # Projektweite Zusammenfassung (Nutzerwunsch 2026-08-30): self._original_joints wurde
+        # bereits in __init__ ueber das GESAMTE Projekt gesammelt (siehe
+        # find_all_project_joints_referencing()) - hier nur noch anzeigen, wie viele Dateien
+        # betroffen sind, und welche Kandidatendateien uebersprungen wurden (kein Objekt/kein
+        # echter Joint gefunden - vermutlich nur ein automatischer Assembly-Mirror-Eintrag).
+        self.project_scope_label = QtWidgets.QLabel()
+        self.project_scope_label.setStyleSheet("color: #888;")
+        self.project_scope_label.setWordWrap(True)
+        main_layout.addWidget(self.project_scope_label)
 
-        # Gefuehrter Ablauf durch externe Dateien (Nutzerwunsch 2026-08-30): "jede Datei
-        # einzeln, gefuehrt" - Knopf oeffnet die naechste betroffene Datei und startet dort,
-        # falls ein ECHTER Joint gefunden wird, dasselbe Fenster erneut.
-        external_progress_row = QtWidgets.QHBoxLayout()
-        self.continue_external_btn = QtWidgets.QPushButton("Nächste externe Datei bearbeiten →")
-        self.continue_external_btn.clicked.connect(self._continue_to_next_external_reference)
-        self.continue_external_btn.setVisible(False)
-        external_progress_row.addWidget(self.continue_external_btn)
-        # Fortschrittsanzeige (Nutzerwunsch 2026-08-30, "das wiederholt sich und weiss man
-        # nicht wo man steht") - zeigt "Datei X von Y" ueber alle gefuehrten Fenster hinweg,
-        # nicht nur fuer die verbleibende Warteschlange DIESES einen Fensters.
-        self.external_progress_label = QtWidgets.QLabel()
-        self.external_progress_label.setStyleSheet("color: #888;")
-        self.external_progress_label.setVisible(False)
-        external_progress_row.addWidget(self.external_progress_label, stretch=1)
-        main_layout.addLayout(external_progress_row)
-
-        mapping_box = QtWidgets.QGroupBox("Zuordnungen (Joint → Ersatzteil-Referenz)")
+        mapping_box = QtWidgets.QGroupBox("Zuordnungen (Referenz → Ersatzteil-Referenz)")
         mapping_layout = QtWidgets.QVBoxLayout(mapping_box)
         self.mapping_table = QtWidgets.QTableWidget(0, 3)
-        self.mapping_table.setHorizontalHeaderLabels(["Joint (Original)", "Ersatzteil-Referenz", ""])
+        self.mapping_table.setHorizontalHeaderLabels(["Referenz (Original)", "Ersatzteil-Referenz", ""])
         self.mapping_table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
         self.mapping_table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
         self.mapping_table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Fixed)
@@ -238,121 +237,52 @@ class PartExchangeWindow(QtWidgets.QDialog):
         main_layout.addLayout(bottom_row)
 
     def _populate_joint_list(self):
+        """Zeigt EINE Zeile pro EINDEUTIGER Referenz (z.B. "Face9"), nicht mehr eine Zeile pro
+        rohem Joint-Vorkommen - dieselbe Fläche/Kante/LCS kann über mehrere Joints und mehrere
+        Projektdateien hinweg auftauchen, soll aber nur einmal zugeordnet werden müssen
+        (Nutzerwunsch 2026-08-30). item.setData() traegt dabei den ERSTEN Eintrag der Gruppe als
+        Stellvertreter fuer die Hervorhebung - _joint_key() sorgt dafuer, dass das spaeter
+        angelegte Mapping trotzdem fuer ALLE Vorkommen der Gruppe gilt (_on_apply() iteriert ja
+        weiterhin ueber die volle, ungruppierte self._original_joints-Liste)."""
         self.joint_list.clear()
+        groups = {}
+        order = []
         for entry in self._original_joints:
-            item = QtWidgets.QListWidgetItem(entry["label"])
-            item.setData(ENTRY_ROLE, entry)
+            key = _joint_key(entry)
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(entry)
+
+        for key in order:
+            group = groups[key]
+            representative = group[0]
+            files = {e["file_path"] for e in group}
+            if len(group) == 1:
+                label = representative["label"]
+            else:
+                label = f'{representative["full_path"]} ({len(group)}x in {len(files)} Datei(en))'
+            item = QtWidgets.QListWidgetItem(label)
+            item.setData(ENTRY_ROLE, representative)
             self.joint_list.addItem(item)
+
         if not self._original_joints:
-            self.joint_list.addItem("(keine Joints gefunden)")
+            self.joint_list.addItem("(keine Referenzen gefunden)")
             self.joint_list.setEnabled(False)
 
-    def _check_external_project_references(self):
-        """Warnt, falls andere .FCStd-Dateien im Projektordner (egal ob gerade geoeffnet oder
-        nicht) das Original direkt referenzieren - siehe find_external_project_references() fuer
-        die volle Begruendung. Rein informativ, blockiert nichts: dieses Fenster ersetzt/loescht
-        selbst nichts direkt, der Nutzer entscheidet spaeter selbst (z.B. beim manuellen
-        Loeschen ueber FreeCADs eigenen Befehl), ob er trotzdem fortfaehrt.
-
-        Ist dieses Fenster Teil eines gefuehrten Mehrdatei-Ablaufs (siehe __init__), wird KEINE
-        neue Suche gestartet, sondern die vom aufrufenden Fenster uebergebene, bereits
-        verbleibende Warteschlange direkt uebernommen - vermeidet doppelte Sucharbeit und haelt
-        den Fortschrittszaehler ueber alle verketteten Fenster hinweg konsistent."""
-        if self._inherited_external_queue is not None:
-            hits = self._inherited_external_queue
-        else:
-            try:
-                hits = find_external_project_references(self.original_obj)
-            except Exception as e:
-                App.Console.PrintWarning(
-                    f"FCProject PartExchange: Projektweite Referenzsuche fehlgeschlagen: {str(e)}\n"
-                )
-                return
-        if not hits:
-            return
-        if self._progress is None:
-            self._progress = {"current": 0, "total": len(hits)}
-        lines = "\n".join(f"  - {os.path.basename(path)} ({count}x)" for path, count in hits)
-        self.external_ref_warning_label.setText(
-            f"⚠ '{self.original_obj.Label}' wird auch in folgenden Projektdateien referenziert "
-            f"(unabhängig davon, ob sie gerade geöffnet sind) - vor einem Löschen des "
-            f"ausgeblendeten Originals dort prüfen, sonst drohen kaputte Referenzen:\n{lines}"
-        )
-        self.external_ref_warning_label.setVisible(True)
-        self._external_hit_queue = list(hits)
-        self.continue_external_btn.setVisible(True)
-        self._update_external_progress_label()
-
-    def _update_external_progress_label(self, current_filename=None):
-        """Zeigt 'Datei X von Y' ueber alle verketteten Fenster hinweg an (Nutzerwunsch
-        2026-08-30: "das wiederholt sich und weiss man nicht wo man steht")."""
-        if self._progress is None:
-            return
-        text = f"Datei {self._progress['current']} von {self._progress['total']}"
-        if current_filename:
-            text += f": {current_filename}"
-        self.external_progress_label.setText(text)
-        self.external_progress_label.setVisible(True)
-
-    def _continue_to_next_external_reference(self):
-        """Arbeitet self._external_hit_queue von vorne nach hinten ab: oeffnet die naechste
-        Datei, sucht darin nach einem gleichnamigen Objekt UND einem ECHTEN Joint darauf (nicht
-        nur einer zufaelligen Textfundstelle - die meisten Treffer sind vermutlich nur
-        automatische Assembly-Mirror-Eintraege, siehe find_external_project_references()) -
-        findet sich ein echter Joint, wird fuer diese Datei dasselbe Fenster erneut geoeffnet
-        (mit demselben Ersatzteil), sonst wird die Datei uebersprungen und die naechste
-        probiert."""
-        while self._external_hit_queue:
-            path, _count = self._external_hit_queue.pop(0)
-            self._progress["current"] += 1
-            self._update_external_progress_label(os.path.basename(path))
-            try:
-                already_open_name = None
-                for doc_name, d in App.listDocuments().items():
-                    if getattr(d, "FileName", None) and os.path.abspath(d.FileName) == os.path.abspath(path):
-                        already_open_name = doc_name
-                        break
-                ext_doc = App.getDocument(already_open_name) if already_open_name else App.openDocument(path)
-            except Exception as e:
-                QtWidgets.QMessageBox.warning(
-                    self, "FCProject", f"'{os.path.basename(path)}' konnte nicht geöffnet werden:\n{str(e)}"
-                )
-                continue
-
-            ext_obj = ext_doc.getObject(self.original_obj.Name)
-            if ext_obj is None:
-                QtWidgets.QMessageBox.information(
-                    self, "FCProject",
-                    f"'{os.path.basename(path)}': kein Objekt mit dem Namen "
-                    f"'{self.original_obj.Name}' gefunden (Textfund lag vermutlich in einem "
-                    "Kommentar/anderen Kontext) - übersprungen."
-                )
-                continue
-
-            ext_joints = find_joints_referencing(ext_obj)
-            if not ext_joints:
-                QtWidgets.QMessageBox.information(
-                    self, "FCProject",
-                    f"'{os.path.basename(path)}': kein echter Joint auf '{ext_obj.Label}' "
-                    "gefunden - der Textfund war vermutlich nur ein automatischer "
-                    "Assembly-Mirror-Eintrag, kein manuell angelegter Joint. Kein Handlungsbedarf "
-                    "hier, weiter zur nächsten Datei."
-                )
-                continue
-
-            if not self._external_hit_queue:
-                self.continue_external_btn.setVisible(False)
-            window = PartExchangeWindow(
-                ext_obj, self.replacement_obj, parent=self.parent(),
-                inherited_queue=self._external_hit_queue, progress=self._progress
+        files_involved = {e["file_path"] for e in self._original_joints}
+        parts = []
+        if files_involved:
+            parts.append(f"Betrifft {len(files_involved)} Datei(en), {len(order)} eindeutige Referenz(en).")
+        if self._skipped_files_log:
+            parts.append(
+                f"{len(self._skipped_files_log)} weitere Kandidatendatei(en) übersprungen "
+                "(vermutlich nur automatische Assembly-Mirror-Einträge, keine echten Joints) - "
+                "siehe Report View für Details."
             )
-            window.show()
-            return
-
-        self.continue_external_btn.setVisible(False)
-        QtWidgets.QMessageBox.information(
-            self, "FCProject", "Alle externen Projektdateien wurden geprüft - keine weiteren offen."
-        )
+            for line in self._skipped_files_log:
+                App.Console.PrintMessage(f"FCProject PartExchange: {line}\n")
+        self.project_scope_label.setText(" ".join(parts))
 
     # ------------------------------------------------------------- Klicks
 
@@ -362,12 +292,25 @@ class PartExchangeWindow(QtWidgets.QDialog):
             return
         self._pending_original = entry
         sub = entry.get("subelement") or ""
+        entry_obj = _entry_original_obj(entry) or self.original_obj
         self._clear_highlight_selection()
-        self._highlight_reference(self.original_obj, sub, (1.0, 0.0, 1.0))
+        self._highlight_reference(entry_obj, sub, (1.0, 0.0, 1.0))
         self._update_pending_label()
 
     def _on_use_selection_clicked(self):
-        selection = Gui.Selection.getSelectionEx(self.replacement_doc.Name)
+        # KEIN Dokument-Filter mehr (2026-08-30, Nutzer-Report): bei mehrstufig verschachtelten
+        # Baugruppen kann ein 3D-Klick das rohe Quellobjekt aus einem BELIEBIG tief
+        # verschachtelten, eigenen Dokument liefern (Debug-Log bestaetigte einen Fall zwei
+        # Verlinkungsebenen unter dem Ersatzteil-Dokument) - Gui.Selection.getSelection() ohne
+        # Dokument-Einschraenkung holt die zuletzt getroffene Auswahl unabhaengig davon, in
+        # welchem Dokument sie technisch registriert wurde.
+        # "*" statt "" ist entscheidend: FreeCADs SelectionSingleton::getDocument() behandelt
+        # einen LEEREN String NICHT als "alle Dokumente", sondern als "nur das AKTIVE Dokument"
+        # (isNullOrEmpty -> getActiveDocument()) - siehe Selection.cpp. Nur "*" ueberspringt den
+        # Dokument-Filter komplett. Die eingebettete Ersatzteil-3D-Ansicht ist aber meist NICHT
+        # das offiziell aktive Dokument, wodurch die Auswahl mit "" staendig leer zurueckkam,
+        # obwohl das Live-Label sie schon korrekt anzeigte (2026-08-30, Nutzer-Report).
+        selection = Gui.Selection.getSelectionEx("*")
         if not selection:
             QtWidgets.QMessageBox.warning(
                 self, "FCProject",
@@ -376,30 +319,32 @@ class PartExchangeWindow(QtWidgets.QDialog):
             )
             return
 
-        sel_obj = selection[0]
-        if sel_obj.Object is self.replacement_obj:
-            # Direkter Treffer (typischerweise 3D-Klick auf Fläche/Kante).
-            subelement = sel_obj.SubElementNames[0] if sel_obj.SubElementNames else ""
+        sel_obj = selection[-1]
+        # subpath_for_descendant() deckt jetzt einheitlich BEIDE Faelle ab: direkter Treffer
+        # (liefert "") UND beliebig tief verschachtelte/verlinkte Kind-Elemente (liefert den
+        # vollen Pfad, loest dabei auch Link-Ketten auf - siehe dortige Docstring-Begruendung).
+        path_to_obj = subpath_for_descendant(self.replacement_obj, sel_obj.Object)
+        if path_to_obj is None:
+            QtWidgets.QMessageBox.warning(
+                self, "FCProject",
+                f"'{sel_obj.Object.Label}' gehört nicht zu '{self.replacement_obj.Label}'.\n"
+                "Bitte eine Fläche/Kante im 3D-Fenster oder ein Element davon im Baum wählen "
+                "(z.B. eine Origin-Achse/-Ebene oder ein LCS)."
+            )
+            return
+        # Sub-Element-Name (Face/Edge/Vertex) anhängen, damit _set_element_color später den
+        # Index auflösen und die spezifische Fläche einfärben kann.
+        sub_el = sel_obj.SubElementNames[0] if sel_obj.SubElementNames else ""
+        if not path_to_obj:
+            subelement = sub_el
+        elif sub_el:
+            subelement = f"{path_to_obj}.{sub_el}"
         else:
-            # Baum-Auswahl eines Kind-Elements (z.B. Origin-Achse/-Ebene, LCS),
-            # das in der 3D-Ansicht kaum treffsicher anklickbar ist.
-            path_to_obj = subpath_for_descendant(self.replacement_obj, sel_obj.Object)
-            if path_to_obj is None:
-                QtWidgets.QMessageBox.warning(
-                    self, "FCProject",
-                    f"'{sel_obj.Object.Label}' gehört nicht zu '{self.replacement_obj.Label}'.\n"
-                    "Bitte eine Fläche/Kante im 3D-Fenster oder ein Element davon im Baum wählen "
-                    "(z.B. eine Origin-Achse/-Ebene oder ein LCS)."
-                )
-                return
-            # Sub-Element-Name (Face/Edge/Vertex) anhängen, damit _set_element_color
-            # später den Index auflösen und die spezifische Fläche einfärben kann.
-            sub_el = sel_obj.SubElementNames[0] if sel_obj.SubElementNames else ""
-            subelement = f"{path_to_obj}.{sub_el}" if sub_el else path_to_obj
+            subelement = path_to_obj
 
         if self._pending_original is None:
             QtWidgets.QMessageBox.warning(
-                self, "FCProject", "Bitte zuerst links einen Joint-Eintrag des Originals auswählen."
+                self, "FCProject", "Bitte zuerst links einen Referenz-Eintrag des Originals auswählen."
             )
             return
 
@@ -649,7 +594,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
 
     def _update_pending_label(self):
         text = self._pending_original["label"] if self._pending_original else "–"
-        self.pending_label.setText(f"Ausgewählter Original-Joint: <b>{text}</b>")
+        self.pending_label.setText(f"Ausgewählte Original-Referenz: <b>{text}</b>")
 
     def _refresh_mapping_table(self):
         self.mapping_table.setRowCount(0)
@@ -951,49 +896,91 @@ class PartExchangeWindow(QtWidgets.QDialog):
     # ------------------------------------------------------------- Apply
 
     def _on_apply(self):
+        """Wendet das (einmalige, pro eindeutiger Referenz erstellte) Mapping auf ALLE
+        gesammelten Joints im GESAMTEN Projekt an - nicht nur im lokalen Dokument. Gruppiert
+        dafür self._original_joints (jetzt via find_all_project_joints_referencing() über alle
+        betroffenen Dateien hinweg gesammelt) nach ihrem jeweiligen Zieldokument, erstellt pro
+        Dokument GENAU EINEN lokalen Ersatzteil-Link, haengt dort alle passenden Joints um,
+        loest/speichert danach jedes betroffene Dokument. Ersetzt den frueheren "ein Fenster pro
+        Datei"-Ablauf, den der Nutzer bei vielen betroffenen Dateien (z.B. 58) als nicht
+        praktikabel verworfen hat."""
         errors = []
         rewired_joints = 0
-
-        assembly_obj = find_assembly(self.original_doc)
-        local_replacement = self._ensure_local_replacement(
-            self.original_doc, self.replacement_obj, assembly_obj
-        )
-
-        # Ersatzteil startet an der Position des alten Teils → bessere Solver-Konvergenz
-        try:
-            local_replacement.Placement = self.original_obj.Placement
-        except Exception:
-            pass
-
         mapping_by_key = {_joint_key(m["original"]): m for m in self._mappings}
 
+        entries_by_doc = {}
         for entry in self._original_joints:
-            mapping = mapping_by_key.get(_joint_key(entry))
-            if mapping is None:
+            entries_by_doc.setdefault(entry["joint_obj"].Document, []).append(entry)
+
+        touched_docs = []  # nur Dokumente, in denen tatsaechlich etwas umgehaengt wurde
+
+        for doc, doc_entries in entries_by_doc.items():
+            assembly_obj = find_assembly(doc)
+            local_replacement = self._ensure_local_replacement(doc, self.replacement_obj, assembly_obj)
+
+            # Ersatzteil startet an der Position des Original-VORKOMMENS in DIESEM Dokument
+            # (nicht zwingend self.original_obj - in einer anderen Datei kann das dieselbe
+            # logische Baugruppe unter einer eigenen, lokalen Platzierung sein) -> bessere
+            # Solver-Konvergenz.
+            local_originals = {}
+            for entry in doc_entries:
+                local_orig = _entry_original_obj(entry)
+                if local_orig is not None:
+                    local_originals[local_orig.Name] = local_orig
+            if local_originals:
+                try:
+                    local_replacement.Placement = next(iter(local_originals.values())).Placement
+                except Exception:
+                    pass
+
+            applied_here = 0
+            joint_names_here = []
+            for entry in doc_entries:
+                mapping = mapping_by_key.get(_joint_key(entry))
+                if mapping is None:
+                    continue
+                if self._rewire_joint(
+                    entry["joint_obj"], entry["joint_side"],
+                    local_replacement, mapping["replacement_subelement"], errors
+                ):
+                    rewired_joints += 1
+                    applied_here += 1
+                    joint_names_here.append(entry["joint_obj"].Name)
+
+            if applied_here == 0:
                 continue
-            if self._rewire_joint(
-                entry["joint_obj"], entry["joint_side"],
-                local_replacement, mapping["replacement_subelement"], errors
-            ):
-                rewired_joints += 1
 
-        # Ersetztes Teil ausblenden
-        try:
-            orig_vobj = getattr(self.original_obj, "ViewObject", None)
-            if orig_vobj is not None:
-                orig_vobj.Visibility = False
-        except Exception:
-            pass
+            doc_file_name = os.path.basename(doc.FileName) if doc.FileName else doc.Name
+            touched_docs.append(f"{doc_file_name} [{', '.join(joint_names_here)}]")
 
-        try:
-            self.original_doc.recompute()
-        except Exception as e:
-            errors.append(f"Neuberechnung des Original-Dokuments fehlgeschlagen: {str(e)}")
+            # Alle betroffenen Original-Vorkommen in DIESEM Dokument ausblenden.
+            for local_orig in local_originals.values():
+                try:
+                    vobj = getattr(local_orig, "ViewObject", None)
+                    if vobj is not None:
+                        vobj.Visibility = False
+                except Exception:
+                    pass
 
-        self._solve_assembly(errors, assembly_obj)
+            try:
+                doc.recompute()
+            except Exception as e:
+                errors.append(f"Neuberechnung von '{doc.Name}' fehlgeschlagen: {str(e)}")
+
+            self._solve_assembly_for(doc, errors, assembly_obj)
+
+            # Alle Dokumente AUSSER dem eigenen, gerade im Fenster gezeigten Original-Dokument
+            # gleich speichern - bei vielen betroffenen Dateien sollen die nicht alle offen und
+            # ungespeichert haengen bleiben.
+            if doc is not self.original_doc:
+                try:
+                    doc.save()
+                except Exception as e:
+                    errors.append(f"Speichern von '{doc.Name}' fehlgeschlagen: {str(e)}")
 
         App.Console.PrintMessage(
-            f"FCProject PartExchange: {rewired_joints} Joint(s) erfolgreich umgehängt.\n"
+            f"FCProject PartExchange: {rewired_joints} Joint(s) in {len(touched_docs)} "
+            f"Datei(en) erfolgreich umgehängt: {', '.join(touched_docs)}\n"
         )
         for err in errors:
             App.Console.PrintWarning(f"FCProject PartExchange: {err}\n")
@@ -1004,19 +991,22 @@ class PartExchangeWindow(QtWidgets.QDialog):
             pass
         self.close()
 
-    def _solve_assembly(self, errors, assembly_obj=None):
-        """Löst den Assembly-Solver explizit aus.
+    @staticmethod
+    def _solve_assembly_for(doc, errors, assembly_obj=None):
+        """Löst den Assembly-Solver explizit für `doc` aus.
 
         `doc.recompute()` allein berechnet keine neuen Platzierungen anhand der
         Joints - das Lösen der Constraints übernimmt der Assembly-Solver, der
         über die Methode `solve()` auf dem Assembly::AssemblyObject angestoßen
-        werden muss.
+        werden muss. Generalisiert (2026-08-30) von ursprünglich nur
+        self.original_doc auf ein beliebiges `doc` - beim projektweiten
+        Sammel-Anwenden wird das für JEDE betroffene Datei einzeln gebraucht.
         """
         if assembly_obj is None:
-            assembly_obj = find_assembly(self.original_doc)
+            assembly_obj = find_assembly(doc)
         if assembly_obj is None:
             errors.append(
-                "Keine Assembly im Original-Dokument gefunden - Position des Ersatzteils "
+                f"Keine Assembly in '{doc.Name}' gefunden - Position des Ersatzteils "
                 "konnte nicht neu berechnet werden."
             )
             return
@@ -1031,9 +1021,9 @@ class PartExchangeWindow(QtWidgets.QDialog):
 
         try:
             assembly_obj.solve()
-            self.original_doc.recompute()
+            doc.recompute()
         except Exception as e:
-            errors.append(f"Assembly-Solver konnte nicht ausgeführt werden: {str(e)}")
+            errors.append(f"Assembly-Solver in '{doc.Name}' konnte nicht ausgeführt werden: {str(e)}")
 
     @classmethod
     def _ensure_local_replacement(cls, doc, replacement, assembly=None):
@@ -1091,10 +1081,22 @@ class PartExchangeWindow(QtWidgets.QDialog):
             errors.append(f"Joint '{joint.Label}': Referenz konnte nicht gesetzt werden ({str(e)})")
             return False
 
-        offset = compute_rewired_offset(joint.Reference1, joint.Reference2)
-        if offset is not None:
-            try:
-                joint.Offset2 = offset
-            except Exception as e:
-                errors.append(f"Joint '{joint.Label}': Offset2 konnte nicht aktualisiert werden ({str(e)})")
+        # WICHTIG (2026-08-30, Nutzer-Report "Teile haben Position verloren"/Solver divergiert
+        # massiv nach dem Umhaengen): compute_rewired_offset() berechnet laut eigenem Docstring
+        # NUR fuer FIXED-Joints eine sinnvolle Offset2 (die volle eingefrorene 6-DoF-
+        # Transformation). Bei anderen Jointtypen - z.B. "Abstand"/Distance, RackPinion, Screw,
+        # Gears, Belt - bedeutet Offset2 etwas ANDERES; die volle Fixed-Transformation dort
+        # blind hineinzuschreiben ergab einen geometrisch unsinnigen Wert und liess den
+        # MbD-Solver mit exponentiell wachsenden Convergence-Werten divergieren (bis zu 3.6e16
+        # im Log) statt sauber zu loesen. Deshalb jetzt nur noch fuer echte Fixed-Joints
+        # anwenden - bei anderen Jointtypen bleibt Offset2 unangetastet (der Nutzer muss den
+        # eigentlichen Wert - z.B. Distance - danach ggf. manuell pruefen/anpassen, aber der
+        # Solver divergiert dann nicht mehr).
+        if getattr(joint, "JointType", None) == "Fixed":
+            offset = compute_rewired_offset(joint.Reference1, joint.Reference2)
+            if offset is not None:
+                try:
+                    joint.Offset2 = offset
+                except Exception as e:
+                    errors.append(f"Joint '{joint.Label}': Offset2 konnte nicht aktualisiert werden ({str(e)})")
         return True
