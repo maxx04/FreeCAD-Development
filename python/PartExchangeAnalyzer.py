@@ -10,7 +10,68 @@
 # für diese Aufgabe und wurden entfernt - Auswirkungen auf andere
 # Abhängigkeiten sind ein späterer Schritt.
 
+import os
+import zipfile
+
 import FreeCAD as App
+
+
+def find_project_root(doc):
+    """Findet den Projektordner (Konvention: "PROJ_<Name>", siehe ProjectManager.py) fuer das
+    Dokument, in dem `doc` liegt - geht vom Dateipfad aus so lange nach oben, bis ein
+    "PROJ_"-Ordner gefunden wird, sonst faellt es auf den direkten Elternordner der Datei
+    zurueck (z.B. fuer Projekte, die diese Konvention nicht nutzen)."""
+    if not doc.FileName:
+        return None
+    current = os.path.dirname(os.path.abspath(doc.FileName))
+    start = current
+    while current and current != os.path.dirname(current):
+        if os.path.basename(current).startswith("PROJ_"):
+            return current
+        current = os.path.dirname(current)
+    return start
+
+
+def find_external_project_references(obj):
+    """Durchsucht ALLE .FCStd-Dateien im Projektordner (nicht nur die aktuell geoeffneten
+    Dokumente!) danach, ob `obj`s interner Name irgendwo referenziert wird - Ergaenzung zu
+    find_joints_referencing(), das nur im eigenen Dokument sucht. FreeCADs eigener
+    "Objektabhaengigkeiten"-Warndialog beim Loeschen kennt ebenfalls nur GERADE GEOEFFNETE
+    Dokumente - eine Baugruppe, die gar nicht offen ist, wuerde dort still durchrutschen
+    (Nutzer-Report 2026-08-30).
+
+    Liest jede .FCStd DIREKT als ZIP (Document.xml als reinen Text durchsucht), OHNE sie in
+    FreeCAD zu oeffnen - deutlich schneller als jedes Dokument tatsaechlich zu laden, und
+    funktioniert auch fuer Dateien, die der Nutzer gerade gar nicht geoeffnet hat.
+
+    Liefert eine Liste von (dateipfad, anzahl_treffer) fuer jede Fundstelle, die eigene Datei
+    von `obj` selbst ausgenommen. Reiner Substring-Treffer auf den internen Namen (nicht das
+    Label) - kann in seltenen Faellen auch auf einen laengeren, aehnlich beginnenden Namen
+    anschlagen (z.B. "Foo" trifft auch "Foo002") - das ist bewusst so belassen: lieber einmal zu
+    viel warnen als eine echte Referenz uebersehen."""
+    own_path = os.path.abspath(obj.Document.FileName) if obj.Document.FileName else None
+    project_root = find_project_root(obj.Document)
+    if project_root is None:
+        return []
+
+    needle = obj.Name.encode("utf-8")
+    results = []
+    for dirpath, _dirnames, filenames in os.walk(project_root):
+        for filename in filenames:
+            if not filename.lower().endswith(".fcstd"):
+                continue
+            path = os.path.join(dirpath, filename)
+            if own_path is not None and os.path.abspath(path) == own_path:
+                continue
+            try:
+                with zipfile.ZipFile(path) as z:
+                    data = z.read("Document.xml")
+            except Exception:
+                continue
+            count = data.count(needle)
+            if count > 0:
+                results.append((path, count))
+    return results
 
 
 def _get_assembly_modules():
@@ -44,6 +105,13 @@ def is_valid_exchange_candidate(element):
         return False
 
     if element.isDerivedFrom('App::DocumentObjectGroup'):
+        return False
+
+    # Von FCProject_PartExchange selbst erzeugte Ersatzteil-Links (siehe
+    # PartExchangeWindow._ensure_local_replacement()) sollen nicht selbst wieder als Kandidat
+    # fuer einen weiteren Tausch auftauchen - fuehrte sonst zu einem Link-auf-Link ("..._Link_
+    # Link"), der beim Solve nicht sauber durchrechnet (Nutzer-Report 2026-08-30).
+    if hasattr(element, "FCProjectExchangeLink"):
         return False
 
     # Datum-/Referenzelemente (Achsen, Ebenen, Punkte, LCS/Origin) haben ALLE eine eigene

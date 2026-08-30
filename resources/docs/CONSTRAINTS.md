@@ -20,3 +20,14 @@ LocalCoordinateSystem` (Identity-Placement, Label "LCS") im jeweiligen Root-Cont
 allen fünf Creatorn (`PartCreator.py`/P, `AssemblyCreator.py`/A, `RAWCreator.py`/R,
 `GeometryCreator.py`/G, `PurchasedPartCreator.py`/B) direkt vor dem Speichern aufgerufen.
 1. In einem Datei eine Baugruppe
+1. **Beim Part/Assembly-Tausch (PartExchange) wird auf Verlinkung INNERHALB DES GESAMTEN
+PROJEKTS gesucht, nicht nur in gerade geöffneten Dokumenten.** FreeCADs eigener
+"Objektabhängigkeiten"-Warndialog beim Löschen kennt nur GERADE GEÖFFNETE Dokumente - eine
+Baugruppe, die ein zu ersetzendes/löschendes Teil direkt referenziert, aber selbst nicht offen
+ist, würde dort ungewarnt durchrutschen (Nutzer-Report 2026-08-30). **Umgesetzt**:
+`PartExchangeAnalyzer.find_external_project_references()` durchsucht alle `.FCStd`-Dateien im
+Projektordner (Konvention: nächster `PROJ_`-Ordner in der Verzeichnis-Hierarchie, siehe
+`find_project_root()`) direkt als ZIP nach dem internen Namen des Original-Objekts - ohne die
+Dateien selbst zu öffnen, funktioniert also auch für nicht geladene Dokumente. Ergebnis wird im
+PartExchange-Fenster als rote Warnung angezeigt, blockiert aber nichts automatisch - der Nutzer
+entscheidet selbst, ob er trotzdem fortfährt.

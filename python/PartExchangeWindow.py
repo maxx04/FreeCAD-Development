@@ -6,6 +6,7 @@
 # Auswirkungen auf andere Abhängigkeiten (Gruppenmitgliedschaft, generische
 # Links, Ausblenden/Umbenennen des Originals) sind explizit ein späterer Schritt.
 
+import os
 import re
 import weakref
 
@@ -14,7 +15,8 @@ import FreeCADGui as Gui
 from PySide6 import QtWidgets, QtCore
 
 from PartExchangeAnalyzer import (
-    find_joints_referencing, compute_rewired_offset, subpath_for_descendant, full_reference_path, find_assembly
+    find_joints_referencing, compute_rewired_offset, subpath_for_descendant, full_reference_path, find_assembly,
+    find_external_project_references
 )
 
 ENTRY_ROLE = QtCore.Qt.UserRole
@@ -94,12 +96,21 @@ class _ReplacementSelectionObserver:
 class PartExchangeWindow(QtWidgets.QDialog):
     """Nicht-modales Fenster: Joint-Referenzen des Originals auf das Ersatzteil ummappen."""
 
-    def __init__(self, original_obj, replacement_obj, parent=None):
+    def __init__(self, original_obj, replacement_obj, parent=None, inherited_queue=None, progress=None):
+        """`inherited_queue`/`progress` werden NUR von _continue_to_next_external_reference()
+        gesetzt, wenn dieses Fenster als Teil eines gefuehrten Mehrdatei-Ablaufs geoeffnet wird
+        (siehe dort) - dann wird KEINE eigene, neue Projektsuche gestartet, sondern die vom
+        aufrufenden Fenster bereits ermittelte, verbleibende Warteschlange weiterverwendet und
+        derselbe Fortschrittszaehler ("Datei X von Y") ueber alle verketteten Fenster hinweg
+        fortgeschrieben (Nutzerwunsch 2026-08-30: "das wiederholt sich und weiss man nicht wo
+        man steht")."""
         super().__init__(parent or Gui.getMainWindow())
         self.original_obj = original_obj
         self.replacement_obj = replacement_obj
         self.original_doc = original_obj.Document
         self.replacement_doc = replacement_obj.Document
+        self._inherited_external_queue = inherited_queue
+        self._progress = progress
         # Anzeige-Dokument des Originals: das eigentliche Teil-Dokument (z.B.
         # NM3_017_P_Einzelteil_), nicht die Baugruppe - in der Baugruppe muss
         # für die Referenzprüfung nichts selektiert werden.
@@ -112,6 +123,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._color_overrides = {}  # (doc.Name, obj.Name, prop) -> (ViewObject, prop, Original-Farbliste)
         self._embedded_views = []  # [(widget, doc)] - aus dem Haupt-MDI-Bereich ausgeliehene 3D-Ansichten
         self._highlighted_docs = set()  # doc.Name - für Datum-Hervorhebung (Gui.Selection) benutzte Dokumente
+        self._external_hit_queue = []  # [(pfad, anzahl)] - noch zu prüfende externe Projektdateien
         self._sel_observer = _ReplacementSelectionObserver(self)
         Gui.Selection.addObserver(self._sel_observer)
 
@@ -122,6 +134,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._populate_joint_list()
         self._update_pending_label()
         self._update_apply_button_state()
+        self._check_external_project_references()
 
         self._embed_3d_views()
         self._position_below_main_window()
@@ -171,6 +184,35 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self.highlight_warning_label.setVisible(False)
         main_layout.addWidget(self.highlight_warning_label)
 
+        # Projektweite Referenz-Warnung (Nutzerwunsch 2026-08-30): find_joints_referencing()
+        # sucht nur im eigenen Dokument, FreeCADs eigener "Objektabhaengigkeiten"-Warndialog
+        # beim Loeschen nur in GERADE GEOEFFNETEN Dokumenten - eine nicht offene Baugruppe, die
+        # das Original direkt referenziert, wuerde sonst still durchrutschen. Rot statt Gelb
+        # (dringlicher als die andere Warnung), da es um moeglichen Datenverlust in einer ganz
+        # ANDEREN, evtl. gar nicht offenen Datei geht.
+        self.external_ref_warning_label = QtWidgets.QLabel()
+        self.external_ref_warning_label.setStyleSheet("color: #c0392b; font-weight: bold;")
+        self.external_ref_warning_label.setWordWrap(True)
+        self.external_ref_warning_label.setVisible(False)
+        main_layout.addWidget(self.external_ref_warning_label)
+
+        # Gefuehrter Ablauf durch externe Dateien (Nutzerwunsch 2026-08-30): "jede Datei
+        # einzeln, gefuehrt" - Knopf oeffnet die naechste betroffene Datei und startet dort,
+        # falls ein ECHTER Joint gefunden wird, dasselbe Fenster erneut.
+        external_progress_row = QtWidgets.QHBoxLayout()
+        self.continue_external_btn = QtWidgets.QPushButton("Nächste externe Datei bearbeiten →")
+        self.continue_external_btn.clicked.connect(self._continue_to_next_external_reference)
+        self.continue_external_btn.setVisible(False)
+        external_progress_row.addWidget(self.continue_external_btn)
+        # Fortschrittsanzeige (Nutzerwunsch 2026-08-30, "das wiederholt sich und weiss man
+        # nicht wo man steht") - zeigt "Datei X von Y" ueber alle gefuehrten Fenster hinweg,
+        # nicht nur fuer die verbleibende Warteschlange DIESES einen Fensters.
+        self.external_progress_label = QtWidgets.QLabel()
+        self.external_progress_label.setStyleSheet("color: #888;")
+        self.external_progress_label.setVisible(False)
+        external_progress_row.addWidget(self.external_progress_label, stretch=1)
+        main_layout.addLayout(external_progress_row)
+
         mapping_box = QtWidgets.QGroupBox("Zuordnungen (Joint → Ersatzteil-Referenz)")
         mapping_layout = QtWidgets.QVBoxLayout(mapping_box)
         self.mapping_table = QtWidgets.QTableWidget(0, 3)
@@ -204,6 +246,113 @@ class PartExchangeWindow(QtWidgets.QDialog):
         if not self._original_joints:
             self.joint_list.addItem("(keine Joints gefunden)")
             self.joint_list.setEnabled(False)
+
+    def _check_external_project_references(self):
+        """Warnt, falls andere .FCStd-Dateien im Projektordner (egal ob gerade geoeffnet oder
+        nicht) das Original direkt referenzieren - siehe find_external_project_references() fuer
+        die volle Begruendung. Rein informativ, blockiert nichts: dieses Fenster ersetzt/loescht
+        selbst nichts direkt, der Nutzer entscheidet spaeter selbst (z.B. beim manuellen
+        Loeschen ueber FreeCADs eigenen Befehl), ob er trotzdem fortfaehrt.
+
+        Ist dieses Fenster Teil eines gefuehrten Mehrdatei-Ablaufs (siehe __init__), wird KEINE
+        neue Suche gestartet, sondern die vom aufrufenden Fenster uebergebene, bereits
+        verbleibende Warteschlange direkt uebernommen - vermeidet doppelte Sucharbeit und haelt
+        den Fortschrittszaehler ueber alle verketteten Fenster hinweg konsistent."""
+        if self._inherited_external_queue is not None:
+            hits = self._inherited_external_queue
+        else:
+            try:
+                hits = find_external_project_references(self.original_obj)
+            except Exception as e:
+                App.Console.PrintWarning(
+                    f"FCProject PartExchange: Projektweite Referenzsuche fehlgeschlagen: {str(e)}\n"
+                )
+                return
+        if not hits:
+            return
+        if self._progress is None:
+            self._progress = {"current": 0, "total": len(hits)}
+        lines = "\n".join(f"  - {os.path.basename(path)} ({count}x)" for path, count in hits)
+        self.external_ref_warning_label.setText(
+            f"⚠ '{self.original_obj.Label}' wird auch in folgenden Projektdateien referenziert "
+            f"(unabhängig davon, ob sie gerade geöffnet sind) - vor einem Löschen des "
+            f"ausgeblendeten Originals dort prüfen, sonst drohen kaputte Referenzen:\n{lines}"
+        )
+        self.external_ref_warning_label.setVisible(True)
+        self._external_hit_queue = list(hits)
+        self.continue_external_btn.setVisible(True)
+        self._update_external_progress_label()
+
+    def _update_external_progress_label(self, current_filename=None):
+        """Zeigt 'Datei X von Y' ueber alle verketteten Fenster hinweg an (Nutzerwunsch
+        2026-08-30: "das wiederholt sich und weiss man nicht wo man steht")."""
+        if self._progress is None:
+            return
+        text = f"Datei {self._progress['current']} von {self._progress['total']}"
+        if current_filename:
+            text += f": {current_filename}"
+        self.external_progress_label.setText(text)
+        self.external_progress_label.setVisible(True)
+
+    def _continue_to_next_external_reference(self):
+        """Arbeitet self._external_hit_queue von vorne nach hinten ab: oeffnet die naechste
+        Datei, sucht darin nach einem gleichnamigen Objekt UND einem ECHTEN Joint darauf (nicht
+        nur einer zufaelligen Textfundstelle - die meisten Treffer sind vermutlich nur
+        automatische Assembly-Mirror-Eintraege, siehe find_external_project_references()) -
+        findet sich ein echter Joint, wird fuer diese Datei dasselbe Fenster erneut geoeffnet
+        (mit demselben Ersatzteil), sonst wird die Datei uebersprungen und die naechste
+        probiert."""
+        while self._external_hit_queue:
+            path, _count = self._external_hit_queue.pop(0)
+            self._progress["current"] += 1
+            self._update_external_progress_label(os.path.basename(path))
+            try:
+                already_open_name = None
+                for doc_name, d in App.listDocuments().items():
+                    if getattr(d, "FileName", None) and os.path.abspath(d.FileName) == os.path.abspath(path):
+                        already_open_name = doc_name
+                        break
+                ext_doc = App.getDocument(already_open_name) if already_open_name else App.openDocument(path)
+            except Exception as e:
+                QtWidgets.QMessageBox.warning(
+                    self, "FCProject", f"'{os.path.basename(path)}' konnte nicht geöffnet werden:\n{str(e)}"
+                )
+                continue
+
+            ext_obj = ext_doc.getObject(self.original_obj.Name)
+            if ext_obj is None:
+                QtWidgets.QMessageBox.information(
+                    self, "FCProject",
+                    f"'{os.path.basename(path)}': kein Objekt mit dem Namen "
+                    f"'{self.original_obj.Name}' gefunden (Textfund lag vermutlich in einem "
+                    "Kommentar/anderen Kontext) - übersprungen."
+                )
+                continue
+
+            ext_joints = find_joints_referencing(ext_obj)
+            if not ext_joints:
+                QtWidgets.QMessageBox.information(
+                    self, "FCProject",
+                    f"'{os.path.basename(path)}': kein echter Joint auf '{ext_obj.Label}' "
+                    "gefunden - der Textfund war vermutlich nur ein automatischer "
+                    "Assembly-Mirror-Eintrag, kein manuell angelegter Joint. Kein Handlungsbedarf "
+                    "hier, weiter zur nächsten Datei."
+                )
+                continue
+
+            if not self._external_hit_queue:
+                self.continue_external_btn.setVisible(False)
+            window = PartExchangeWindow(
+                ext_obj, self.replacement_obj, parent=self.parent(),
+                inherited_queue=self._external_hit_queue, progress=self._progress
+            )
+            window.show()
+            return
+
+        self.continue_external_btn.setVisible(False)
+        QtWidgets.QMessageBox.information(
+            self, "FCProject", "Alle externen Projektdateien wurden geprüft - keine weiteren offen."
+        )
 
     # ------------------------------------------------------------- Klicks
 
@@ -592,8 +741,15 @@ class PartExchangeWindow(QtWidgets.QDialog):
         # uebersprungen (Annahme: "sieht man ja schon in der ersten Ansicht") - das liess den
         # rechten Bereich komplett leer und war verwirrend, obwohl die Auswahl selbst technisch
         # funktionierte (Nutzer-Report 2026-08-30: "Ersatzteil wird nicht angezeigt").
-        replacement_focus = self._resolve_display_obj(self.replacement_obj)
-        self._embed_one(mdi_area, self.replacement_doc, self.replacement_view_container, replacement_focus)
+        # WICHTIG: hier bewusst OHNE _resolve_display_obj()-Kettenaufloesung, anders als beim
+        # Original - self.replacement_doc wird ebenfalls unaufgeloest gesetzt (replacement_obj.
+        # Document direkt, siehe __init__), focus_obj und die eingebettete Ansicht muessen also
+        # dasselbe Dokument referenzieren. Mit der Aufloesung landete der Fokus bei einem per
+        # Link-Kette eingebundenen Ersatzteil in einem ANDEREN Dokument als die tatsaechlich
+        # eingebettete Ansicht - der focus_obj.Document is doc-Check in _embed_one() schlug fehl
+        # und fiel auf "ganzes Dokument zeigen" zurueck (Nutzer-Report 2026-08-30: zweite
+        # Ersatzteil-Ansicht zeigte die komplette FuehrungsBaugruppe400 statt nur das neue Teil).
+        self._embed_one(mdi_area, self.replacement_doc, self.replacement_view_container, self.replacement_obj)
 
     def _embed_one(self, mdi_area, doc, container_layout, focus_obj=None):
         try:
@@ -879,16 +1035,41 @@ class PartExchangeWindow(QtWidgets.QDialog):
         except Exception as e:
             errors.append(f"Assembly-Solver konnte nicht ausgeführt werden: {str(e)}")
 
-    @staticmethod
-    def _ensure_local_replacement(doc, replacement, assembly=None):
-        """Hängt ein Ersatzteil aus einem fremden Dokument als App::Link in `doc` ein,
-        damit die Joint-Referenz innerhalb desselben Dokuments bleibt.
+    @classmethod
+    def _ensure_local_replacement(cls, doc, replacement, assembly=None):
+        """Erzeugt IMMER einen eigenen, frischen App::Link auf das ECHTE Quellobjekt hinter
+        `replacement` - auch wenn `replacement` schon im selben Dokument liegt. Ohne das gab die
+        alte Kurzform (direkt das rohe Objekt zurückgeben, falls `replacement.Document is doc`)
+        bei einem ZWEITEN Tausch mit demselben Ersatzteil-Kandidaten dieselbe physische
+        Objekt-Referenz zurück wie beim ersten Tausch - der nachfolgende Placement-Zuweisung
+        (siehe _on_apply()) verschob dann DASSELBE Objekt an die Position des zweiten Originals,
+        wodurch der erste Tausch optisch verschwand (Nutzer-Report 2026-08-30: "erstes Teil ist
+        nach dem zweiten Tausch weg").
+
+        `replacement` wird dafuer per _resolve_display_obj() zuerst bis zum ECHTEN Quellobjekt
+        aufgeloest, falls es selbst schon ein von uns erzeugter App::Link ist (z.B. weil der
+        Nutzer im Ersatzteil-Dropdown versehentlich den `_Link` aus einem fruaeheren Tausch
+        gewaehlt hat, der ja seitdem auch als gueltiger Kandidat auftaucht) - sonst waere ein
+        Link-auf-Link entstanden ("..._Link_Link"), der beim Solve nicht sauber durchrechnet
+        ("still touched after recompute", Nutzer-Report 2026-08-30).
+
+        `doc.addObject()` haengt bei einem Namenskonflikt automatisch eine Zahl an (z.B.
+        "..._Link001"), das war im urspruenglichen, bereits laenger bestehenden
+        Cross-Dokument-Zweig unten schon immer der Fall - jetzt einheitlich fuer beide Faelle.
         Der Link wird in die Assembly eingehängt (nicht lose ans Dokument-Root)."""
-        if replacement.Document is doc:
-            return replacement
+        replacement = cls._resolve_display_obj(replacement)
         link = doc.addObject("App::Link", f"{replacement.Name}_Link")
         link.Label = replacement.Label
         link.LinkedObject = replacement
+        # Markierung, damit dieser selbst erzeugte Link kuenftig NICHT mehr als Ersatzteil-
+        # Kandidat im Dropdown auftaucht (siehe is_valid_exchange_candidate() in
+        # PartExchangeAnalyzer.py) - verhindert die Verwechslungsgefahr direkt an der Quelle,
+        # statt sich nur auf die _resolve_display_obj()-Aufloesung oben zu verlassen.
+        link.addProperty(
+            "App::PropertyBool", "FCProjectExchangeLink", "FCProject",
+            "Markiert diesen App::Link als von FCProject_PartExchange erzeugtes Ersatzteil-Link"
+        )
+        link.FCProjectExchangeLink = True
         if assembly is not None and hasattr(assembly, 'addObject'):
             try:
                 assembly.addObject(link)
