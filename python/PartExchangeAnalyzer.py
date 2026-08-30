@@ -46,6 +46,18 @@ def is_valid_exchange_candidate(element):
     if element.isDerivedFrom('App::DocumentObjectGroup'):
         return False
 
+    # Datum-/Referenzelemente (Achsen, Ebenen, Punkte, LCS/Origin) haben ALLE eine eigene
+    # (Dummy-)Shape zur Visualisierung - der obige hasattr(element, 'Shape')-Check erwischt sie
+    # deshalb faelschlich als "echte Geometrie" mit. App::Line/Plane/Point erben von
+    # App::DatumElement, LCS und der automatische Origin-Container von
+    # App::LocalCoordinateSystem (siehe FreeCAD-Kern App/Datums.h) - explizit ausschliessen,
+    # das sind keine tauschbaren Teile (Nutzer-Report 2026-08-30: "Koordinaten/Achsen im
+    # Ersatzteil-Dropdown").
+    if element.isDerivedFrom('App::DatumElement'):
+        return False
+    if element.isDerivedFrom('App::LocalCoordinateSystem'):
+        return False
+
     return True
 
 
