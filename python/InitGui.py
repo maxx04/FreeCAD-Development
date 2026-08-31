@@ -31,6 +31,7 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         import SectionSketchFeature as SectionSketchFeature
         import ImportComponentCommand as ImportComponentCommand
         import InterfacePlacementFeature as InterfacePlacementFeature
+        import PartPlayerCommand as PartPlayerCommand
         import DocObserver
         DocObserver.register()
 
@@ -43,7 +44,8 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
             "FCProject_RepairSelectable",
             "FCProject_CreateSectionSketch",
             "FCProject_ImportComponent",
-            "FCProject_PositionByInterface"
+            "FCProject_PositionByInterface",
+            "FCProject_PartPlayer"
         ])
 
 
