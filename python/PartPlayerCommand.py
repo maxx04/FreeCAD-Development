@@ -18,7 +18,15 @@ import os
 
 import FreeCAD as App
 import FreeCADGui as Gui
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
+
+# Nutzerwunsch (2026-08-31): KEIN Aufgabenfenster (Gui.Control/TaskDialog) - das blockiert die
+# Aufgabenfenster-Spalte, die z.B. beim Selektieren von Objekten/Flaechen gebraucht wird.
+# Stattdessen ein frei schwebendes, NICHT-modales Popup-Fenster (normales QDialog), das
+# parallel zur normalen FreeCAD-Bedienung (Baum, 3D-Ansicht, Selektion) offen bleiben kann.
+# Referenzen auf offene Fenster hier halten, sonst koennte Python sie einsammeln, bevor der
+# Nutzer sie schliesst.
+_open_players = []
 
 ICON_DIR = os.path.join(os.path.dirname(__file__), 'resources', 'icons')
 
@@ -99,11 +107,38 @@ def _redirect_links(obj, copy_map):
 
         if isinstance(val, (list, tuple)):
             if len(val) == 2 and isinstance(val[0], App.DocumentObject):
-                # PropertyLinkSub/XLinkSub-Form: [Objekt, [Sub-Namen...]]
+                # PropertyLinkSub/XLinkSub-Form (SINGULAR): [Objekt, [Sub-Namen...]]
                 ref_obj, subs = val
                 if ref_obj.Name in copy_map:
                     try:
                         setattr(obj, prop, [copy_map[ref_obj.Name], subs])
+                    except Exception:
+                        pass
+                continue
+
+            # PropertyLinkSubList-Form (MEHRZAHL, z.B. AttachmentSupport): eine Liste von
+            # (Objekt, Sub-Namen)-TUPELN, nicht ein einzelnes [Objekt, Subs]-Paar - per
+            # Diagnose bestaetigt: mit nur EINEM Eintrag hat val genau Laenge 1, nicht 2,
+            # und das einzige Listenelement ist selbst ein Tupel statt eines DocumentObject -
+            # ist beim obigen Laenge-2-Check und beim einfachen Objekt-Listen-Fall unten
+            # durchgerutscht, AttachmentSupport zeigte deshalb dauerhaft auf die ueberzaehlige
+            # Ursprungs-Kopie statt auf das Original/die Kopie umgebogen zu werden.
+            if val and all(
+                isinstance(item, (list, tuple)) and len(item) == 2
+                and isinstance(item[0], App.DocumentObject)
+                for item in val
+            ):
+                changed = False
+                new_list = []
+                for ref_obj, subs in val:
+                    if ref_obj.Name in copy_map:
+                        new_list.append((copy_map[ref_obj.Name], subs))
+                        changed = True
+                    else:
+                        new_list.append((ref_obj, subs))
+                if changed:
+                    try:
+                        setattr(obj, prop, new_list)
                     except Exception:
                         pass
                 continue
@@ -123,14 +158,20 @@ def _redirect_links(obj, copy_map):
                     pass
 
 
-class PartPlayerTaskPanel:
-    """Aufgabenfenster: zeigt den Namen des bearbeiteten Teils + einen "Schritt"-Knopf.
-    Reine Referenzobjekte (z.B. eine LCS) werden beim Oeffnen einmalig komplett kopiert -
-    die eigentliche Feature-Historie wird dagegen echt additiv aufgebaut: jeder Klick fuegt
-    GENAU EINE neue, echte Feature (Sketch, Pad, Pocket, ...) zum Body hinzu. Startet bei
-    nichts (nur Ursprung + Extras), das Original wird dabei nie angefasst."""
+class PartPlayerDialog(QtWidgets.QDialog):
+    """Frei schwebendes, NICHT-modales Popup-Fenster (kein Aufgabenfenster!): zeigt den Namen
+    des bearbeiteten Teils + einen "Schritt"-Knopf. Reine Referenzobjekte (z.B. eine LCS)
+    werden beim Oeffnen einmalig komplett kopiert - die eigentliche Feature-Historie wird
+    dagegen echt additiv aufgebaut: jeder Klick fuegt GENAU EINE neue, echte Feature (Sketch,
+    Pad, Pocket, ...) zum Body hinzu. Startet bei nichts (nur Ursprung + Extras), das Original
+    wird dabei nie angefasst."""
 
-    def __init__(self, body):
+    def __init__(self, body, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"FCProject: Part Player – {body.Label}")
+        # Nicht-modal: Baum/3D-Ansicht/Selektion bleiben bedienbar, waehrend das Fenster offen
+        # ist (anders als ein modaler Dialog oder das Aufgabenfenster).
+        self.setModal(False)
         self.body = body
         self._features = _ordered_features(body)
         self._step = 0
@@ -141,9 +182,35 @@ class PartPlayerTaskPanel:
         self.temp_body.Label = f"Temporär: {body.Label}"
         self.temp_body.Placement = body.Placement
 
-        # Alles, was NICHT zur Feature-Historie gehoert (z.B. eine LCS), einmalig komplett
-        # kopieren ("alles kopieren kein Ausschluss" fuer solche Referenzobjekte) - was zur
-        # Historie gehoert, kommt bewusst erst schrittweise dazu (siehe _add_one_feature).
+        # ANMERKUNG (Nutzer 2026-08-31): im ORIGINAL haengt die LCS an der body-eigenen
+        # Origin-XY-Ebene. Beim Kopieren entsteht dadurch eine ueberzaehlige zweite Kopie
+        # dieser Ebene ("XY_Plane002") - der temporaere Body hat aber schon seine EIGENE.
+        # _reconcile_origin_copies() biegt solche Duplikate stattdessen auf das
+        # Gegenstueck im EIGENEN Ursprung des temporaeren Bodys um.
+
+        # VORBEUGUNG (per Diagnose bestaetigt, 2026-08-31): der eigene OutList-Waelzer in
+        # _add_one_feature() zieht sonst bei JEDEM Feature, dessen Sketch an einer
+        # Original-Ursprungsebene haengt, die GESAMTE Ursprungsfamilie (7 Rollen-Objekte +
+        # Origin-Container) als vermeintlich "neue Abhaengigkeit" mit rein. copy_map wird
+        # deshalb schon HIER, vor jeder Kopie, mit der Zuordnung Original-Ursprung ->
+        # eigener Ursprung des temporaeren Bodys vorbefuellt - visit() sieht diese Namen
+        # dann als "bereits erledigt" an und stoppt dort.
+        self._copy_map[body.Origin.Name] = self.temp_body.Origin
+        temp_roles = {
+            getattr(tf, "Role", None): tf for tf in self.temp_body.Origin.OriginFeatures
+        }
+        for of in body.Origin.OriginFeatures:
+            match = temp_roles.get(getattr(of, "Role", None))
+            if match is not None:
+                self._copy_map[of.Name] = match
+
+        # Alles, was NICHT zur Feature-Historie gehoert (z.B. eine LCS oder eine unbenutzte
+        # Referenz-Skizze), wird zusaetzlich lautlos mitkopiert ("alles kopieren kein
+        # Ausschluss" fuer solche Referenzobjekte) - ABER an der Stelle in der Reihenfolge, an
+        # der sie tatsaechlich in body.Group stehen, nicht pauschal alle vorab am Anfang
+        # (Nutzer-Korrektur 2026-08-31, "ich meine reihenfolge": eine Referenz-Skizze, die im
+        # Original z.B. zwischen "LinearPattern" und "Pad003" liegt, muss auch bei diesem
+        # Schritt dazukommen, nicht schon ganz am Anfang).
         chain_names = _chain_related_names(self._features)
         extras = [m for m in body.Group if m.Name not in chain_names]
         App.Console.PrintMessage(
@@ -151,30 +218,20 @@ class PartPlayerTaskPanel:
             f"{len(body.Group)} Body.Group-Mitglied(er) insgesamt, {len(extras)} Extra(s): "
             f"{[m.Label for m in extras]}\n"
         )
-        for orig_extra in extras:
-            # Ein LCS (Part::LocalCoordinateSystem) braucht ihre EIGENEN internen
-            # Unterobjekte (X_Achse/Y_Achse/... als "role"-Features) rekursiv mitkopiert,
-            # sonst meldet FreeCAD "doesn't contain feature with role X_Axis" - das ist eine
-            # rein LOKALE Abhaengigkeit der LCS selbst, zieht nichts aus der Feature-Kette
-            # mit. Alles andere (z.B. eine lose Referenz-Skizze) dagegen NICHT rekursiv
-            # kopieren: die kann an einer Flaeche EINES Kettenobjekts haengen
-            # (AttachmentSupport) - mit recursive=True wuerde das die ganze Kette
-            # vorzeitig mitziehen (per Diagnose bestaetigt: 2 Extras fuehrten so zu 10
-            # zusaetzlichen Objekten im Dokument). Ohne recursive bleibt so eine Kopie
-            # einfach auf das ORIGINAL-Objekt verweisen - fuer reine Anzeige-Zwecke
-            # unschaedlich, das Original wird nirgends veraendert.
-            recursive = orig_extra.isDerivedFrom("App::LocalCoordinateSystem")
-            extra_copies = self.temp_doc.copyObject([orig_extra], recursive)
-            for c in extra_copies:
-                if c.TypeId in _ORIGIN_LIKE_TYPES:
-                    try:
-                        self.temp_doc.removeObject(c.Name)
-                    except Exception:
-                        pass
-                    continue
-                if c.Label == orig_extra.Label:
-                    self._copy_map[orig_extra.Name] = c
-                self.temp_body.addObject(c)
+        # Jedes Extra dem naechstfolgenden Kettenfeature in body.Group zuordnen - trailing
+        # Extras (nach dem letzten Kettenfeature) werden dem LETZTEN Schritt angehaengt.
+        chain_feature_names = {f.Name for f in self._features}
+        extra_names_set = {e.Name for e in extras}
+        self._extras_before = {f.Name: [] for f in self._features}
+        pending = []
+        for m in body.Group:
+            if m.Name in chain_feature_names:
+                self._extras_before[m.Name] = pending
+                pending = []
+            elif m.Name in extra_names_set:
+                pending.append(m)
+        if pending and self._features:
+            self._extras_before[self._features[-1].Name].extend(pending)
 
         # Noch kein Tip gesetzt - Startzustand zeigt keine Feature-Geometrie, wie gewuenscht.
         self.temp_doc.recompute()
@@ -183,9 +240,7 @@ class PartPlayerTaskPanel:
         except Exception:
             pass
 
-        self.form = QtWidgets.QWidget()
-        self.form.setWindowTitle("FCProject: Part Player")
-        layout = QtWidgets.QVBoxLayout(self.form)
+        layout = QtWidgets.QVBoxLayout(self)
 
         layout.addWidget(QtWidgets.QLabel("Bearbeitetes Teil:"))
         name_label = QtWidgets.QLabel(body.Label)
@@ -200,7 +255,140 @@ class PartPlayerTaskPanel:
         self.step_button.clicked.connect(self._on_step)
         layout.addWidget(self.step_button)
 
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
+        buttons.rejected.connect(self.close)
+        layout.addWidget(buttons)
+
         self._update_progress_label()
+
+    def _copy_one_extra(self, orig_extra):
+        """Kopiert EIN Referenzobjekt, das nicht Teil der PartDesign-Feature-Kette ist (z.B.
+        eine LCS oder eine unbenutzte Referenz-Skizze) - lautlos, ohne eigenen "Schritt"-Klick
+        zu verbrauchen, aber genau zu dem Zeitpunkt aufgerufen, an dem es laut body.Group auch
+        im Original an der Reihe waere (siehe self._extras_before in __init__)."""
+        # Ein LCS (Part::LocalCoordinateSystem) braucht ihre EIGENEN internen Unterobjekte
+        # (X_Achse/Y_Achse/... als "role"-Features) rekursiv mitkopiert, sonst meldet FreeCAD
+        # "doesn't contain feature with role X_Axis" - das ist eine rein LOKALE Abhaengigkeit
+        # der LCS selbst, zieht nichts aus der Feature-Kette mit. Alles andere (z.B. eine lose
+        # Referenz-Skizze) dagegen NICHT rekursiv kopieren: die kann an einer Flaeche EINES
+        # Kettenobjekts haengen (AttachmentSupport) - mit recursive=True wuerde das die ganze
+        # Kette vorzeitig mitziehen (per Diagnose bestaetigt: 2 Extras fuehrten so zu 10
+        # zusaetzlichen Objekten im Dokument). Ohne recursive bleibt so eine Kopie einfach auf
+        # das ORIGINAL-Objekt verweisen - fuer reine Anzeige-Zwecke unschaedlich, das Original
+        # wird nirgends veraendert.
+        recursive = orig_extra.isDerivedFrom("App::LocalCoordinateSystem")
+        # return_all=True ist zwingend noetig (FreeCAD-Quellcode bestaetigt,
+        # Document.cpp/DocumentPyImp.cpp): OHNE das liefert copyObject() bei recursive=True NUR
+        # die explizit angeforderten Objekte zurueck (hier: nur die LCS selbst) - die rekursiv
+        # mitkopierten Abhaengigkeiten (ihre 7 Rollen-Objekte + eine ueberzaehlige
+        # Ursprungsebene) entstehen zwar trotzdem im Dokument, waren aber fuer unseren Code
+        # unsichtbar und konnten so nie umgebogen/aufgeraeumt werden (per Diagnose bestaetigt:
+        # copies enthielt nur 1 Element statt 9).
+        extra_copies = self.temp_doc.copyObject([orig_extra], recursive, True)
+        # Namen VOR dem moeglichen Loeschen in _reconcile_origin_copies() erfassen - siehe
+        # Kommentar dort, sonst droht ein Zugriff auf ein bereits geloeschtes Objekt.
+        extra_names = [c.Name for c in extra_copies]
+        removed_names = self._reconcile_origin_copies(extra_copies)
+        for c, c_name in zip(extra_copies, extra_names):
+            if c_name in removed_names:
+                continue
+            if c.TypeId in _ORIGIN_LIKE_TYPES:
+                # Geschuetzte eigene Rollen-Unterobjekte (z.B. die 7 Achsen/Ebenen einer LCS) -
+                # bleiben im Dokument, werden aber (wie beim Body-eigenen Ursprung ueblich)
+                # nicht als eigenes Body-Mitglied gefuehrt.
+                continue
+            if c.Label == orig_extra.Label:
+                self._copy_map[orig_extra.Name] = c
+            self.temp_body.addObject(c)
+
+    def _reconcile_origin_copies(self, copies):
+        """Ueberzaehlige Ursprungs-Duplikate (Achse/Ebene/Origin-Punkt), die als Nebenprodukt
+        eines rekursiven Kopiervorgangs entstehen - z.B. weil ein kopiertes Referenzobjekt an
+        einer Ursprungsebene DES ORIGINALS haengt (AttachmentSupport) -, sollen NICHT als
+        zweiter, ueberzaehliger Ursprung im Dokument liegen bleiben: der temporaere Body hat
+        schon seinen EIGENEN vollstaendigen Ursprung mit denselben sieben Rollen
+        (X_Axis/Y_Axis/Z_Axis/XY_Plane/XZ_Plane/YZ_Plane/Origin-Punkt). Jedes so betroffene
+        Duplikat wird ueber seine 'Role'-Eigenschaft dem Gegenstueck im temporaeren Body
+        zugeordnet, alle Verweise darauf umgebogen und das Duplikat geloescht.
+
+        WICHTIG: eigene, dedizierte Rollen-Unterobjekte EINES Objekts in derselben Kopie-Charge
+        (z.B. die 7 Rollen-Objekte einer LCS, verlinkt ueber deren eigene OriginFeatures-Liste)
+        sind davon ausgenommen - die gehoeren exklusiv zu diesem einen Objekt und duerfen nicht
+        mit dem geteilten Body-Ursprung zusammengelegt werden, sonst bricht die LCS.
+
+        Gibt die Namen der tatsaechlich geloeschten Duplikate zurueck."""
+        protected = set()
+        for c in copies:
+            for item in getattr(c, "OriginFeatures", []) or []:
+                protected.add(item.Name)
+
+        temp_roles = {}
+        for tf in self.temp_body.Origin.OriginFeatures:
+            role = getattr(tf, "Role", None)
+            if role:
+                temp_roles[role] = tf
+
+        # App::Origin-CONTAINER separat behandeln: der haengt intern untrennbar mit seinen
+        # eigenen 6+1 Rollen-Kindern zusammen - FreeCAD loescht beim Entfernen des Containers
+        # AUTOMATISCH auch alle seine Kinder mit (Kaskade, per Diagnose bestaetigt: ein Schritt
+        # erzeugte 8 Ursprungs-Duplikate inkl. Container, nur der Container wurde von uns
+        # explizit entfernt, alle 7 Kinder verschwanden trotzdem mit). Wuerden wir DANACH noch
+        # versuchen, die (schon laengst kaskadiert geloeschten) Kinder einzeln ueber
+        # removeObject()/Attributzugriff zu behandeln, kollidiert das mit dem laengst
+        # verschwundenen Objekt -> "Cannot access attribute 'TypeId' of deleted object".
+        containers = []
+        to_remove = []
+        for c in copies:
+            if c.TypeId == "App::Origin" and c.Name not in protected:
+                containers.append(c)
+                continue
+            if c.TypeId not in _ORIGIN_LIKE_TYPES or c.Name in protected:
+                continue
+            match = temp_roles.get(getattr(c, "Role", None))
+            if match is not None:
+                self._copy_map[c.Name] = match
+            to_remove.append(c)
+
+        removable = {c.Name for c in containers} | {c.Name for c in to_remove}
+        for c in copies:
+            if c.Name not in removable:
+                _redirect_links(c, self._copy_map)
+
+        # WICHTIG: Namen VOR dem Loeschen zwischenspeichern. Nach removeObject() zeigt die
+        # Python-Referenz auf ein geloeschtes FreeCAD-Objekt - ein erneutes Lesen von .Name
+        # (z.B. fuer removed_names) wuerde "Cannot access attribute 'Name' of deleted object"
+        # auslösen (per Diagnose bestaetigt: genau dieser Fehler brach zuvor mitten in
+        # _add_one_feature ab, noch bevor die frisch kopierte Feature dem Body zugeordnet
+        # wurde - daher blieb sie lose am Dokument haengen).
+        # Alle betroffenen Namen JETZT einsammeln, bevor irgendetwas geloescht wird - danach
+        # koennte ein Zugriff auf .Name selbst schon auf ein (per Kaskade) verschwundenes
+        # Objekt treffen.
+        container_names = [c.Name for c in containers]
+        to_remove_names = [c.Name for c in to_remove]
+
+        removed_names = set()
+
+        # Container ZUERST loeschen - raeumt die eigenen Kinder per Kaskade gleich mit weg.
+        for name in container_names:
+            try:
+                self.temp_doc.removeObject(name)
+                removed_names.add(name)
+            except Exception:
+                pass
+
+        # Danach die einzelnen Rollen-Objekte - nur noch ueber den zwischengespeicherten
+        # Namen (String) ansprechen, nie wieder die urspruengliche Python-Referenz `c`
+        # beruehren, die durch die Container-Kaskade schon ungueltig geworden sein kann.
+        for name in to_remove_names:
+            if self.temp_doc.getObject(name) is None:
+                removed_names.add(name)
+                continue
+            try:
+                self.temp_doc.removeObject(name)
+                removed_names.add(name)
+            except Exception:
+                pass
+        return removed_names
 
     def _update_progress_label(self):
         total = len(self._features)
@@ -226,7 +414,7 @@ class PartPlayerTaskPanel:
             self._add_one_feature(target_feature)
         except Exception as e:
             QtWidgets.QMessageBox.warning(
-                self.form, "FCProject",
+                self, "FCProject",
                 f"Feature „{target_feature.Label}“ konnte nicht kopiert werden: {str(e)}"
             )
             return
@@ -238,6 +426,13 @@ class PartPlayerTaskPanel:
         """Kopiert NUR das, was fuer target_feature NEU gebraucht wird (typischerweise die
         Feature selbst + ihre eigene Sketch, falls vorhanden) - alles bereits Kopierte (aus
         vorherigen Schritten oder den Extras) wird wiederverwendet statt erneut kopiert."""
+        # Extras, die laut body.Group VOR diesem Feature an der Reihe waeren (z.B. eine LCS
+        # oder eine unbenutzte Referenz-Skizze), zuerst lautlos mitkopieren - an der Stelle in
+        # der Reihenfolge, an der sie im Original tatsaechlich stehen, nicht pauschal am Anfang.
+        for orig_extra in self._extras_before.get(target_feature.Name, []):
+            if orig_extra.Name not in self._copy_map:
+                self._copy_one_extra(orig_extra)
+
         to_copy = []
         visited = set(self._copy_map.keys())
 
@@ -253,12 +448,12 @@ class PartPlayerTaskPanel:
 
         if to_copy:
             new_copies = self.temp_doc.copyObject(to_copy, False)
-            for orig, copy in zip(to_copy, new_copies):
-                if copy.TypeId in _ORIGIN_LIKE_TYPES:
-                    try:
-                        self.temp_doc.removeObject(copy.Name)
-                    except Exception:
-                        pass
+            # Namen VOR dem moeglichen Loeschen in _reconcile_origin_copies() erfassen - siehe
+            # Kommentar dort, sonst droht ein Zugriff auf ein bereits geloeschtes Objekt.
+            new_copy_names = [c.Name for c in new_copies]
+            removed_names = self._reconcile_origin_copies(new_copies)
+            for orig, copy, copy_name in zip(to_copy, new_copies, new_copy_names):
+                if copy_name in removed_names or copy.TypeId in _ORIGIN_LIKE_TYPES:
                     continue
                 self._copy_map[orig.Name] = copy
 
@@ -291,18 +486,6 @@ class PartPlayerTaskPanel:
             Gui.getDocument(self.temp_doc.Name).ActiveView.fitAll()
         except Exception:
             pass
-
-    def accept(self):
-        Gui.Control.closeDialog()
-        return True
-
-    def reject(self):
-        Gui.Control.closeDialog()
-        return True
-
-    def getStandardButtons(self):
-        return int(QtWidgets.QDialogButtonBox.Close.value)
-
 
 class PartPlayerCommand:
     """Startet den PartPlayer fuer den ausgewaehlten PartDesign-Body."""
@@ -338,7 +521,13 @@ class PartPlayerCommand:
             )
             return
 
-        Gui.Control.showDialog(PartPlayerTaskPanel(body))
+        dialog = PartPlayerDialog(body, main_win)
+        # Nicht-modaler Popup statt Aufgabenfenster (Nutzerwunsch) - Referenz halten, sonst
+        # koennte Python das Fenster einsammeln, solange es noch offen ist.
+        dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+        _open_players.append(dialog)
+        dialog.finished.connect(lambda *_: _open_players.remove(dialog) if dialog in _open_players else None)
+        dialog.show()
 
     def IsActive(self):
         sel = Gui.Selection.getSelection()
