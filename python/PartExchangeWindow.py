@@ -219,10 +219,11 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self.project_scope_label.setWordWrap(True)
         main_layout.addWidget(self.project_scope_label)
 
-        # Datei-Auswahl (Nutzerwunsch 2026-08-30): der Nutzer soll explizit per Haken
-        # bestaetigen muessen, in WELCHEN der gefundenen Dateien tatsaechlich umgehaengt
-        # werden soll, statt dass "Uebernehmen" automatisch ALLE betroffenen Dateien anfasst.
-        # Alle Haken sind per Default gesetzt (bisheriges Verhalten bleibt Standard).
+        # Datei-Auswahl (Nutzerwunsch 2026-08-30, verschaerft 2026-09-02): der Nutzer soll
+        # explizit per Haken bestaetigen muessen, in WELCHEN der gefundenen Dateien
+        # tatsaechlich umgehaengt werden soll. Standardmaessig KEIN Haken gesetzt (2026-09-02,
+        # Nutzerwunsch): bei mehreren identischen Teilen im Projekt soll "Uebernehmen" nicht
+        # aus Versehen ueberall gleichzeitig zuschlagen - der Nutzer waehlt bewusst aus.
         file_box = QtWidgets.QGroupBox("In diesen Dateien ersetzen:")
         file_layout = QtWidgets.QVBoxLayout(file_box)
         self.file_checklist = QtWidgets.QListWidget()
@@ -313,7 +314,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
             item = QtWidgets.QListWidgetItem(os.path.basename(path))
             item.setData(FILE_PATH_ROLE, path)
             item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
-            item.setCheckState(QtCore.Qt.Checked)
+            item.setCheckState(QtCore.Qt.Unchecked)
             self.file_checklist.addItem(item)
 
         parts = []
@@ -966,15 +967,125 @@ class PartExchangeWindow(QtWidgets.QDialog):
 
     # ------------------------------------------------------------- Apply
 
+    def _bring_doc_to_front(self, doc):
+        """Holt das MDI-Fenster von `doc` nach vorne (Nutzerwunsch 2026-09-02: die Datei soll
+        beim Abarbeiten "zur Bearbeitung geöffnet" - sprich sichtbar/aktiv - sein, nicht nur
+        im Hintergrund verändert werden). Die Datei selbst ist zu diesem Zeitpunkt bereits
+        geladen (find_all_project_joints_referencing() öffnet alle Kandidaten beim Sammeln) -
+        hier wird nur ihr Fenster in den Vordergrund geholt."""
+        try:
+            self._ensure_view(doc)
+            main_win = Gui.getMainWindow()
+            mdi_area = main_win.findChild(QtWidgets.QMdiArea)
+            if mdi_area is None:
+                return
+            label = doc.Label or doc.Name
+            matches = [
+                w for w in mdi_area.subWindowList()
+                if label in (w.windowTitle() or "") or doc.Name in (w.windowTitle() or "")
+            ]
+            if matches:
+                mdi_area.setActiveSubWindow(matches[-1])
+            Gui.setActiveDocument(doc.Name)
+        except Exception as e:
+            App.Console.PrintWarning(
+                f"FCProject PartExchange: Fenster für '{doc.Name}' konnte nicht nach vorne "
+                f"geholt werden: {str(e)}\n"
+            )
+
+    def _confirm_replace_instance(self, entry):
+        """EIN Bestätigungsdialog für GENAU dieses Vorkommen (Nutzerwunsch 2026-09-02): bei
+        mehreren identischen Teilen im Projekt soll gezielt nur eine einzelne Instanz ersetzt
+        werden können, statt automatisch alle gleichnamigen Vorkommen auf einmal. Hebt vorher
+        die betroffene Original-Instanz im 3D-Fenster/Baum hervor ("Ziel selektieren"), damit
+        der Nutzer sieht, welches der mehreren gleichen Teile gerade zur Debatte steht.
+
+        Gibt "yes" (dieses Vorkommen ersetzen), "no" (überspringen) oder "all" (dieses UND
+        alle weiteren Vorkommen ohne erneute Rückfrage ersetzen) zurück."""
+        target_obj = _entry_original_obj(entry)
+        self._clear_highlight_selection()
+        if target_obj is not None:
+            # Fokus + Selektion auf das GANZE Teil, nicht nur die referenzierte Fläche/Kante
+            # (Nutzerwunsch 2026-09-02): bei mehreren optisch IDENTISCHEN Teilen in derselben
+            # Baugruppe reicht das reine Einfärben einer Fläche nicht, wenn die Instanz gerade
+            # ausserhalb des sichtbaren Bereichs liegt oder winzig ist - die Ansicht zoomt
+            # deshalb zusätzlich auf genau dieses Teil (_fit_view_to_object(), wie schon für
+            # die eingebetteten Original-/Ersatzteil-Ansichten benutzt) und selektiert es als
+            # Ganzes (Baum + 3D), bevor zusätzlich die einzelne Fläche/Kante eingefärbt wird.
+            focus_doc = target_obj.Document
+            self._bring_doc_to_front(focus_doc)
+            try:
+                gui_doc = Gui.getDocument(focus_doc.Name)
+                if gui_doc and gui_doc.ActiveView:
+                    self._fit_view_to_object(gui_doc.ActiveView, focus_doc, target_obj)
+            except Exception as e:
+                App.Console.PrintWarning(
+                    f"FCProject PartExchange: Fokus auf '{target_obj.Label}' fehlgeschlagen: {str(e)}\n"
+                )
+            self._do_addselection(focus_doc.Name, target_obj.Name, "")
+            self._highlight_reference(target_obj, entry.get("subelement") or "", (1.0, 0.0, 1.0))
+
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("FCProject: Vorkommen ersetzen?")
+        box.setText(f"Dieses Vorkommen ersetzen?\n\n{entry.get('label', '')}")
+        yes_btn = box.addButton("Ja", QtWidgets.QMessageBox.YesRole)
+        box.addButton("Nein (überspringen)", QtWidgets.QMessageBox.NoRole)
+        all_btn = box.addButton("Alle ersetzen", QtWidgets.QMessageBox.YesRole)
+        box.setDefaultButton(yes_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is all_btn:
+            return "all"
+        if clicked is yes_btn:
+            return "yes"
+        return "no"
+
+    def _confirm_save_doc(self, doc):
+        """Fragt nach dem Bearbeiten EINER Datei explizit, ob/wie gespeichert werden soll
+        (Nutzerwunsch 2026-09-02) - statt wie bisher automatisch zu speichern, bevor es mit
+        der nächsten angehakten Datei weitergeht."""
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("FCProject: Datei speichern?")
+        doc_label = os.path.basename(doc.FileName) if doc.FileName else doc.Name
+        box.setText(f"'{doc_label}' wurde geändert. Jetzt speichern?")
+        yes_btn = box.addButton("Ja", QtWidgets.QMessageBox.YesRole)
+        box.addButton("Nein", QtWidgets.QMessageBox.NoRole)
+        saveas_btn = box.addButton("Speichern unter…", QtWidgets.QMessageBox.ActionRole)
+        box.setDefaultButton(yes_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is yes_btn:
+            try:
+                doc.save()
+            except Exception as e:
+                QtWidgets.QMessageBox.warning(self, "FCProject", f"Speichern fehlgeschlagen: {str(e)}")
+        elif clicked is saveas_btn:
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self, "Speichern unter", doc.FileName or "", "FreeCAD-Dokument (*.FCStd)"
+            )
+            if path:
+                try:
+                    doc.saveAs(path)
+                except Exception as e:
+                    QtWidgets.QMessageBox.warning(
+                        self, "FCProject", f"Speichern unter fehlgeschlagen: {str(e)}"
+                    )
+        # "Nein" -> bewusst ungespeichert lassen, weiter zur nächsten Datei.
+
     def _on_apply(self):
-        """Wendet das (einmalige, pro eindeutiger Referenz erstellte) Mapping auf ALLE
-        gesammelten Joints im GESAMTEN Projekt an - nicht nur im lokalen Dokument. Gruppiert
-        dafür self._original_joints (jetzt via find_all_project_joints_referencing() über alle
-        betroffenen Dateien hinweg gesammelt) nach ihrem jeweiligen Zieldokument, erstellt pro
-        Dokument GENAU EINEN lokalen Ersatzteil-Link, haengt dort alle passenden Joints um,
-        loest/speichert danach jedes betroffene Dokument. Ersetzt den frueheren "ein Fenster pro
-        Datei"-Ablauf, den der Nutzer bei vielen betroffenen Dateien (z.B. 58) als nicht
-        praktikabel verworfen hat."""
+        """Wendet das (einmalige, pro eindeutiger Referenz erstellte) Mapping auf die vom
+        Nutzer BESTAETIGTEN Joint-Vorkommen im GESAMTEN Projekt an - nicht nur im lokalen
+        Dokument. Gruppiert dafür self._original_joints (via find_all_project_joints_
+        referencing() über alle betroffenen Dateien hinweg gesammelt) nach ihrem jeweiligen
+        Zieldokument, erstellt pro Dokument GENAU EINEN lokalen Ersatzteil-Link, loest/speichert
+        danach jedes betroffene Dokument.
+
+        Nutzerwunsch 2026-09-02 ("4 gleiche Parts, nur eins soll geaendert werden"): anders als
+        frueher wird NICHT mehr automatisch JEDES Vorkommen ersetzt, das die Zuordnungstabelle
+        abdeckt - stattdessen wird pro angehakter Datei und darin PRO EINZELNEM Joint-Vorkommen
+        einzeln nachgefragt (_confirm_replace_instance(), mit "Alle ersetzen"-Abkuerzung), und
+        nach jeder Datei explizit gefragt, ob/wie gespeichert werden soll
+        (_confirm_save_doc())."""
         errors = []
         rewired_joints = 0
         mapping_by_key = {_joint_key(m["original"]): m for m in self._mappings}
@@ -1002,6 +1113,9 @@ class PartExchangeWindow(QtWidgets.QDialog):
             entries_by_doc.setdefault(entry["joint_obj"].Document, []).append(entry)
 
         touched_docs = []  # nur Dokumente, in denen tatsaechlich etwas umgehaengt wurde
+        # "Alle ersetzen" gilt global fuer den Rest dieses Durchlaufs (ueber alle noch
+        # kommenden Dateien/Vorkommen hinweg), nicht nur fuer die aktuelle Datei.
+        replace_all_remaining = False
 
         for doc, doc_entries in entries_by_doc.items():
             assembly_obj = find_assembly(doc)
@@ -1047,9 +1161,31 @@ class PartExchangeWindow(QtWidgets.QDialog):
             except Exception:
                 pass
 
+            self._bring_doc_to_front(doc)
+
             applied_here = 0
             joint_names_here = []
+            applied_originals = []  # NUR tatsaechlich ersetzte Original-Instanzen (fuer Ausblenden)
             for entry in doc_entries:
+                # Fuer normale Referenzen (nicht GroundedJoint/RigidGroup) muss ueberhaupt erst
+                # eine Zuordnung existieren - sonst gibt's nichts zu bestaetigen/anzuwenden.
+                if entry["joint_side"] not in WHOLE_OBJECT_SIDES:
+                    if mapping_by_key.get(_joint_key(entry)) is None:
+                        continue
+
+                # Pro Vorkommen einzeln nachfragen (Nutzerwunsch 2026-09-02), es sei denn
+                # "Alle ersetzen" wurde schon fuer den Rest dieses Durchlaufs gewaehlt.
+                if replace_all_remaining:
+                    decision = "yes"
+                else:
+                    decision = self._confirm_replace_instance(entry)
+                    if decision == "all":
+                        replace_all_remaining = True
+                        decision = "yes"
+
+                if decision != "yes":
+                    continue
+
                 # GroundedJoint braucht keine manuelle Zuordnung (kein Face/Edge-Konzept -
                 # ObjectToGround erdet immer das GANZE Objekt) - wird deshalb hier immer
                 # automatisch auf das Ersatzteil umgehaengt, unabhaengig von den Nutzer-
@@ -1061,6 +1197,9 @@ class PartExchangeWindow(QtWidgets.QDialog):
                         rewired_joints += 1
                         applied_here += 1
                         joint_names_here.append(entry["joint_obj"].Name)
+                        orig = _entry_original_obj(entry)
+                        if orig is not None:
+                            applied_originals.append(orig)
                     except Exception as e:
                         errors.append(
                             f"GroundedJoint '{entry['joint_obj'].Label}': ObjectToGround "
@@ -1084,6 +1223,8 @@ class PartExchangeWindow(QtWidgets.QDialog):
                         rewired_joints += 1
                         applied_here += 1
                         joint_names_here.append(entry["joint_obj"].Name)
+                        if original_member is not None:
+                            applied_originals.append(original_member)
                     except Exception as e:
                         errors.append(
                             f"RigidGroup '{entry['joint_obj'].Label}': Mitgliedschaft "
@@ -1092,8 +1233,6 @@ class PartExchangeWindow(QtWidgets.QDialog):
                     continue
 
                 mapping = mapping_by_key.get(_joint_key(entry))
-                if mapping is None:
-                    continue
                 if self._rewire_joint(
                     entry["joint_obj"], entry["joint_side"],
                     local_replacement, mapping["replacement_subelement"], errors
@@ -1101,6 +1240,11 @@ class PartExchangeWindow(QtWidgets.QDialog):
                     rewired_joints += 1
                     applied_here += 1
                     joint_names_here.append(entry["joint_obj"].Name)
+                    orig = _entry_original_obj(entry)
+                    if orig is not None:
+                        applied_originals.append(orig)
+
+            self._clear_highlight_selection()
 
             if applied_here == 0:
                 continue
@@ -1108,8 +1252,9 @@ class PartExchangeWindow(QtWidgets.QDialog):
             doc_file_name = os.path.basename(doc.FileName) if doc.FileName else doc.Name
             touched_docs.append(f"{doc_file_name} [{', '.join(joint_names_here)}]")
 
-            # Alle betroffenen Original-Vorkommen in DIESEM Dokument ausblenden.
-            for local_orig in local_originals.values():
+            # NUR die tatsaechlich ersetzten Original-Instanzen ausblenden - uebersprungene
+            # (per "Nein" abgelehnte) Instanzen bleiben unangetastet sichtbar.
+            for local_orig in applied_originals:
                 try:
                     vobj = getattr(local_orig, "ViewObject", None)
                     if vobj is not None:
@@ -1122,14 +1267,8 @@ class PartExchangeWindow(QtWidgets.QDialog):
             except Exception as e:
                 errors.append(f"Neuberechnung von '{doc.Name}' fehlgeschlagen: {str(e)}")
 
-            # Alle Dokumente AUSSER dem eigenen, gerade im Fenster gezeigten Original-Dokument
-            # gleich speichern - bei vielen betroffenen Dateien sollen die nicht alle offen und
-            # ungespeichert haengen bleiben.
-            if doc is not self.original_doc:
-                try:
-                    doc.save()
-                except Exception as e:
-                    errors.append(f"Speichern von '{doc.Name}' fehlgeschlagen: {str(e)}")
+            # Explizit nachfragen statt automatisch zu speichern (Nutzerwunsch 2026-09-02).
+            self._confirm_save_doc(doc)
 
         App.Console.PrintMessage(
             f"FCProject PartExchange: {rewired_joints} Joint(s) in {len(touched_docs)} "
@@ -1289,7 +1428,14 @@ class PartExchangeWindow(QtWidgets.QDialog):
                 except Exception:
                     pass
 
-        new_ref = [replacement_obj, [replacement_sub or "", ""]]
+        # Reference1/2 tragen den Sub-Namen ZWEIMAL (Element + "Vertex-Hint" fuer die
+        # Platzierung, siehe UtilsAssembly.findPlacement()/JointObject.handleInitialSelection()
+        # - "We add sub_name twice ... both are the same"). Ein leerer zweiter Eintrag laesst
+        # findPlacement() in den "ganzes Teil ohne Sub-Element"-Fallback laufen und still eine
+        # Identitaets-Placement statt der echten Flaechen-/Kanten-Position liefern - siehe
+        # patches/bugreport-fixed-joint-no-coincidence/Questions.md auf solver-root-cause-fix.
+        sub = replacement_sub or ""
+        new_ref = [replacement_obj, [sub, sub]]
         try:
             if side == 1:
                 joint.Reference1 = new_ref
