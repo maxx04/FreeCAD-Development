@@ -1,0 +1,193 @@
+diff --git a/src/Mod/Assembly/App/AssemblyLink.cpp b/src/Mod/Assembly/App/AssemblyLink.cpp
+index d2dface315..fd5588a66f 100644
+--- a/src/Mod/Assembly/App/AssemblyLink.cpp
++++ b/src/Mod/Assembly/App/AssemblyLink.cpp
+@@ -21,6 +21,7 @@
+  *                                                                          *
+  ***************************************************************************/
+ 
++#include <algorithm>
+ #include <cmath>
+ #include <vector>
+ 
+@@ -57,6 +58,8 @@ using namespace Assembly;
+ 
+ PROPERTY_SOURCE(Assembly::AssemblyLink, App::Part)
+ 
++bool AssemblyLink::updatingContents = false;
++
+ AssemblyLink::AssemblyLink()
+ {
+     ADD_PROPERTY_TYPE(
+@@ -315,6 +318,13 @@ void AssemblyLink::updateParentJoints()
+ 
+ void AssemblyLink::updateContents()
+ {
++    // See the `updatingContents` declaration in the header for why this guard is needed and
++    // why it has to be shared across all AssemblyLink instances rather than per-instance.
++    if (updatingContents) {
++        return;
++    }
++    Base::StateLocker guard(updatingContents, true);
++
+     synchronizeComponents();
+ 
+     if (isRigid()) {
+@@ -644,8 +654,20 @@ void AssemblyLink::handleJointReference(
+     }
+ 
+     // 2. Map to local link
++    App::DocumentObject* localLink = nullptr;
++    std::string subPrefix;  // nur belegt, wenn ueber findLocalAncestor() gefunden
+     auto it = objLinkMap.find(externalComponent);
+-    if (it == objLinkMap.end()) {
++    if (it != objLinkMap.end()) {
++        localLink = it->second;
++    }
++    else {
++        // FCPROJECT-PATCH: siehe patches/bugreport-rigid-nested-joint-reference/README.md -
++        // externalComponent ist kein direktes Kind (z.B. ein Enkelkind aus einer
++        // verschachtelten Rigid=False-Unterbaugruppe) - Eltern-Kette hochlaufen statt
++        // sofort aufzugeben.
++        localLink = findLocalAncestor(externalComponent, subPrefix);
++    }
++    if (!localLink) {
+         Base::Console().warning(
+             "AssemblyLink: Could not map external component %s to a local link for joint %s\n",
+             externalComponent->getNameInDocument(),
+@@ -653,7 +675,6 @@ void AssemblyLink::handleJointReference(
+         );
+         return;
+     }
+-    App::DocumentObject* localLink = it->second;
+ 
+     // 3. Set the new reference
+     // The local joint now points to the local link [LocalLink, "Sub"]
+@@ -663,8 +684,16 @@ void AssemblyLink::handleJointReference(
+ 
+     // 4. Sync sub-elements
+     // The sub-elements (e.g. "Body.Face1") are relative to the component.
+-    // Since the LocalLink points to the ExternalPart, the relative path is identical.
++    // Since the LocalLink points to the ExternalPart, the relative path is identical - außer
++    // wenn wir gerade ueber findLocalAncestor() umgeleitet haben: dann ist localLink nicht
++    // mehr die ExternalPart selbst, sondern ein Vorfahre davon, und subPrefix traegt den
++    // fehlenden Zwischenpfad (z.B. "Halter." bei Reference auf "Halter.Edge34" statt "Edge34").
+     std::vector<std::string> subs1 = prop1->getSubValues();
++    if (!subPrefix.empty()) {
++        for (auto& sub : subs1) {
++            sub = subPrefix + sub;
++        }
++    }
+     std::vector<std::string> subs2 = prop2->getSubValues();
+ 
+     bool changed = false;
+@@ -685,6 +714,63 @@ void AssemblyLink::handleJointReference(
+     }
+ }
+ 
++// FCPROJECT-PATCH: siehe patches/bugreport-rigid-nested-joint-reference/README.md und der
++// Kommentar bei der Deklaration im Header. Laeuft von obj aus die Struktur-Eltern-Kette hoch
++// (nicht getInList() blind nehmen - das kann auch Joints/andere Referenzhalter liefern, nicht
++// nur den strukturellen Container; stattdessen wird unter den getInList()-Kandidaten gezielt
++// der gesucht, dessen "Group"-Property obj tatsaechlich enthaelt), bis ein in objLinkMap
++// bekannter Vorfahre gefunden wird. outSubPrefix erhaelt dabei den durchlaufenen Pfad als
++// Punkt-getrennten Praefix (z.B. "Halter." wenn obj das Enkelkind "Halter" ist und der
++// gefundene Vorfahre dessen direkter Container war) - leer, wenn nichts gefunden wurde oder
++// obj selbst schon der Treffer war.
++App::DocumentObject* AssemblyLink::findLocalAncestor(
++    App::DocumentObject* obj,
++    std::string& outSubPrefix
++)
++{
++    outSubPrefix.clear();
++
++    App::DocumentObject* current = obj;
++    std::string prefix;
++    int maxDepth = 32;
++
++    while (current && maxDepth-- > 0) {
++        App::DocumentObject* parent = nullptr;
++        for (auto* candidate : current->getInList()) {
++            if (!candidate) {
++                continue;
++            }
++            auto* groupProp
++                = dynamic_cast<App::PropertyLinkList*>(candidate->getPropertyByName("Group"));
++            if (!groupProp) {
++                continue;
++            }
++            const auto& members = groupProp->getValues();
++            if (std::find(members.begin(), members.end(), current) != members.end()) {
++                parent = candidate;
++                break;
++            }
++        }
++
++        if (!parent) {
++            return nullptr;
++        }
++
++        const char* name = current->getNameInDocument();
++        prefix = std::string(name ? name : "?") + "." + prefix;
++
++        auto it = objLinkMap.find(parent);
++        if (it != objLinkMap.end()) {
++            outSubPrefix = prefix;
++            return it->second;
++        }
++
++        current = parent;
++    }
++
++    return nullptr;
++}
++
+ void AssemblyLink::ensureNoJointGroup()
+ {
+     // Make sure there is no joint group
+diff --git a/src/Mod/Assembly/App/AssemblyLink.h b/src/Mod/Assembly/App/AssemblyLink.h
+index 700b1821d9..716be71610 100644
+--- a/src/Mod/Assembly/App/AssemblyLink.h
++++ b/src/Mod/Assembly/App/AssemblyLink.h
+@@ -80,6 +80,14 @@ public:
+         App::DocumentObject* lJoint,
+         const char* refName
+     );
++    // FCPROJECT-PATCH: siehe patches/bugreport-rigid-nested-joint-reference/README.md.
++    // handleJointReference()'s objLinkMap-Lookup kennt nur direkte Kinder der gespiegelten
++    // Baugruppe. Zeigt eine Referenz auf ein Enkelkind (moeglich, wenn eine verschachtelte
++    // Unterbaugruppe Rigid=False ist - siehe UtilsAssembly.getComponentReference()), laeuft
++    // diese Hilfsfunktion die Eltern-Kette hoch, bis sie einen in objLinkMap bekannten
++    // Vorfahren findet, und liefert den dabei durchlaufenen Pfad als Sub-Praefix zurueck -
++    // exakt das Gegenstueck zu getComponentReference()s eigener Kodierung beim Joint-Anlegen.
++    App::DocumentObject* findLocalAncestor(App::DocumentObject* obj, std::string& outSubPrefix);
+     void ensureNoJointGroup();
+     JointGroup* ensureJointGroup();
+     std::vector<App::DocumentObject*> getJoints();
+@@ -98,6 +106,26 @@ protected:
+     /// get called by the container whenever a property has been changed
+     void onChanged(const App::Property* prop) override;
+     void onDocumentRestored() override;
++
++private:
++    // Reentrancy guard for updateContents(). synchronizeComponents() adds/removes objects in
++    // this AssemblyLink's own Group, which synchronously re-enters onChanged(&Group) ->
++    // updateContents(). That re-entry is not limited to the same instance: onChanged(&Group)
++    // walks getInList() and calls updateContents() on *every* AssemblyLink that references this
++    // one, which can in turn reference the first one back, i.e. the cascade can ping-pong across
++    // several distinct AssemblyLink instances rather than just recursing into itself. A
++    // per-instance flag only stops the single-instance case, so this needs to be shared by all
++    // instances. Normally the cascade settles after one or two passes because everything is
++    // already in sync. But if a component of the *source* assembly is being deleted while some
++    // AssemblyLink still mirrors it (e.g. the same sub-assembly is linked more than once - see
++    // FCProject bugreport "loeschfehler"), synchronizeComponents() can never find a stable match
++    // for the vanishing source object and keeps recreating a mirror for it on every re-entry,
++    // which never terminates (FreeCAD hangs, 100% CPU on the main thread, no further Report View
++    // output). This flag makes any nested re-entry - same instance or not - a no-op; the
++    // outermost call still runs synchronizeComponents()/synchronizeJoints() to completion, and
++    // any sync that a nested call would have performed happens on the next legitimate
++    // execute()/recompute instead.
++    static bool updatingContents;
+ };
+ 
+ 

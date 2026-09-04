@@ -131,6 +131,27 @@ run() {
 
 cd "$FC_SRC"
 
+# WICHTIG (Vorfall 2026-09-04): dieses Skript setzt voraus, dass FC_SRC auf einem
+# PLAIN-Branch steht, der ein sauberer Vorfahre von origin/main ist (git-apply-
+# basierte Patches, kein eigener Commit-Verlauf) - sonst schlaegt der ff-only-
+# Merge in Schritt 2 unverstaendlich fehl ("Vorspulen nicht moeglich"), ohne dass
+# der eigentliche Grund (falscher Branch) in der Fehlermeldung auftaucht. Kam vor,
+# weil parallel ein Solver-Experiment auf einem eigenen Branch
+# (fcproject/assembly-solver-fix) direkt in diesem Checkout lief. Solche
+# Experimente gehoeren seit der "strikten Trennung" nach
+# assembly-solver-sandbox/ (eigener, unabhaengiger sparse-checkout) - siehe
+# dortige SANDBOX_NOTES.md. Lieber hier laut abbrechen als den ff-only-Fehler
+# unkommentiert durchschlagen zu lassen.
+CURRENT_BRANCH="$(git branch --show-current)"
+if [[ "$CURRENT_BRANCH" != "main" ]]; then
+  echo "FEHLER: ${FC_SRC} steht auf Branch '${CURRENT_BRANCH}', nicht 'main'."
+  echo "Dieses Skript erwartet einen Plain-Branch, der sauber auf origin/main"
+  echo "vorgespult werden kann. Falls hier ein Solver-Experiment lief: nach"
+  echo "assembly-solver-sandbox/ auslagern (siehe dortige SANDBOX_NOTES.md),"
+  echo "dann 'git checkout main' und dieses Skript erneut starten."
+  exit 1
+fi
+
 # CMakeUserPresets.json ist von FreeCADs eigenem .gitignore ausgeschlossen
 # (Standard-CMake-Konvention) - kann also genauso unbemerkt verlorengehen wie
 # die Patches. Aus der durablen Kopie hier wiederherstellen, falls noetig.
