@@ -23,7 +23,7 @@
 #      Probleme von eigenen Patch-Problemen, siehe Projekt-Memory
 #      "FreeCAD rebuild debugging").
 #   5. CMake reconfigure + voller Build (nur Umgebungs-Patches drauf).
-#   6. Bei Erfolg: Feature-Patches (aktuell: JointObject.py) neu anwenden,
+#   6. Bei Erfolg: Feature-Patches (aktuell: FileDialog-Suchfilter) neu anwenden,
 #      nochmal inkrementell bauen, installieren.
 #   7. Bei JEDEM Fehlschlag (Patch passt nicht mehr, Build bricht): Abbruch
 #      mit klarer Meldung, WELCHER Schritt betroffen ist - kein
@@ -89,35 +89,25 @@ ENV_PATCHED_FILES=(
 
 # Feature-/Bugfix-Patches: nur relevant fuer FCProjects eigenen Workflow,
 # werden ERST nach einem gruenen Vanilla-Build wieder aufgelegt.
-# freecad-assembly-link-delete-hang.patch (2026-08-23 konsolidiert): touchte EXAKT dieselben
-# beiden Dateien wie freecad-assembly-grounded-joint-nested-flex.patch - beide wurden von
-# git diff jeweils als VOLLSTAENDIGER kumulativer Snapshot dieser Dateien generiert, wodurch
-# das zweite git apply beim Reapply immer auf die vom ersten Patch bereits vorhandenen Hunks
-# lief (Konflikt, sichtbar erst beim naechsten update-and-rebuild-freecad.sh-Lauf nach einem
-# Upstream-Merge). delete-hang.patch-Datei bleibt fuer die Historie erhalten, wird aber nicht
-# mehr separat angewendet - ihr Inhalt ist vollstaendig in grounded-joint-nested-flex.patch
-# aufgegangen (siehe patches/README.md).
+#
+# WICHTIG (2026-09-04, Nutzerauftrag "strikte Trennung"): alle Assembly-/Solver-
+# spezifischen Patches (frueher hier: freecad-assembly-jointobject.patch,
+# freecad-assembly-grounded-joint-nested-flex.patch,
+# freecad-assembly-viewprovider-null-crash.patch, freecad-assembly-link-delete-
+# hang.patch) sind nach /home/maxx/Dokumente/FreeCAD-Development/assembly-solver-
+# sandbox/patches/ umgezogen - dieses Skript wendet sie NICHT MEHR an, die echte
+# Installation (FC_INSTALL) bekommt sie bis auf Weiteres NICHT automatisch. Bei
+# Bedarf einen einzelnen Patch gezielt aus dem Sandbox-Repo hierher kopieren und
+# manuell mit `git apply` einspielen (siehe dortige patches/README.md), statt ihn
+# dauerhaft wieder in dieses Array einzutragen.
 FEATURE_PATCHES=(
-  "freecad-assembly-jointobject.patch"
   "freecad-filedialog-search-filter.patch"
-  "freecad-assembly-grounded-joint-nested-flex.patch"
-  "freecad-assembly-viewprovider-null-crash.patch"
 )
 # WICHTIG: hier ALLE von den FEATURE_PATCHES beruehrten Dateien eintragen,
-# nicht nur einen Teil - sonst faellt eine vergessene Datei (z. B. AssemblyObject.cpp
-# oder CommandSolveAssembly.py, siehe Vorfall 2026-08-18) beim Resume nach einem
-# Abbruch faelschlich als "unerwartete Aenderung" durch Schritt 1 und muss jedes
-# Mal von Hand bereinigt werden. AssemblyObject.h hier ergaenzt (2026-08-23) - fehlte
-# bisher trotz Aenderungen durch Fix 16 (getJoints()-Signatur), exakt derselbe
-# Fehler wie der 2026-08-18-Vorfall, nur an einer neuen Datei.
+# nicht nur einen Teil - sonst faellt eine vergessene Datei beim Resume nach
+# einem Abbruch faelschlich als "unerwartete Aenderung" durch Schritt 1 und muss
+# jedes Mal von Hand bereinigt werden (siehe Vorfall 2026-08-18/2026-08-23).
 FEATURE_PATCHED_FILES=(
-  "src/Mod/Assembly/JointObject.py"
-  "src/Mod/Assembly/App/AssemblyLink.cpp"
-  "src/Mod/Assembly/App/AssemblyLink.h"
-  "src/Mod/Assembly/App/AssemblyObject.cpp"
-  "src/Mod/Assembly/App/AssemblyObject.h"
-  "src/Mod/Assembly/Gui/ViewProviderAssembly.cpp"
-  "src/Mod/Assembly/CommandSolveAssembly.py"
   "src/Gui/FileDialog.cpp"
   "src/Gui/FileDialog.h"
 )
