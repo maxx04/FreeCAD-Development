@@ -1,0 +1,29 @@
+diff --git a/src/Mod/Assembly/UtilsAssembly.py b/src/Mod/Assembly/UtilsAssembly.py
+index 7482a7e33a..599b3f8cf6 100644
+--- a/src/Mod/Assembly/UtilsAssembly.py
++++ b/src/Mod/Assembly/UtilsAssembly.py
+@@ -1005,6 +1005,24 @@ def findPlacement(ref, ignoreVertex=False):
+     if not obj:
+         return App.Placement()
+ 
++    # FCPROJECT-PATCH (2026-09-05): App::Link hat keine eigene "Shape"-Eigenschaft im
++    # normalen Sinn - sie wird on-demand aus LinkedObject berechnet (LinkBaseExtension::
++    # extensionGetPropertyByName() schliesst "Shape" bewusst vom generischen Property-
++    # Forwarding aus, siehe src/App/Link.cpp). Ist LinkedObject zum Zeitpunkt dieses
++    # Aufrufs noch nicht aufgeloest - z.B. waehrend der Lade-Kaskade beim Oeffnen einer
++    # Mehrdatei-Baugruppe, bevor alle extern verlinkten Dateien angehaengt sind -, fehlt
++    # das Attribut kurzzeitig komplett, statt nur ein leeres Shape zu liefern. Ohne diese
++    # Pruefung brach `obj.Shape` weiter unten mit einem rohen AttributeError durch
++    # ("'App.DocumentObject' object has no attribute 'Shape'"), reproduzierbar live
++    # beobachtet und per FreeCAD-Python-Konsole verifiziert: dasselbe Objekt ist kurz
++    # danach, sobald die Ladekaskade fertig ist, wieder normal aufloesbar. Genau wie bei
++    # einem nicht auflösbaren Sub-Element (siehe die "return App.Placement()"-Fallbacks
++    # weiter unten) wird das hier defensiv als Identity-Placement behandelt statt als
++    # Absturz - der naechste Recompute (sobald alles geladen ist) korrigiert die
++    # Platzierung dann ganz normal.
++    if not hasattr(obj, "Shape"):
++        return App.Placement()
++
+     elt = getElementName(ref[1][0])
+     vtx = getElementName(ref[1][1])
+ 

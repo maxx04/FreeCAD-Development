@@ -117,12 +117,23 @@ ENV_PATCHED_FILES=(
 # valueChanged->textChanged-Signalverbindungen fuer die Joint-Distanz-/Winkel-
 # Spinboxen, behebt GENAU den obigen "Base::Quantity cannot be converted"-Bug),
 # ohne jede Abhaengigkeit zu addressing-utils.
+# WICHTIG (Vorfall 2026-09-05, zweiter Fund): App::Link hat keine eigene "Shape"-Property
+# im normalen Sinn - sie wird on-demand aus LinkedObject berechnet
+# (LinkBaseExtension::extensionGetPropertyByName() schliesst "Shape" bewusst vom
+# generischen Property-Forwarding aus, siehe src/App/Link.cpp). Ist LinkedObject waehrend
+# der Lade-Kaskade einer Mehrdatei-Baugruppe noch nicht aufgeloest, fehlt das Attribut
+# kurzzeitig komplett -> "'App.DocumentObject' object has no attribute 'Shape'" in
+# UtilsAssembly.findPlacement(), reproduzierbar live per Python-Konsole verifiziert
+# (selbstheilend: Sekunden spaeter, sobald alles geladen ist, wieder normal aufloesbar).
+# freecad-assembly-link-shape-race-fix.patch behandelt das defensiv wie einen nicht
+# aufloesbaren Sub-Element-Fall (Identity-Placement statt Absturz).
 FEATURE_PATCHES=(
   "freecad-filedialog-search-filter.patch"
   "freecad-app-getplacementof-partdesign-feature.patch"
   "freecad-assembly-grounded-joint-nested-flex.patch"
   "freecad-assembly-quantity-signal-fix.patch"
   "freecad-assembly-viewprovider-null-crash.patch"
+  "freecad-assembly-link-shape-race-fix.patch"
 )
 # WICHTIG: hier ALLE von den FEATURE_PATCHES beruehrten Dateien eintragen,
 # nicht nur einen Teil - sonst faellt eine vergessene Datei beim Resume nach
@@ -137,6 +148,7 @@ FEATURE_PATCHED_FILES=(
   "src/Mod/Assembly/App/AssemblyLink.h"
   "src/Mod/Assembly/JointObject.py"
   "src/Mod/Assembly/Gui/ViewProviderAssembly.cpp"
+  "src/Mod/Assembly/UtilsAssembly.py"
 )
 
 DRY_RUN=0
