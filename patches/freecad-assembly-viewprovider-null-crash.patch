@@ -1,5 +1,5 @@
 diff --git a/src/Mod/Assembly/Gui/ViewProviderAssembly.cpp b/src/Mod/Assembly/Gui/ViewProviderAssembly.cpp
-index a751446264..162762ab9b 100644
+index a751446264..2d0977adfd 100644
 --- a/src/Mod/Assembly/Gui/ViewProviderAssembly.cpp
 +++ b/src/Mod/Assembly/Gui/ViewProviderAssembly.cpp
 @@ -303,6 +303,14 @@ bool ViewProviderAssembly::setEdit(int mode)
@@ -17,32 +17,7 @@ index a751446264..162762ab9b 100644
          connectSolverUpdate = assembly->signalSolverUpdate.connect([this] {
              UpdateSolverInformation();
          });
-@@ -712,15 +720,21 @@ bool ViewProviderAssembly::canDragObjectIn3d(App::DocumentObject* obj) const
- 
-     auto* assemblyPart = getObject<AssemblyObject>();
- 
--    // Check if the selected object is a child of the assembly
--    if (!assemblyPart->hasObject(obj, true)) {
-+    // FCPROJECT-PATCH (Befund 3, "Adressieren statt Kopieren", solver-root-cause-fix, 2026-09-03,
-+    // live durch Nutzer-Maus-Drag aufgedeckt): auf hasRealObject() umgestellt statt des rohen
-+    // hasObject() - das vergleicht nur lokale Pointer und findet ein ECHTES, ueber eine
-+    // verschachtelte flexible AssemblyLink erreichtes Objekt nie (siehe ausfuehrliche
-+    // Begruendung am Deklarationsort in AssemblyObject.h). Ohne diesen Fix wurde ein korrekt
-+    // aufgeloestes, tief verschachteltes Objekt hier komplett vom Ziehen ausgeschlossen, obwohl
-+    // es logisch zu dieser Baugruppe gehoert.
-+    if (!assemblyPart->hasRealObject(obj)) {
-         // hasObject does not detect LinkElements (see
-         // https://github.com/FreeCAD/FreeCAD/issues/16113) the following block can be removed if
-         // the issue is fixed :
-         auto* linkEl = dynamic_cast<App::LinkElement*>(obj);
-         if (linkEl) {
-             auto* linkGroup = linkEl->getLinkGroup();
--            if (assemblyPart->hasObject(linkGroup, true)) {
-+            if (assemblyPart->hasRealObject(linkGroup)) {
-                 return true;
-             }
-         }
-@@ -1807,6 +1821,17 @@ void ViewProviderAssembly::UpdateSolverInformation()
+@@ -1807,6 +1815,17 @@ void ViewProviderAssembly::UpdateSolverInformation()
      // Updates Solver Information with the Last solver execution at AssemblyObject level
      auto* assembly = getObject<AssemblyObject>();
  
@@ -60,7 +35,7 @@ index a751446264..162762ab9b 100644
      int dofs = assembly->getLastDoF();
      bool hasRedundancies = assembly->getLastHasRedundancies();
      bool hasMalformed = assembly->getLastHasMalformedConstraints();
-@@ -1887,13 +1912,25 @@ void ViewProviderAssembly::updateTaskPanel(bool show)
+@@ -1887,13 +1906,25 @@ void ViewProviderAssembly::updateTaskPanel(bool show)
          return;
      }
  

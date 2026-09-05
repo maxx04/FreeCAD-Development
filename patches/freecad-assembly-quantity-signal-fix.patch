@@ -1,0 +1,45 @@
+diff --git a/src/Mod/Assembly/JointObject.py b/src/Mod/Assembly/JointObject.py
+index f743aae434..2ffc1e1e9e 100644
+--- a/src/Mod/Assembly/JointObject.py
++++ b/src/Mod/Assembly/JointObject.py
+@@ -1790,11 +1790,18 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+             self.createJointObject()
+             self.visibilityBackup = False
+ 
+-        self.jForm.angleSpinbox.valueChanged.connect(self.onAngleChanged)
+-        self.jForm.distanceSpinbox.valueChanged.connect(self.onDistanceChanged)
+-        self.jForm.distanceSpinbox2.valueChanged.connect(self.onDistance2Changed)
+-        self.jForm.offsetSpinbox.valueChanged.connect(self.onOffsetChanged)
+-        self.jForm.rotationSpinbox.valueChanged.connect(self.onRotationChanged)
++        # valueChanged is overloaded (double / Base::Quantity) in C++, but PySide6 only exposes
++        # the Base::Quantity variant to Python in this build, which it cannot marshal
++        # ("parameter 0 of type Base::Quantity cannot be converted") - the slot is never even
++        # invoked, so the typed value is silently lost. textChanged is emitted right after the
++        # same internal value update (see QuantitySpinBox::updateFromCache) and is a plain
++        # QString, so it connects safely; the handlers below ignore the argument anyway and
++        # re-read rawValue from the spinbox.
++        self.jForm.angleSpinbox.textChanged.connect(self.onAngleChanged)
++        self.jForm.distanceSpinbox.textChanged.connect(self.onDistanceChanged)
++        self.jForm.distanceSpinbox2.textChanged.connect(self.onDistance2Changed)
++        self.jForm.offsetSpinbox.textChanged.connect(self.onOffsetChanged)
++        self.jForm.rotationSpinbox.textChanged.connect(self.onRotationChanged)
+         bind = Gui.ExpressionBinding(self.jForm.angleSpinbox).bind(self.joint, "Angle")
+         bind = Gui.ExpressionBinding(self.jForm.distanceSpinbox).bind(self.joint, "Distance")
+         bind = Gui.ExpressionBinding(self.jForm.distanceSpinbox2).bind(self.joint, "Distance2")
+@@ -1818,10 +1825,12 @@ class TaskAssemblyCreateJoint(QtCore.QObject):
+         self.jForm.limitCheckbox3.stateChanged.connect(self.adaptUi)
+         self.jForm.limitCheckbox4.stateChanged.connect(self.adaptUi)
+ 
+-        self.jForm.limitLenMinSpinbox.valueChanged.connect(self.onLimitLenMinChanged)
+-        self.jForm.limitLenMaxSpinbox.valueChanged.connect(self.onLimitLenMaxChanged)
+-        self.jForm.limitRotMinSpinbox.valueChanged.connect(self.onLimitRotMinChanged)
+-        self.jForm.limitRotMaxSpinbox.valueChanged.connect(self.onLimitRotMaxChanged)
++        # Gleicher valueChanged/Base::Quantity-Marshalling-Bug wie oben - textChanged statt
++        # valueChanged verwenden (siehe Kommentar weiter oben).
++        self.jForm.limitLenMinSpinbox.textChanged.connect(self.onLimitLenMinChanged)
++        self.jForm.limitLenMaxSpinbox.textChanged.connect(self.onLimitLenMaxChanged)
++        self.jForm.limitRotMinSpinbox.textChanged.connect(self.onLimitRotMinChanged)
++        self.jForm.limitRotMaxSpinbox.textChanged.connect(self.onLimitRotMaxChanged)
+         bind = Gui.ExpressionBinding(self.jForm.limitLenMinSpinbox).bind(self.joint, "LengthMin")
+         bind = Gui.ExpressionBinding(self.jForm.limitLenMaxSpinbox).bind(self.joint, "LengthMax")
+         bind = Gui.ExpressionBinding(self.jForm.limitRotMinSpinbox).bind(self.joint, "AngleMin")

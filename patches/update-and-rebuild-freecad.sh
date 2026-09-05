@@ -90,18 +90,39 @@ ENV_PATCHED_FILES=(
 # Feature-/Bugfix-Patches: nur relevant fuer FCProjects eigenen Workflow,
 # werden ERST nach einem gruenen Vanilla-Build wieder aufgelegt.
 #
-# WICHTIG (2026-09-04, Nutzerauftrag "strikte Trennung"): alle Assembly-/Solver-
-# spezifischen Patches (frueher hier: freecad-assembly-jointobject.patch,
-# freecad-assembly-grounded-joint-nested-flex.patch,
-# freecad-assembly-viewprovider-null-crash.patch, freecad-assembly-link-delete-
-# hang.patch) sind nach /home/maxx/Dokumente/FreeCAD-Development/assembly-solver-
-# sandbox/patches/ umgezogen - dieses Skript wendet sie NICHT MEHR an, die echte
-# Installation (FC_INSTALL) bekommt sie bis auf Weiteres NICHT automatisch. Bei
-# Bedarf einen einzelnen Patch gezielt aus dem Sandbox-Repo hierher kopieren und
-# manuell mit `git apply` einspielen (siehe dortige patches/README.md), statt ihn
-# dauerhaft wieder in dieses Array einzutragen.
+# WICHTIG (2026-09-05, Nutzerkorrektur - ersetzt die 2026-09-04-Regel "strikte
+# Trennung, gar keine Assembly-Patches mehr hier"): jene Regel hatte zur Folge,
+# dass JEDER Lauf dieses Skripts ein FreeCAD mit komplett VANILLA Assembly-Modul
+# installierte - alle unten stehenden, bereits validierten (nicht-
+# experimentellen) Assembly-Bugfixes gingen dabei automatisch verloren, ohne
+# dass es auffiel (bestaetigt: JointObject.py der Installation war 0 Byte
+# Unterschied zu sauberem main, obwohl die Fixes laengst dokumentiert waren -
+# fuehrte zum "onDistanceChanged: Base::Quantity cannot be converted"-Vorfall).
+# Automatische Anwendung dieser Patches hat vorher bereits mehrfach zuverlaessig
+# funktioniert und ist wieder aktiv. NUR das aktiv laufende Experiment
+# "Adressieren statt Kopieren" (freecad-assembly-addressing-utils.patch,
+# freecad-assembly-link-subjoints-revert.patch) bleibt ausschliesslich in
+# /home/maxx/Dokumente/FreeCAD-Development/assembly-solver-sandbox/patches/ und
+# wird hier NICHT automatisch angewendet, solange es dort noch in aktiver
+# Entwicklung ist.
+#
+# WICHTIG (Vorfall 2026-09-05, echter Kompilierfehler): freecad-assembly-
+# jointobject.patch (grosser kumulativer Snapshot) ruft resolveJointReference()/
+# ResolvedJointRef auf - die sind aber ERST durch freecad-assembly-addressing-
+# utils.patch definiert (der oben genannte, bewusst ausgeschlossene aktive
+# Sandbox-Patch). jointobject.patch ist textuell konfliktfrei anwendbar, aber
+# NICHT ohne addressing-utils.patch kompilierbar - deshalb hier NICHT
+# eingetragen. Stattdessen: freecad-assembly-quantity-signal-fix.patch, ein
+# eigenstaendiger, aus jointobject.patch herausgeloester Mini-Fix (nur die
+# valueChanged->textChanged-Signalverbindungen fuer die Joint-Distanz-/Winkel-
+# Spinboxen, behebt GENAU den obigen "Base::Quantity cannot be converted"-Bug),
+# ohne jede Abhaengigkeit zu addressing-utils.
 FEATURE_PATCHES=(
   "freecad-filedialog-search-filter.patch"
+  "freecad-app-getplacementof-partdesign-feature.patch"
+  "freecad-assembly-grounded-joint-nested-flex.patch"
+  "freecad-assembly-quantity-signal-fix.patch"
+  "freecad-assembly-viewprovider-null-crash.patch"
 )
 # WICHTIG: hier ALLE von den FEATURE_PATCHES beruehrten Dateien eintragen,
 # nicht nur einen Teil - sonst faellt eine vergessene Datei beim Resume nach
@@ -110,6 +131,12 @@ FEATURE_PATCHES=(
 FEATURE_PATCHED_FILES=(
   "src/Gui/FileDialog.cpp"
   "src/Gui/FileDialog.h"
+  "src/App/DocumentObject.cpp"
+  "src/App/Link.cpp"
+  "src/Mod/Assembly/App/AssemblyLink.cpp"
+  "src/Mod/Assembly/App/AssemblyLink.h"
+  "src/Mod/Assembly/JointObject.py"
+  "src/Mod/Assembly/Gui/ViewProviderAssembly.cpp"
 )
 
 DRY_RUN=0
