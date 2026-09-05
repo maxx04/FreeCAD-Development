@@ -203,8 +203,21 @@ class AssemblyPatternCreator:
             if linked is not None:
                 App.Console.PrintMessage(f"FCProject: Erstelle Link-Kopie eines referenzierten Objekts.\n")
                 try:
+                    # FCPROJECT-PATCH (2026-09-05, echter Bug per Live-Diagnose bestaetigt):
+                    # source_element ist hier bereits selbst ein App::Link (das prueft der
+                    # obige linked-is-not-None-Check ja gerade). "LinkedObject = source_element"
+                    # zeigt deshalb auf das ORIGINAL-LINK-OBJEKT statt auf dessen eigentliches
+                    # Ziel - eine Link-auf-Link-Kette. FreeCAD selbst kennt dieses Muster nicht
+                    # gut (Ziel wird nur einfach durchgereicht, keine eigene Fehlerbehandlung),
+                    # reproduzierbar live bestaetigt an GWH_007_P_Dachplatte_Copy_1/2 und
+                    # GWH_008_P_Latte_Copy_1/2/3 (jeweils LinkedObject zeigt auf das lokale
+                    # Original-Link statt auf die externe Datei). getLinkedObject(True) loest
+                    # rekursiv bis zum ECHTEN, finalen Ziel auf (FreeCAD-Kern-API,
+                    # DocumentObject::getLinkedObject(), Default recurse=True) - funktioniert
+                    # unveraendert, wenn source_element selbst schon direkt auf eine externe
+                    # Datei zeigt (keine Kette vorhanden).
                     new_obj = self.doc.addObject("App::Link", f"link_{new_label}")
-                    new_obj.LinkedObject = source_element
+                    new_obj.LinkedObject = source_element.getLinkedObject(True)
                     new_obj.Label = new_label
                     return new_obj
                 except Exception as link_err:

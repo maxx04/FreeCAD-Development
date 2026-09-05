@@ -63,12 +63,33 @@ def _is_valid_source_element(element):
     return True
 
 
-def _remove_after_recompute(doc, name):
-    """Entfernt ein Objekt sicher außerhalb eines laufenden Recomputes."""
+def _remove_after_recompute(doc, name, retries_left=2):
+    """Entfernt ein Objekt sicher außerhalb eines laufenden Recomputes.
+
+    FCPROJECT-PATCH (2026-09-05, per Live-Diagnose bestaetigt): removeObject() schlaegt
+    bei bestimmten App::FeaturePython-Joints intermittierend mit 'null shape'
+    (TopoShapeExpansion.cpp:2085) fehl, WENN mehrere sich gegenseitig referenzierende
+    Objekte (Joint + seine Kopie) im selben Loesch-Vorgang/Event-Loop-Takt entfernt
+    werden - vermutlich weil ein noch nicht abgeschlossener Redraw/Touch-Zyklus
+    zwischenzeitlich auf die Shape eines bereits (teil-)entfernten Nachbarobjekts
+    zugreift. Live bestaetigt: derselbe removeObject()-Aufruf auf EXAKT dasselbe
+    Objekt gelingt zuverlaessig, wenn er etwas spaeter (naechster Event-Loop-Takt)
+    erneut versucht wird - das Objekt bleibt bei einem gescheiterten Versuch als
+    intakter, unveraenderter Eintrag im Dokument stehen (kein Teil-Abriss), ein
+    erneuter Versuch ist daher gefahrlos. Bei endgueltigem Scheitern (alle Versuche
+    aufgebraucht) bleibt nur die Warnung - Karteileiche muss dann manuell entfernt
+    werden.
+    """
     try:
         doc.removeObject(name)
     except Exception as e:
-        App.Console.PrintWarning(f"FCProject: Konnte '{name}' nicht entfernen: {e}\n")
+        if retries_left > 0 and _GUI_AVAILABLE:
+            from PySide6 import QtCore
+            QtCore.QTimer.singleShot(
+                200, lambda: _remove_after_recompute(doc, name, retries_left - 1)
+            )
+        else:
+            App.Console.PrintWarning(f"FCProject: Konnte '{name}' nicht entfernen: {e}\n")
 
 
 def _deferred_remove(doc, name):
@@ -88,13 +109,110 @@ def _deferred_remove(doc, name):
         _remove_after_recompute(doc, name)
 
 
+def _remove_pattern_children(obj):
+    """Entfernt alle vom Pattern-Feature `obj` erzeugten Kopien UND Joints (Nutzerwunsch
+    2026-09-05: vorher blieben die als Karteileichen im Baum haengen, wenn nur das
+    Pattern-Feature selbst geloescht wurde - `obj.Group`/`obj.Joints` sind reine
+    Dokumentations-Properties ohne DAG-Einfluss, FreeCAD raeumt sie beim Loeschen des
+    Pattern-Objekts selbst NICHT automatisch mit auf).
+
+    Reihenfolge: erst Joints (koennten auf eine Kopie zeigen), danach die Kopien selbst -
+    ueber denselben `_deferred_remove()`-Mechanismus wie beim normalen Abgleich, damit ein
+    Loeschen mitten aus execute()/onDelete() heraus nicht auf ein noch PendingRecompute-
+    Objekt trifft."""
+    doc = obj.Document
+    for child in list(getattr(obj, 'Joints', []) or []) + list(getattr(obj, 'Group', []) or []):
+        if child is not None:
+            _deferred_remove(doc, child.Name)
+
+
+def delete_pattern_safely(obj):
+    """Loescht ein Pattern-Feature-Objekt (Linear/Circular) samt Kopien und Joints.
+
+    FCPROJECT-PATCH (2026-09-05, per Live-Diagnose bestaetigt): der normale Weg ueber die
+    Entf-Taste im Baum (GUI-Delete-Kommando) oeffnet dafuer eine eigene Transaktion und
+    wickelt Pattern-Objekt + alle per onDelete() nachgezogenen Kinder in EINEM
+    zusammenhaengenden Vorgang ab. Live wiederholt reproduziert: wirft irgendwo in dieser
+    Transaktion etwas 'null shape' (TopoShapeExpansion.cpp, offenbar aus Assemblys eigenem
+    JointGroup-Scope-Check auf die gerade herrenlos werdenden Pattern-Joints), faengt
+    FreeCAD das ab und versucht automatisch die GANZE Transaktion zurueckzurollen
+    (Transactions.cpp:410 'exception while restoring ... .Group') - und dieser Rollback
+    wirft dieselbe Exception NOCHMAL, was einen undefinierten Zwischenzustand
+    hinterlaesst (mal bleiben Kopien uebrig, mal Joints, nie deterministisch reproduzierbar
+    in derselben Reihenfolge). Dieser Effekt ist unabhaengig davon, WIE die Kinder-Loeschung
+    (onDelete/_remove_pattern_children) implementiert ist - er sitzt in FreeCADs eigener
+    Transaktions-/Assembly-Scope-Maschinerie, nicht in unserem Code.
+
+    Direkte, sequentielle doc.removeObject()-Aufrufe AUSSERHALB jeder GUI-Transaktion
+    (wie in einer Python-Konsole) haben sich ueber viele Tests hinweg dagegen immer als
+    zuverlaessig erwiesen - dieser Befehl bildet genau das nach, aufrufbar per Rechtsklick/
+    Toolbar statt ueber die Entf-Taste.
+
+    Gibt (removed_names, failed_names) zurueck.
+    """
+    doc = obj.Document
+    removed, failed = [], []
+
+    try:
+        obj.Count = 0
+    except Exception:
+        pass
+
+    children = list(getattr(obj, 'Joints', []) or []) + list(getattr(obj, 'Group', []) or [])
+    for child in children:
+        if child is None:
+            continue
+        name = child.Name
+        try:
+            doc.removeObject(name)
+            removed.append(name)
+        except Exception as e:
+            failed.append(name)
+            App.Console.PrintWarning(f"FCProject: Konnte '{name}' nicht entfernen: {e}\n")
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+    pattern_name = obj.Name
+    try:
+        doc.removeObject(pattern_name)
+        removed.append(pattern_name)
+    except Exception as e:
+        failed.append(pattern_name)
+        App.Console.PrintWarning(
+            f"FCProject: Konnte Pattern-Objekt '{pattern_name}' nicht entfernen: {e}\n"
+        )
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+
+    return removed, failed
+
+
 def _sync_link_copies(doc, source, existing_copies, target_count, label_prefix):
     """Gleicht App::Link-Kopien von `source` idempotent auf `target_count` Stück ab.
 
     Bestehende Link-Objekte werden wiederverwendet (kein Re-Create bei jeder
     kleinen Änderung), überschüssige entfernt, fehlende neu erstellt.
     """
-    copies = [c for c in existing_copies if c is not None and getattr(c, 'LinkedObject', None) == source]
+    # FCPROJECT-PATCH (2026-09-05): `source` EINMAL zentral aufloesen (siehe Begruendung bei
+    # der Link-Erstellung weiter unten) und GENAU DASSELBE aufgeloeste Ziel sowohl fuer den
+    # Wiedererkennungs-Vergleich ALS AUCH fuer neu erstellte Kopien benutzen. Vorher wurde
+    # nur bei der NEU-Erstellung aufgeloest, der Vergleich hier aber weiterhin gegen den
+    # ROHEN (ggf. selbst verlinkten) `source` gemacht - reparierte man eine Alt-Kopie von
+    # Hand (LinkedObject direkt auf das echte Ziel korrigiert), erkannte dieser Vergleich sie
+    # danach nicht mehr als "Kopie von source" und legte munter weitere, doppelt benannte
+    # Kopien an (live beobachtet: "GWH_008_P_Latte_Copy_1" UND "..._Copy_001" gleichzeitig im
+    # Baum, gleiches Label, unterschiedlicher interner Name).
+    true_source = source.getLinkedObject(True)
+    copies = [
+        c for c in existing_copies
+        if c is not None and getattr(c, 'LinkedObject', None) == true_source
+    ]
 
     while len(copies) > target_count:
         obsolete = copies.pop()
@@ -103,7 +221,17 @@ def _sync_link_copies(doc, source, existing_copies, target_count, label_prefix):
     while len(copies) < target_count:
         index = len(copies) + 1
         new_link = doc.addObject("App::Link", f"{source.Name}_Copy_{index}")
-        new_link.LinkedObject = source
+        # FCPROJECT-PATCH (2026-09-05, echter Bug per Live-Diagnose bestaetigt): `source`
+        # kann selbst schon ein App::Link sein (Pattern eines bereits verlinkten Elements) -
+        # "LinkedObject = source" wuerde dann eine Link-auf-Link-Kette erzeugen statt auf das
+        # eigentliche Ziel zu zeigen, reproduzierbar live bestaetigt an genau diesem
+        # "..._Copy_N"-Namensmuster (GWH_007_P_Dachplatte_Copy_1/2,
+        # GWH_008_P_Latte_Copy_1/2/3 - siehe project_fcproject_freecadcmd_zero_joints_cold_load
+        # -Memory). getLinkedObject(True) loest rekursiv bis zum echten, finalen Ziel auf
+        # (FreeCAD-Kern-API, Default recurse=True) - identischer Fix wie in
+        # AssemblyPatternCreator._duplicate_element(). Gibt `source` unveraendert zurueck,
+        # falls es selbst schon kein Link ist.
+        new_link.LinkedObject = source.getLinkedObject(True)
         copies.append(new_link)
 
     for i, copy in enumerate(copies, start=1):
@@ -615,6 +743,14 @@ if _GUI_AVAILABLE:
             Gui.ActiveDocument.setEdit(vobj.Object.Name)
             return True
 
+        def setupContextMenu(self, vobj, menu):
+            # FCPROJECT-PATCH (2026-09-05): "Pattern löschen" direkt im Rechtsklick-Menü
+            # statt nur ueber die Toolbar-Dropdown-Gruppe - ruft denselben
+            # FCProject_DeletePattern-Befehl auf (siehe delete_pattern_safely() fuer die
+            # Begruendung, warum die normale Entf-Taste hier instabil ist).
+            action = menu.addAction("Pattern löschen (sicher)")
+            action.triggered.connect(lambda: Gui.runCommand('FCProject_DeletePattern'))
+
         def setEdit(self, vobj, mode=0):
             proxy = vobj.Object.Proxy
             if isinstance(proxy, LinearPatternProxy):
@@ -627,6 +763,34 @@ if _GUI_AVAILABLE:
 
         def unsetEdit(self, vobj, mode=0):
             Gui.Control.closeDialog()
+            return True
+
+        def onDelete(self, vobj, subelements):
+            """Wird von FreeCAD aufgerufen, BEVOR das Pattern-Feature selbst geloescht wird.
+
+            WICHTIG (2026-09-05, per FreeCAD-Quellcode bestaetigt - siehe
+            src/App/FeaturePythonPyImp.cpp FC_PY_ELEMENT-Liste): `onDelete` existiert NUR als
+            ViewProvider-Hook (hier, `vobj.Proxy`), NICHT als Feature-Proxy-Hook (`obj.Proxy`).
+            Ein erster Versuch, `onDelete` auf LinearPatternProxy/CircularPatternProxy selbst
+            zu definieren, wurde von FreeCAD nie aufgerufen (totes Coding) - live bestaetigt:
+            Pattern-Objekt liess sich zwar loeschen, Kopien/Joints blieben aber als
+            Karteileichen im Baum haengen. True = Loeschen erlauben.
+
+            FCPROJECT-PATCH (2026-09-05, per Live-Diagnose bestaetigt): das eigentliche
+            Loeschen des Pattern-Objekts selbst kann durch dieselbe intermittierende
+            removeObject()-'null shape'-Problematik (siehe _remove_after_recompute)
+            fehlschlagen/zurueckgerollt werden, OHNE dass FreeCAD das hier sichtbar macht -
+            live beobachtet: Objekt blieb mit unveraendertem Count bestehen, Group/Joints
+            aber schon (teil-)geleert, sodass die naechste execute() brav neue Kopien
+            nachzog ('Kopien kommen von selbst zurueck', OHNE Undo). Count vorsorglich auf 0
+            setzen, BEVOR die Kinder-Entfernung angestossen wird: ueberlebt das
+            Pattern-Objekt die Loeschung wider Erwarten doch, synchronisiert execute() dann
+            auf 0 Kopien statt sie wiederherzustellen."""
+            try:
+                vobj.Object.Count = 0
+            except Exception:
+                pass
+            _remove_pattern_children(vobj.Object)
             return True
 
         def __getstate__(self):

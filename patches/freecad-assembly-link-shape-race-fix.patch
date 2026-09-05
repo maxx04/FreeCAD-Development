@@ -1,29 +1,76 @@
 diff --git a/src/Mod/Assembly/UtilsAssembly.py b/src/Mod/Assembly/UtilsAssembly.py
-index 7482a7e33a..599b3f8cf6 100644
+index 7482a7e33a..7c33206abf 100644
 --- a/src/Mod/Assembly/UtilsAssembly.py
 +++ b/src/Mod/Assembly/UtilsAssembly.py
-@@ -1005,6 +1005,24 @@ def findPlacement(ref, ignoreVertex=False):
+@@ -1005,6 +1005,29 @@ def findPlacement(ref, ignoreVertex=False):
      if not obj:
          return App.Placement()
  
-+    # FCPROJECT-PATCH (2026-09-05): App::Link hat keine eigene "Shape"-Eigenschaft im
-+    # normalen Sinn - sie wird on-demand aus LinkedObject berechnet (LinkBaseExtension::
-+    # extensionGetPropertyByName() schliesst "Shape" bewusst vom generischen Property-
-+    # Forwarding aus, siehe src/App/Link.cpp). Ist LinkedObject zum Zeitpunkt dieses
-+    # Aufrufs noch nicht aufgeloest - z.B. waehrend der Lade-Kaskade beim Oeffnen einer
-+    # Mehrdatei-Baugruppe, bevor alle extern verlinkten Dateien angehaengt sind -, fehlt
-+    # das Attribut kurzzeitig komplett, statt nur ein leeres Shape zu liefern. Ohne diese
-+    # Pruefung brach `obj.Shape` weiter unten mit einem rohen AttributeError durch
-+    # ("'App.DocumentObject' object has no attribute 'Shape'"), reproduzierbar live
-+    # beobachtet und per FreeCAD-Python-Konsole verifiziert: dasselbe Objekt ist kurz
-+    # danach, sobald die Ladekaskade fertig ist, wieder normal aufloesbar. Genau wie bei
-+    # einem nicht auflösbaren Sub-Element (siehe die "return App.Placement()"-Fallbacks
-+    # weiter unten) wird das hier defensiv als Identity-Placement behandelt statt als
-+    # Absturz - der naechste Recompute (sobald alles geladen ist) korrigiert die
-+    # Platzierung dann ganz normal.
++    # FCPROJECT-PATCH (2026-09-05, korrigiert - siehe Versionsgeschichte): App::Link hat
++    # keine eigene "Shape"-Eigenschaft im normalen Sinn - sie wird on-demand aus
++    # LinkedObject berechnet (LinkBaseExtension::extensionGetPropertyByName() schliesst
++    # "Shape" bewusst vom generischen Property-Forwarding aus, siehe src/App/Link.cpp).
++    # Ist LinkedObject zum Zeitpunkt dieses Aufrufs noch nicht aufgeloest - z.B. waehrend
++    # der Lade-Kaskade beim Oeffnen einer Mehrdatei-Baugruppe -, fehlt das Attribut
++    # kurzzeitig komplett, statt nur ein leeres Shape zu liefern.
++    #
++    # WICHTIG: hier NICHT App.Placement() (Identity) zurueckgeben wie bei den anderen,
++    # bereits bestehenden "nicht aufloesbar"-Fallbacks weiter unten! Jene sind fuer
++    # ECHTE, dauerhafte Faelle gedacht (Sub-Element existiert nicht). Hier ist der Fall
++    # aber nur TRANSIENT - der Aufrufer (JointObject.updateJCSPlacements()) weist das
++    # Ergebnis bedingungslos Placement1/2 zu; eine zurueckgegebene Identity wuerde dort
++    # die ZULETZT GUELTIGE Platzierung aktiv MIT EINEM FALSCHEN WERT UEBERSCHREIBEN -
++    # genau das ist bei einem ersten, zu grob geratenen Fix-Versuch passiert (Symptom:
++    # "GWH_006_A_Gewaechshaus: null shape" nach jedem Recompute, weil die Baugruppe
++    # danach dauerhaft mit einer falschen Identity-Platzierung statt der vorherigen,
++    # richtigen Platzierung weiterrechnete). Stattdessen None zurueckgeben - das signalisiert
++    # "noch nicht bereit, nichts tun" und laesst den Aufrufer die alte Platzierung
++    # unangetastet stehen lassen (siehe Anpassung in JointObject.py).
 +    if not hasattr(obj, "Shape"):
-+        return App.Placement()
++        return None
 +
      elt = getElementName(ref[1][0])
      vtx = getElementName(ref[1][1])
  
+diff --git a/src/Mod/Assembly/JointObject.py b/src/Mod/Assembly/JointObject.py
+--- a/src/Mod/Assembly/JointObject.py
++++ b/src/Mod/Assembly/JointObject.py
+@@ -870,11 +870,23 @@
+             self.undoPreSolve(joint)
+ 
+     def updateJCSPlacements(self, joint):
++        # FCPROJECT-PATCH (2026-09-05): findPlacement() liefert None statt einer Placement,
++        # wenn das referenzierte Objekt gerade transient kein Shape hat (z.B. waehrend der
++        # Lade-Kaskade einer Mehrdatei-Baugruppe, siehe UtilsAssembly.findPlacement()). In
++        # dem Fall NICHT zuweisen - die zuletzt gueltige Placement1/2 bleibt stehen, statt
++        # mit einer falschen Identity ueberschrieben zu werden (das war der Fehler eines
++        # ersten, zu grob geratenen Fix-Versuchs: fuehrte zu dauerhaft falscher Platzierung
++        # und "null shape" bei jedem folgenden Recompute, statt sich nach der Ladekaskade
++        # von selbst zu korrigieren).
+         if not joint.Detach1:
+-            joint.Placement1 = self.findPlacement(joint, joint.Reference1, 0)
++            plc1 = self.findPlacement(joint, joint.Reference1, 0)
++            if plc1 is not None:
++                joint.Placement1 = plc1
+ 
+         if not joint.Detach2:
+-            joint.Placement2 = self.findPlacement(joint, joint.Reference2, 1)
++            plc2 = self.findPlacement(joint, joint.Reference2, 1)
++            if plc2 is not None:
++                joint.Placement2 = plc2
+ 
+         self.redrawJointPlacements(joint)
+ 
+@@ -897,6 +909,12 @@
+     def findPlacement(self, joint, ref, index=0):
+         ignoreVertex = joint.JointType == "Distance"
+         plc = UtilsAssembly.findPlacement(ref, ignoreVertex)
++        # FCPROJECT-PATCH (2026-09-05): None bedeutet "Referenz gerade transient nicht
++        # aufloesbar" (siehe UtilsAssembly.findPlacement()) - direkt durchreichen, statt mit
++        # Offset1/2 zu multiplizieren (None * Placement wuerde einen TypeError werfen).
++        # updateJCSPlacements() ueberspringt in dem Fall die Zuweisung.
++        if plc is None:
++            return None
+ 
+         # We apply the attachment offsets.
+         if index == 0:
