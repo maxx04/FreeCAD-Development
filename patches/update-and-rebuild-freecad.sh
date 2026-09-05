@@ -229,8 +229,24 @@ run cmake --preset FC-dev
 run cmake --build --preset FC-dev --parallel "$JOBS"
 
 log "Vanilla-Build gruen. Schritt 6/7: eigene Feature-Patches wieder anwenden"
+# WICHTIG (Vorfall 2026-09-05): anders als die ENV_PATCHES in Schritt 4 werden
+# Feature-Patches NICHT bei einem Fehlschlag stillschweigend uebersprungen - das
+# waere genau das "automatische Ueberspielen/Ignorieren", das dieses Skript laut
+# eigenem Kopf-Kommentar bewusst vermeiden soll (ein Feature wie der FileDialog-
+# Suchfilter soll nicht kommentarlos aus dem gebauten FreeCAD verschwinden). Vorher
+# fehlte hier ein --check: ein nicht mehr passender Patch liess "git apply" (unter
+# set -euo pipefail) erst NACH dem kompletten, zeitaufwaendigen Vanilla-Build in
+# Schritt 5 hart abbrechen. Jetzt: vorher pruefen, bei Fehlschlag SOFORT mit klarer
+# Meldung abbrechen, statt die Bauzeit zu verschwenden.
 for p in "${FEATURE_PATCHES[@]}"; do
   echo "--- ${p} ---"
+  if ! git apply --check "${PATCHES_DIR}/${p}" 2>/tmp/fcproject-patch-check-err.txt; then
+    echo "FEHLER: ${p} passt nicht mehr auf den aktuellen Stand:"
+    cat /tmp/fcproject-patch-check-err.txt
+    echo "Patch manuell an den aktuellen Code anpassen (patches/README.md pruefen)," \
+         "dann das Skript erneut starten."
+    exit 1
+  fi
   run git apply "${PATCHES_DIR}/${p}"
 done
 

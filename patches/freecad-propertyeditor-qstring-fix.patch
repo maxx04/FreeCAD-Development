@@ -1,8 +1,8 @@
 diff --git a/src/Gui/propertyeditor/PropertyEditor.cpp b/src/Gui/propertyeditor/PropertyEditor.cpp
-index bc7e975578..e8af66b19e 100644
+index 86008f75ec..36dc691e4c 100644
 --- a/src/Gui/propertyeditor/PropertyEditor.cpp
 +++ b/src/Gui/propertyeditor/PropertyEditor.cpp
-@@ -974,14 +974,14 @@ void PropertyEditor::getPropUsesObj(
+@@ -1035,14 +1035,14 @@ void PropertyEditor::getPropUsesObj(
      QString& content
  ) const
  {
@@ -19,7 +19,7 @@ index bc7e975578..e8af66b19e 100644
          content += tr("property %1\n").arg(QString::fromStdString(id.toString()));
      }
  }
-@@ -993,7 +993,7 @@ void PropertyEditor::getPropUsesDoc(
+@@ -1054,7 +1054,7 @@ void PropertyEditor::getPropUsesDoc(
      QString& content
  ) const
  {
@@ -28,7 +28,7 @@ index bc7e975578..e8af66b19e 100644
      content += tr("document %1:\n").arg(QString::fromUtf8(doc->getName()));
  
      std::map<App::DocumentObject*, std::set<App::ObjectIdentifier>> objToIds;
-@@ -1034,7 +1034,7 @@ QString PropertyEditor::getPropUses(App::Property* prop) const
+@@ -1095,7 +1095,7 @@ QString PropertyEditor::getPropUses(App::Property* prop) const
      }
  
      if (docToIds.empty()) {

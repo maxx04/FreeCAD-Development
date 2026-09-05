@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 53325ec1c0..7640c72f5d 100644
+index bbe9e6d4b8..ed1fbfae8b 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -172,7 +172,7 @@ if (ENABLE_DEVELOPER_TESTS)
+@@ -163,7 +163,7 @@ if (ENABLE_DEVELOPER_TESTS)
      include(CTest)
      enable_testing()
      find_package(GTest REQUIRED)

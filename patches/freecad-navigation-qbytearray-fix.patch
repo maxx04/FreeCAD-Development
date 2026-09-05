@@ -1,8 +1,8 @@
 diff --git a/src/Gui/PreferencePages/DlgSettingsNavigation.cpp b/src/Gui/PreferencePages/DlgSettingsNavigation.cpp
-index d2e54fe4e2..0d1df7fc99 100644
+index ed4bb8ceee..7e9eb1bcc6 100644
 --- a/src/Gui/PreferencePages/DlgSettingsNavigation.cpp
 +++ b/src/Gui/PreferencePages/DlgSettingsNavigation.cpp
-@@ -359,7 +359,7 @@ void DlgSettingsNavigation::retranslate()
+@@ -368,7 +368,7 @@ void DlgSettingsNavigation::retranslate()
      // add submenu at the end to select navigation style
      std::map<Base::Type, std::string> styles = UserNavigationStyle::getUserFriendlyNames();
      for (const auto& style : styles) {
