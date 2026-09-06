@@ -193,10 +193,17 @@ class DeletePatternCommand:
             )
             return
 
+        # FCPROJECT-PATCH (2026-09-06, per Live-Diagnose bestaetigt): Label VOR dem
+        # Loeschen als reinen String sichern - delete_pattern_safely() entfernt `obj`
+        # selbst aus dem Dokument, ein Zugriff auf obj.Label DANACH wirft
+        # 'ReferenceError: Cannot access attribute of deleted object' (dasselbe Muster
+        # wie schon in PartPlayerCommand.py._reconcile_origin_copies() gefixt).
+        label = obj.Label
+
         reply = QtWidgets.QMessageBox.question(
             main_win,
             "FCProject Pattern löschen",
-            f"'{obj.Label}' inklusive aller Kopien und Joints wirklich löschen?",
+            f"'{label}' inklusive aller Kopien und Joints wirklich löschen?",
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             QtWidgets.QMessageBox.No,
         )
@@ -214,7 +221,7 @@ class DeletePatternCommand:
             )
         else:
             App.Console.PrintMessage(
-                f"FCProject: Pattern '{obj.Label}' und {len(removed) - 1} zugehörige Objekt(e) "
+                f"FCProject: Pattern '{label}' und {len(removed) - 1} zugehörige Objekt(e) "
                 f"erfolgreich entfernt.\n"
             )
 

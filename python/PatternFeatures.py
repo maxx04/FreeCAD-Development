@@ -744,12 +744,14 @@ if _GUI_AVAILABLE:
             return True
 
         def setupContextMenu(self, vobj, menu):
-            # FCPROJECT-PATCH (2026-09-05): "Pattern löschen" direkt im Rechtsklick-Menü
-            # statt nur ueber die Toolbar-Dropdown-Gruppe - ruft denselben
-            # FCProject_DeletePattern-Befehl auf (siehe delete_pattern_safely() fuer die
-            # Begruendung, warum die normale Entf-Taste hier instabil ist).
+            # FCPROJECT-PATCH (2026-09-06): ruft delete_pattern_safely() jetzt DIREKT auf statt
+            # ueber Gui.runCommand('FCProject_DeletePattern') - letzteres schlug mit "No such
+            # command" fehl, wenn die FCProject-Werkbank in der Sitzung noch nie aktiviert
+            # wurde (Gui.addCommand passiert erst in deren Initialize()). Seit demselben Datum
+            # loescht ohnehin schon die normale Entf-Taste ueber onDelete() genauso sicher -
+            # dieser Menuepunkt bleibt nur als sichtbarer, expliziter Zusatzeintrag erhalten.
             action = menu.addAction("Pattern löschen (sicher)")
-            action.triggered.connect(lambda: Gui.runCommand('FCProject_DeletePattern'))
+            action.triggered.connect(lambda: delete_pattern_safely(vobj.Object))
 
         def setEdit(self, vobj, mode=0):
             proxy = vobj.Object.Proxy
@@ -766,32 +768,40 @@ if _GUI_AVAILABLE:
             return True
 
         def onDelete(self, vobj, subelements):
-            """Wird von FreeCAD aufgerufen, BEVOR das Pattern-Feature selbst geloescht wird.
+            """Wird von FreeCAD aufgerufen, BEVOR das Pattern-Feature selbst geloescht wird -
+            insbesondere bei der normalen Entf-Taste im Baum.
 
             WICHTIG (2026-09-05, per FreeCAD-Quellcode bestaetigt - siehe
             src/App/FeaturePythonPyImp.cpp FC_PY_ELEMENT-Liste): `onDelete` existiert NUR als
             ViewProvider-Hook (hier, `vobj.Proxy`), NICHT als Feature-Proxy-Hook (`obj.Proxy`).
-            Ein erster Versuch, `onDelete` auf LinearPatternProxy/CircularPatternProxy selbst
-            zu definieren, wurde von FreeCAD nie aufgerufen (totes Coding) - live bestaetigt:
-            Pattern-Objekt liess sich zwar loeschen, Kopien/Joints blieben aber als
-            Karteileichen im Baum haengen. True = Loeschen erlauben.
 
-            FCPROJECT-PATCH (2026-09-05, per Live-Diagnose bestaetigt): das eigentliche
-            Loeschen des Pattern-Objekts selbst kann durch dieselbe intermittierende
-            removeObject()-'null shape'-Problematik (siehe _remove_after_recompute)
-            fehlschlagen/zurueckgerollt werden, OHNE dass FreeCAD das hier sichtbar macht -
-            live beobachtet: Objekt blieb mit unveraendertem Count bestehen, Group/Joints
-            aber schon (teil-)geleert, sodass die naechste execute() brav neue Kopien
-            nachzog ('Kopien kommen von selbst zurueck', OHNE Undo). Count vorsorglich auf 0
-            setzen, BEVOR die Kinder-Entfernung angestossen wird: ueberlebt das
-            Pattern-Objekt die Loeschung wider Erwarten doch, synchronisiert execute() dann
-            auf 0 Kopien statt sie wiederherzustellen."""
-            try:
-                vobj.Object.Count = 0
-            except Exception:
-                pass
-            _remove_pattern_children(vobj.Object)
-            return True
+            FCPROJECT-PATCH (2026-09-06, Nutzerwunsch: "kein Mensch weiss, dass man auf die
+            FCProject-Werkbank umschalten muss" - vorher musste man dafuer extra den Befehl
+            FCProject_DeletePattern per Rechtsklick/Toolbar aufrufen, der nur nach einmaligem
+            Aktivieren der FCProject-Werkbank registriert ist). Ruft jetzt direkt
+            delete_pattern_safely() auf - dieselbe sequentielle, transaktionslose
+            removeObject()-Logik, die sich ueber viele Live-Tests als zuverlaessig erwiesen
+            hat (siehe delete_pattern_safely() fuer die volle Begruendung, warum die normale
+            GUI-Delete-Transaktion bei Pattern+Joints instabil ist) - OHNE Umweg ueber
+            Gui.runCommand(), also unabhaengig davon, ob die FCProject-Werkbank je aktiviert
+            wurde. delete_pattern_safely() entfernt dabei bereits das Pattern-Objekt selbst
+            mit - Rueckgabe hier daher False ("nicht selbst nochmal loeschen"), sonst wuerde
+            FreeCAD im Anschluss versuchen, dasselbe (schon entfernte) Objekt ERNEUT ueber die
+            eigene instabile Transaktion zu loeschen. Rueckgaengig (Strg+Z) fuer diesen Ablauf
+            noch nicht speziell getestet - laut Nutzer folgt das als naechster Schritt."""
+            obj = vobj.Object
+            removed, failed = delete_pattern_safely(obj)
+            if failed:
+                App.Console.PrintWarning(
+                    f"FCProject: Pattern-Loeschung unvollstaendig - konnte nicht entfernen: "
+                    f"{', '.join(failed)}. Bitte FreeCAD neu starten und erneut versuchen.\n"
+                )
+            else:
+                App.Console.PrintMessage(
+                    f"FCProject: Pattern und {len(removed) - 1} zugehörige Objekt(e) "
+                    f"erfolgreich entfernt.\n"
+                )
+            return False
 
         def __getstate__(self):
             return None
