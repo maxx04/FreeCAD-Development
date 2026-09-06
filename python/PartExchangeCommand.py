@@ -4,7 +4,7 @@ import FreeCAD as App
 import FreeCADGui as Gui
 from PySide6 import QtWidgets
 
-from PartExchangeAnalyzer import is_valid_exchange_candidate
+from PartExchangeAnalyzer import is_valid_exchange_candidate, find_assembly
 from PartExchangeWindow import PartExchangeWindow
 
 
@@ -64,9 +64,18 @@ class PartExchangeSelectDialog(QtWidgets.QDialog):
         # _on_confirm()), aber wenn die Anzeige nur das Label zeigt, sind zwei gleich
         # benannte Objekte in der Liste nicht unterscheidbar und man waehlt leicht das
         # falsche aus. Deshalb den internen Namen mit anzeigen, sobald er vom Label abweicht.
+        # FCPROJECT-PATCH (2026-09-06, per Live-Absturz bestaetigt): das Assembly::AssemblyObject
+        # eines Dokuments gilt laut is_valid_exchange_candidate() grundsaetzlich als gueltiger
+        # Kandidat (fuer den Fall, dass eine per App::Link eingebundene SUB-Baugruppe ersetzt
+        # werden soll) - waehlt man aber versehentlich die Assembly-Wurzel DESSELBEN Dokuments
+        # `doc` selbst aus, erzeugt _ensure_local_replacement() einen App::Link INNERHALB dieser
+        # Baugruppe, der auf die Baugruppe SELBST zurueckzeigt ("...Link" mit demselben Namen
+        # wie das Dokument im Absturz-Log) - ein direkter Zyklus im Coin3D-Szenengraph, der
+        # FreeCAD zuverlaessig abstuerzen laesst. Deshalb hier ausschliessen.
+        own_assembly = find_assembly(doc)
         self.candidate_combo.clear()
         for obj in doc.Objects:
-            if obj is self.original_obj:
+            if obj is self.original_obj or obj is own_assembly:
                 continue
             if is_valid_exchange_candidate(obj):
                 display = obj.Label if obj.Label == obj.Name else f"{obj.Label} ({obj.Name})"

@@ -147,6 +147,8 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._mappings = []  # [{"original": entry, "replacement_subelement": str}]
         self._pending_original = None
         self._forced_visible = []  # ViewObjects, die für die Hervorhebung sichtbar gemacht wurden
+        self._isolation_hidden = []  # ViewObjects, dauerhaft (bis Fenster-Schliessen) fuer die
+        # Original/Ersatzteil-Isolation ausgeblendet - siehe _isolate_for_embed()
         self._color_overrides = {}  # (doc.Name, obj.Name, prop) -> (ViewObject, prop, Original-Farbliste)
         self._embedded_views = []  # [(widget, doc)] - aus dem Haupt-MDI-Bereich ausgeliehene 3D-Ansichten
         self._highlighted_docs = set()  # doc.Name - für Datum-Hervorhebung (Gui.Selection) benutzte Dokumente
@@ -643,6 +645,12 @@ class PartExchangeWindow(QtWidgets.QDialog):
             except Exception:
                 pass
         self._forced_visible.clear()
+        for vobj in self._isolation_hidden:
+            try:
+                vobj.Visibility = True
+            except Exception:
+                pass
+        self._isolation_hidden.clear()
         for vobj, prop, original in self._color_overrides.values():
             try:
                 setattr(vobj, prop, original)
@@ -750,6 +758,23 @@ class PartExchangeWindow(QtWidgets.QDialog):
         if mdi_area is None:
             return
         original_focus = self._resolve_display_obj(self.original_obj)
+        # FCPROJECT-PATCH (2026-09-06, Nutzerwunsch): das Ersatzteil wird jetzt GENAUSO wie das
+        # Original per _resolve_display_obj()/_resolve_display_doc() bis zur ECHTEN Quelldatei
+        # aufgeloest (z.B. Pattern-Kopie/Assembly-Link -> eigene kleine Teil-Datei), statt wie
+        # bisher bewusst unaufgeloest in der (oft grossen) Baugruppe zu bleiben. Vorteil: die
+        # eigene kleine Datei hat naturgemaess kaum "Nachbarn" - keine Ausblend-Logik in der
+        # gemeinsamen grossen Baugruppe mehr noetig, die live wiederholt Probleme gemacht hat
+        # (Baugruppen-Hauptfenster blieb teilweise ausgeblendet, s.o.). Ein frueherer Versuch,
+        # das genauso aufzuloesen, scheiterte 2026-08-30 nur daran, dass replacement_doc DABEI
+        # unaufgeloest blieb (Mismatch) - hier werden jetzt BEIDE (Fokus UND Dokument) konsistent
+        # aus derselben Aufloesung gebildet, das Mismatch-Problem entfaellt von selbst.
+        replacement_focus = self._resolve_display_obj(self.replacement_obj)
+        replacement_display_doc = self._resolve_display_doc(self.replacement_obj)
+        same_doc = self.original_display_doc.Name == replacement_display_doc.Name
+        self._isolate_for_embed(
+            self.original_display_doc, original_focus,
+            replacement_focus if same_doc else None
+        )
         self._embed_one(mdi_area, self.original_display_doc, self.original_view_container, original_focus)
         # IMMER eine eigene Ansicht fuers Ersatzteil erzeugen, auch wenn Original und Ersatzteil
         # im selben Dokument liegen (z.B. beide direkt in derselben Baugruppe eingefuegt statt in
@@ -758,15 +783,9 @@ class PartExchangeWindow(QtWidgets.QDialog):
         # uebersprungen (Annahme: "sieht man ja schon in der ersten Ansicht") - das liess den
         # rechten Bereich komplett leer und war verwirrend, obwohl die Auswahl selbst technisch
         # funktionierte (Nutzer-Report 2026-08-30: "Ersatzteil wird nicht angezeigt").
-        # WICHTIG: hier bewusst OHNE _resolve_display_obj()-Kettenaufloesung, anders als beim
-        # Original - self.replacement_doc wird ebenfalls unaufgeloest gesetzt (replacement_obj.
-        # Document direkt, siehe __init__), focus_obj und die eingebettete Ansicht muessen also
-        # dasselbe Dokument referenzieren. Mit der Aufloesung landete der Fokus bei einem per
-        # Link-Kette eingebundenen Ersatzteil in einem ANDEREN Dokument als die tatsaechlich
-        # eingebettete Ansicht - der focus_obj.Document is doc-Check in _embed_one() schlug fehl
-        # und fiel auf "ganzes Dokument zeigen" zurueck (Nutzer-Report 2026-08-30: zweite
-        # Ersatzteil-Ansicht zeigte die komplette FuehrungsBaugruppe400 statt nur das neue Teil).
-        self._embed_one(mdi_area, self.replacement_doc, self.replacement_view_container, self.replacement_obj)
+        if not same_doc:
+            self._isolate_for_embed(replacement_display_doc, replacement_focus)
+        self._embed_one(mdi_area, replacement_display_doc, self.replacement_view_container, replacement_focus)
 
     def _embed_one(self, mdi_area, doc, container_layout, focus_obj=None):
         try:
@@ -807,15 +826,28 @@ class PartExchangeWindow(QtWidgets.QDialog):
                 # ist seit FreeCAD 26.3 deprecated und wird in 27.2 entfernt.
                 gui_doc = Gui.getDocument(doc.Name)
                 if gui_doc and gui_doc.ActiveView:
-                    if focus_obj is not None and focus_obj.Document is doc:
-                        self._fit_view_to_object(gui_doc.ActiveView, doc, focus_obj)
-                    else:
-                        gui_doc.ActiveView.fitAll()
+                    # Der Aufrufer hat die Sichtbarkeit in `doc` bereits per
+                    # _isolate_for_embed() dauerhaft auf focus_obj (+ggf. die andere Seite,
+                    # falls geteiltes Dokument) reduziert - ein einfaches fitAll() passt sich
+                    # von selbst genau darauf an.
+                    gui_doc.ActiveView.fitAll()
             except Exception:
                 pass
 
             self._show_datum_objects(doc)
 
+            # FCPROJECT-PATCH (2026-09-06, Nutzer-Report "leere Fenster fuer Zusammenbau"):
+            # zwei vorherige Versuche gescheitert - sub_window.close() zerstoerte ueber FreeCADs
+            # eigene Dokument-/View-Verwaltung auch das (schon per setParent(None) herausgeloeste)
+            # widget mit; sub_window.hide() liess einen leeren Eintrag im MDI-Bereich zurueck, der
+            # spaeter wieder sichtbar wurde. Jetzt Qts EIGENE, dafuer vorgesehene API: mdi_area.
+            # removeSubWindow(widget) loest widget sauber aus der QMdiArea-Verwaltung (inkl.
+            # seines Containers), OHNE close()/closeEvent() auszuloesen - VOR dem eigenen
+            # setParent(None) aufgerufen, weil danach die interne Zuordnung schon weg waere.
+            try:
+                mdi_area.removeSubWindow(widget)
+            except Exception:
+                pass
             widget.setParent(None)
             widget.setMinimumHeight(220)
             container_layout.addWidget(widget)
@@ -825,6 +857,26 @@ class PartExchangeWindow(QtWidgets.QDialog):
             App.Console.PrintWarning(
                 f"FCProject PartExchange: 3D-Ansicht für '{doc.Name}' konnte nicht eingebettet werden: {str(e)}\n"
             )
+
+    def _isolate_for_embed(self, doc, focus_obj, extra_focus=None):
+        """Blendet dauerhaft (bis dieser Dialog schliesst, siehe closeEvent()) alles in `doc`
+        aus, das nicht zu focus_obj's (und optional zusaetzlich extra_focus's, falls beide
+        Seiten dasselbe Dokument teilen) eigener Vorfahren-/Nachfahren-Menge gehoert - fuer
+        eine wirklich isolierte eingebettete Ansicht (anders als _fit_view_to_object(), das nur
+        TEMPORAER fuer einen einmaligen Kamera-Fit ausblendet und danach alles wiederherstellt -
+        fuer eine dauerhaft eingebettete Ansicht wuerde das sofort wieder die ganze Baugruppe
+        zeigen, live bestaetigt)."""
+        keep = self._collect_keep_set(focus_obj)
+        if extra_focus is not None:
+            keep |= self._collect_keep_set(extra_focus)
+        for obj in doc.Objects:
+            if id(obj) in keep:
+                continue
+            vobj = getattr(obj, "ViewObject", None)
+            if vobj is None or not vobj.Visibility:
+                continue
+            self._isolation_hidden.append(vobj)
+            vobj.Visibility = False
 
     @staticmethod
     def _collect_keep_set(focus_obj):
@@ -1004,41 +1056,83 @@ class PartExchangeWindow(QtWidgets.QDialog):
         alle weiteren Vorkommen ohne erneute Rückfrage ersetzen) zurück."""
         target_obj = _entry_original_obj(entry)
         self._clear_highlight_selection()
+
+        # FCPROJECT-PATCH (2026-09-06, Nutzerwunsch): eigener QDialog statt QMessageBox - eine
+        # QMessageBox schneidet sich beim Oeffnen (exec()) immer auf ihre Inhaltsgroesse zurecht
+        # und ignoriert dabei jede vorher gesetzte Geometrie. Fuer "gleiche Groesse/Position wie
+        # das Referenz-Zuordnungs-Fenster" (das jetzt beim Uebernehmen versteckt wird, siehe
+        # _on_apply()) wird hier stattdessen exakt dessen Geometrie (self.geometry(), bleibt
+        # auch versteckt abfragbar) auf einen eigenen Dialog uebertragen.
+        box = QtWidgets.QDialog(Gui.getMainWindow())
+        box.setWindowTitle("FCProject: Vorkommen ersetzen?")
+        box.setGeometry(self.geometry())
+        layout = QtWidgets.QVBoxLayout(box)
+        label = QtWidgets.QLabel(f"Dieses Vorkommen ersetzen?\n\n{entry.get('label', '')}")
+        label.setWordWrap(True)
+        layout.addWidget(label, stretch=0)
+
+        # FCPROJECT-PATCH (2026-09-06, Nutzer-Report "3D-Ansicht nicht gekommen"): dieser Dialog
+        # bedeckt jetzt (gleiche Groesse/Position wie das Referenz-Fenster) den kompletten
+        # Bildschirm - die bisherige Fokus/Hervorhebung im HAUPTFENSTER (_bring_doc_to_front())
+        # ist dahinter komplett unsichtbar. Stattdessen wird jetzt wie im Referenz-Dialog eine
+        # eigene 3D-Ansicht DIREKT in diesen Dialog eingebettet (_embed_one()).
+        view_container = QtWidgets.QVBoxLayout()
+        layout.addLayout(view_container, stretch=1)
+
         if target_obj is not None:
             # Fokus + Selektion auf das GANZE Teil, nicht nur die referenzierte Fläche/Kante
             # (Nutzerwunsch 2026-09-02): bei mehreren optisch IDENTISCHEN Teilen in derselben
             # Baugruppe reicht das reine Einfärben einer Fläche nicht, wenn die Instanz gerade
-            # ausserhalb des sichtbaren Bereichs liegt oder winzig ist - die Ansicht zoomt
-            # deshalb zusätzlich auf genau dieses Teil (_fit_view_to_object(), wie schon für
-            # die eingebetteten Original-/Ersatzteil-Ansichten benutzt) und selektiert es als
-            # Ganzes (Baum + 3D), bevor zusätzlich die einzelne Fläche/Kante eingefärbt wird.
+            # ausserhalb des sichtbaren Bereichs liegt oder winzig ist.
             focus_doc = target_obj.Document
-            self._bring_doc_to_front(focus_doc)
-            try:
-                gui_doc = Gui.getDocument(focus_doc.Name)
-                if gui_doc and gui_doc.ActiveView:
-                    self._fit_view_to_object(gui_doc.ActiveView, focus_doc, target_obj)
-            except Exception as e:
-                App.Console.PrintWarning(
-                    f"FCProject PartExchange: Fokus auf '{target_obj.Label}' fehlgeschlagen: {str(e)}\n"
-                )
+            main_win = Gui.getMainWindow()
+            mdi_area = main_win.findChild(QtWidgets.QMdiArea)
+            if mdi_area is not None:
+                # FCPROJECT-PATCH (2026-09-06, Nutzer-Report "wird immer gleiches Teil
+                # selektiert"): _embed_one() verlaesst sich seit der Referenz-Dialog-Umstellung
+                # darauf, dass der AUFRUFER die Sichtbarkeit vorher per _isolate_for_embed() auf
+                # target_obj reduziert hat (nur noch ein simples fitAll() darin, siehe dort) -
+                # das fehlte hier, wodurch die Kamera immer nur auf die GANZE (unveraenderte)
+                # Baugruppe gezoomt wurde, egal welches Teil eigentlich gemeint war.
+                self._isolate_for_embed(focus_doc, target_obj)
+                self._embed_one(mdi_area, focus_doc, view_container, target_obj)
             self._do_addselection(focus_doc.Name, target_obj.Name, "")
             self._highlight_reference(target_obj, entry.get("subelement") or "", (1.0, 0.0, 1.0))
+        btn_row = QtWidgets.QHBoxLayout()
+        cancel_btn = QtWidgets.QPushButton("Abbrechen")
+        btn_row.addWidget(cancel_btn)
+        btn_row.addStretch()
+        no_btn = QtWidgets.QPushButton("Nein (überspringen)")
+        all_btn = QtWidgets.QPushButton("Alle ersetzen")
+        yes_btn = QtWidgets.QPushButton("Ja")
+        yes_btn.setDefault(True)
+        for btn in (no_btn, all_btn, yes_btn):
+            btn_row.addWidget(btn)
+        layout.addLayout(btn_row)
 
-        box = QtWidgets.QMessageBox(self)
-        box.setWindowTitle("FCProject: Vorkommen ersetzen?")
-        box.setText(f"Dieses Vorkommen ersetzen?\n\n{entry.get('label', '')}")
-        yes_btn = box.addButton("Ja", QtWidgets.QMessageBox.YesRole)
-        box.addButton("Nein (überspringen)", QtWidgets.QMessageBox.NoRole)
-        all_btn = box.addButton("Alle ersetzen", QtWidgets.QMessageBox.YesRole)
-        box.setDefaultButton(yes_btn)
+        result = {"decision": "no"}
+
+        def _choose(decision):
+            result["decision"] = decision
+            box.accept()
+
+        cancel_btn.clicked.connect(lambda: _choose("cancel"))
+        no_btn.clicked.connect(lambda: _choose("no"))
+        all_btn.clicked.connect(lambda: _choose("all"))
+        yes_btn.clicked.connect(lambda: _choose("yes"))
         box.exec()
-        clicked = box.clickedButton()
-        if clicked is all_btn:
-            return "all"
-        if clicked is yes_btn:
-            return "yes"
-        return "no"
+        # Die frisch eingebettete 3D-Ansicht (samt Isolations-Ausblendung) wird pro Vorkommen
+        # neu erzeugt (siehe oben) - hier wieder verwerfen/rueckgaengig machen, sonst sammeln
+        # sich bei vielen Vorkommen viele Zusatz-Ansichten an bzw. bleibt die Baugruppe
+        # ausgeblendet.
+        self._restore_3d_views()
+        for vobj in self._isolation_hidden:
+            try:
+                vobj.Visibility = True
+            except Exception:
+                pass
+        self._isolation_hidden.clear()
+        return result["decision"]
 
     def _confirm_save_doc(self, doc):
         """Fragt nach dem Bearbeiten EINER Datei explizit, ob/wie gespeichert werden soll
@@ -1106,6 +1200,23 @@ class PartExchangeWindow(QtWidgets.QDialog):
             )
             return
 
+        # FCPROJECT-PATCH (2026-09-06, Nutzerwunsch): das Referenz-Zuordnungs-Fenster (mit den
+        # beiden eingebetteten 3D-Ansichten) wird ab hier nicht mehr benoetigt - der naechste
+        # Schritt (pro Datei/Vorkommen einzeln per Ja/Nein/"Alle ersetzen" bestaetigen,
+        # _confirm_replace_instance()) soll in einem EIGENEN, unabhaengigen Kontext laufen statt
+        # mit dem jetzt inhaltlich ueberholten Zuordnungs-Fenster im Hintergrund. hide() statt
+        # close(): das Python-Objekt (und damit self.xxx fuer den Rest dieser Methode) bleibt
+        # gueltig, WA_DeleteOnClose ist fuer diese Klasse nicht gesetzt.
+        self.hide()
+        self._restore_3d_views()
+        for vobj in self._isolation_hidden:
+            try:
+                vobj.Visibility = True
+            except Exception:
+                pass
+        self._isolation_hidden.clear()
+        self._clear_highlight_selection()
+
         entries_by_doc = {}
         for entry in self._original_joints:
             if entry["file_path"] not in checked_paths:
@@ -1116,10 +1227,19 @@ class PartExchangeWindow(QtWidgets.QDialog):
         # "Alle ersetzen" gilt global fuer den Rest dieses Durchlaufs (ueber alle noch
         # kommenden Dateien/Vorkommen hinweg), nicht nur fuer die aktuelle Datei.
         replace_all_remaining = False
+        cancelled = False  # Nutzerwunsch 2026-09-06: "Abbrechen"-Knopf im Vorkommen-Dialog
 
         for doc, doc_entries in entries_by_doc.items():
+            if cancelled:
+                break
             assembly_obj = find_assembly(doc)
             local_replacement = self._ensure_local_replacement(doc, self.replacement_obj, assembly_obj)
+            if local_replacement is None:
+                errors.append(
+                    f"'{doc.Name}': Ersatzteil ist die Baugruppe selbst - übersprungen "
+                    "(würde einen zyklischen Verweis erzeugen)."
+                )
+                continue
 
             # Ersatzteil startet an der Position des Original-VORKOMMENS in DIESEM Dokument
             # (nicht zwingend self.original_obj - in einer anderen Datei kann das dieselbe
@@ -1179,6 +1299,9 @@ class PartExchangeWindow(QtWidgets.QDialog):
                     decision = "yes"
                 else:
                     decision = self._confirm_replace_instance(entry)
+                    if decision == "cancel":
+                        cancelled = True
+                        break
                     if decision == "all":
                         replace_all_remaining = True
                         decision = "yes"
@@ -1270,6 +1393,8 @@ class PartExchangeWindow(QtWidgets.QDialog):
             # Explizit nachfragen statt automatisch zu speichern (Nutzerwunsch 2026-09-02).
             self._confirm_save_doc(doc)
 
+        if cancelled:
+            App.Console.PrintMessage("FCProject PartExchange: Vom Nutzer abgebrochen.\n")
         App.Console.PrintMessage(
             f"FCProject PartExchange: {rewired_joints} Joint(s) in {len(touched_docs)} "
             f"Datei(en) erfolgreich umgehängt: {', '.join(touched_docs)}\n"
@@ -1340,6 +1465,19 @@ class PartExchangeWindow(QtWidgets.QDialog):
         Cross-Dokument-Zweig unten schon immer der Fall - jetzt einheitlich fuer beide Faelle.
         Der Link wird in die Assembly eingehängt (nicht lose ans Dokument-Root)."""
         replacement = cls._resolve_display_obj(replacement)
+        # FCPROJECT-PATCH (2026-09-06, per Live-Absturz bestaetigt): waere `replacement` die
+        # Assembly-Wurzel VON `doc` SELBST (z.B. versehentlich aus dem Kandidaten-Dropdown
+        # gewaehlt, siehe PartExchangeCommand._populate_candidates()), wuerde hier ein Link
+        # INNERHALB der Baugruppe erzeugt, der auf die Baugruppe SELBST zurueckzeigt - ein
+        # direkter Zyklus im Coin3D-Szenengraph ("Cyclic scene graph: ..._Link" im Log),
+        # der FreeCAD zuverlaessig abstuerzen laesst. None statt Absturz, Aufrufer muss
+        # darauf reagieren.
+        if replacement is assembly:
+            App.Console.PrintWarning(
+                "FCProject PartExchange: Das Ersatzteil ist die Baugruppe selbst - "
+                "Tausch abgebrochen (wuerde einen zyklischen Verweis erzeugen).\n"
+            )
+            return None
         link = doc.addObject("App::Link", f"{replacement.Name}_Link")
         link.Label = replacement.Label
         link.LinkedObject = replacement
