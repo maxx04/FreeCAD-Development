@@ -224,8 +224,15 @@ def subelement_for_side(joint, side):
 
 
 def full_reference_path(obj, sub):
-    """Voller Pfad einer Referenz: Objekt-Label + Subnamen-Pfad (z.B. 'Motor.Origin.X_Axis')."""
-    return f"{obj.Label}.{sub}" if sub else obj.Label
+    """Voller Pfad einer Referenz: Objekt-Label + Subnamen-Pfad (z.B. 'Motor.Origin.X_Axis').
+
+    FCPROJECT-PATCH (2026-09-07, Nutzerwunsch "bitte interne Name"): Label ist nicht eindeutig
+    (siehe [[feedback_fcproject_never_use_label_for_addressing]] - Kopien/Umbenennungen koennen
+    dasselbe Label tragen). Zeigt den internen Namen zusaetzlich in Klammern an, wenn er vom
+    Label abweicht - hilft besonders bei mehreren aehnlichen Teilen (z.B. "GWH_002_P_Latte" vs.
+    "GWH_002_P_Latte001") zu erkennen, welche KONKRETE Instanz gemeint ist."""
+    display = obj.Label if obj.Label == obj.Name else f"{obj.Label} ({obj.Name})"
+    return f"{display}.{sub}" if sub else display
 
 
 def find_all_project_joints_referencing(obj, log=None):

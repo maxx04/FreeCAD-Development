@@ -16,7 +16,7 @@ from PySide6 import QtWidgets, QtCore
 
 from PartExchangeAnalyzer import (
     find_reference_root_and_path, full_reference_path, find_assembly,
-    find_all_project_joints_referencing, GROUND_SIDE, RIGID_GROUP_SIDE
+    find_all_project_joints_referencing, GROUND_SIDE, RIGID_GROUP_SIDE, is_joint
 )
 
 WHOLE_OBJECT_SIDES = (GROUND_SIDE, RIGID_GROUP_SIDE)  # kein Face/Edge-Konzept, keine manuelle Zuordnung noetig
@@ -121,6 +121,65 @@ class _ReplacementSelectionObserver:
     def setSelection(self, doc_name):
         pass
 
+
+class _ReplaceInstanceTaskPanel:
+    """Task-Panel (Aufgabenbereich) fuer die Ja/Nein/'Alle ersetzen'/Abbrechen-Abfrage PRO
+    Vorkommen beim Uebernehmen.
+
+    FCPROJECT-PATCH (2026-09-07, per Live-Diagnose ZWEIFELSFREI verifiziert, nicht geraten -
+    siehe Chat-Verlauf): Gui.Control.showDialog() registrierte das Panel tatsaechlich korrekt
+    (Inhalt mit allen 4 Buttons war live nachweisbar vorhanden), zeigte es aber nicht an. Root
+    Cause direkt am lebenden Objekt gefunden: der "Aufgaben"-Dock (objectName "Tasks") enthaelt
+    intern ein QStackedWidget (Gui::TaskView::TaskView) - unser Panel landete darin korrekt als
+    NEUE Seite (Seite 1, mit Label+allen 4 Buttons bestaetigt), aber `currentIndex` blieb bei 0
+    (einer leeren Default-Seite) stehen, statt auf die neue Seite umzuschalten. Ein FreeCAD-
+    interner Umschalt-Bug in diesem Dev-Build (26.3.0dev) - nicht in unserem Code. Minimaler,
+    gezielter Fix in _show_replace_instance_panel(): currentIndex nach showDialog() explizit
+    selbst auf die zuletzt hinzugefuegte Seite setzen."""
+
+    def __init__(self, entry_label, attached_doc, on_decision):
+        self._attached_doc = attached_doc
+        self._on_decision = on_decision
+        self.form = QtWidgets.QWidget()
+        self.form.setWindowTitle("FCProject: Vorkommen ersetzen?")
+        layout = QtWidgets.QVBoxLayout(self.form)
+        label = QtWidgets.QLabel(f"Dieses Vorkommen ersetzen?\n\n{entry_label}")
+        label.setWordWrap(True)
+        layout.addWidget(label)
+
+        yes_btn = QtWidgets.QPushButton("Ja")
+        no_btn = QtWidgets.QPushButton("Nein (überspringen)")
+        all_btn = QtWidgets.QPushButton("Alle ersetzen")
+        cancel_btn = QtWidgets.QPushButton("Abbrechen")
+        for btn in (yes_btn, no_btn, all_btn, cancel_btn):
+            layout.addWidget(btn)
+        layout.addStretch()
+
+        yes_btn.clicked.connect(lambda: self._choose("yes"))
+        no_btn.clicked.connect(lambda: self._choose("no"))
+        all_btn.clicked.connect(lambda: self._choose("all"))
+        cancel_btn.clicked.connect(lambda: self._choose("cancel"))
+
+    def _choose(self, decision):
+        # Explizit MIT self._attached_doc schliessen - ohne Dokument-Argument loest
+        # Gui.Control.closeDialog() intern ueber das GERADE aktive Dokument auf
+        # (ControlSingleton::docOrDefault()), das kann sich zwischen mehreren Dateien laengst
+        # geaendert haben (siehe Begruendung in TaskPanel.py/FCProjectTaskPanel._attached_doc).
+        try:
+            Gui.Control.closeDialog(self._attached_doc)
+        except Exception:
+            pass
+        self._on_decision(decision)
+
+    # --- FreeCAD-Task-Panel-Protokoll (Gui.Control) ---
+    def getStandardButtons(self):
+        return QtWidgets.QDialogButtonBox.NoButton
+
+    def accept(self):
+        return True
+
+    def reject(self):
+        return True
 
 
 class PartExchangeWindow(QtWidgets.QDialog):
@@ -1045,94 +1104,116 @@ class PartExchangeWindow(QtWidgets.QDialog):
                 f"geholt werden: {str(e)}\n"
             )
 
-    def _confirm_replace_instance(self, entry):
-        """EIN Bestätigungsdialog für GENAU dieses Vorkommen (Nutzerwunsch 2026-09-02): bei
+    def _show_replace_instance_panel(self, entry, doc, on_decision):
+        """Zeigt EIN Bestätigungs-Panel für GENAU dieses Vorkommen (Nutzerwunsch 2026-09-02): bei
         mehreren identischen Teilen im Projekt soll gezielt nur eine einzelne Instanz ersetzt
-        werden können, statt automatisch alle gleichnamigen Vorkommen auf einmal. Hebt vorher
-        die betroffene Original-Instanz im 3D-Fenster/Baum hervor ("Ziel selektieren"), damit
-        der Nutzer sieht, welches der mehreren gleichen Teile gerade zur Debatte steht.
+        werden können, statt automatisch alle gleichnamigen Vorkommen auf einmal. Hebt vorher die
+        betroffene Original-Instanz im 3D-Fenster/Baum hervor ("Ziel selektieren"), damit der
+        Nutzer sieht, welches der mehreren gleichen Teile gerade zur Debatte steht.
 
-        Gibt "yes" (dieses Vorkommen ersetzen), "no" (überspringen) oder "all" (dieses UND
-        alle weiteren Vorkommen ohne erneute Rückfrage ersetzen) zurück."""
+        FCPROJECT-PATCH (2026-09-07, Nutzerwunsch, ersetzt den fruaeheren freischwebenden
+        QDialog mit eigener eingebetteter 3D-Ansicht - siehe _ReplaceInstanceTaskPanel):
+        arbeitet jetzt AUF DER NORMALEN 3D-Ansicht von `doc` (per _bring_doc_to_front()) statt
+        eine eigene Zusatzansicht zu erzeugen - kein Cleanup-Problem mehr, weil keine eigene
+        View3DInventor-Instanz mehr entsteht. Gui.Control.showDialog() ist NICHT blockierend
+        (anders als QDialog.exec()) - `on_decision(decision)` wird deshalb asynchron aus dem
+        Panel heraus aufgerufen, sobald der Nutzer einen Knopf klickt, statt einen Rueckgabewert
+        zu liefern."""
         target_obj = _entry_original_obj(entry)
         self._clear_highlight_selection()
-
-        # FCPROJECT-PATCH (2026-09-06, Nutzerwunsch): eigener QDialog statt QMessageBox - eine
-        # QMessageBox schneidet sich beim Oeffnen (exec()) immer auf ihre Inhaltsgroesse zurecht
-        # und ignoriert dabei jede vorher gesetzte Geometrie. Fuer "gleiche Groesse/Position wie
-        # das Referenz-Zuordnungs-Fenster" (das jetzt beim Uebernehmen versteckt wird, siehe
-        # _on_apply()) wird hier stattdessen exakt dessen Geometrie (self.geometry(), bleibt
-        # auch versteckt abfragbar) auf einen eigenen Dialog uebertragen.
-        box = QtWidgets.QDialog(Gui.getMainWindow())
-        box.setWindowTitle("FCProject: Vorkommen ersetzen?")
-        box.setGeometry(self.geometry())
-        layout = QtWidgets.QVBoxLayout(box)
-        label = QtWidgets.QLabel(f"Dieses Vorkommen ersetzen?\n\n{entry.get('label', '')}")
-        label.setWordWrap(True)
-        layout.addWidget(label, stretch=0)
-
-        # FCPROJECT-PATCH (2026-09-06, Nutzer-Report "3D-Ansicht nicht gekommen"): dieser Dialog
-        # bedeckt jetzt (gleiche Groesse/Position wie das Referenz-Fenster) den kompletten
-        # Bildschirm - die bisherige Fokus/Hervorhebung im HAUPTFENSTER (_bring_doc_to_front())
-        # ist dahinter komplett unsichtbar. Stattdessen wird jetzt wie im Referenz-Dialog eine
-        # eigene 3D-Ansicht DIREKT in diesen Dialog eingebettet (_embed_one()).
-        view_container = QtWidgets.QVBoxLayout()
-        layout.addLayout(view_container, stretch=1)
-
+        self._bring_doc_to_front(doc)
         if target_obj is not None:
-            # Fokus + Selektion auf das GANZE Teil, nicht nur die referenzierte Fläche/Kante
-            # (Nutzerwunsch 2026-09-02): bei mehreren optisch IDENTISCHEN Teilen in derselben
-            # Baugruppe reicht das reine Einfärben einer Fläche nicht, wenn die Instanz gerade
-            # ausserhalb des sichtbaren Bereichs liegt oder winzig ist.
             focus_doc = target_obj.Document
-            main_win = Gui.getMainWindow()
-            mdi_area = main_win.findChild(QtWidgets.QMdiArea)
-            if mdi_area is not None:
-                # FCPROJECT-PATCH (2026-09-06, Nutzer-Report "wird immer gleiches Teil
-                # selektiert"): _embed_one() verlaesst sich seit der Referenz-Dialog-Umstellung
-                # darauf, dass der AUFRUFER die Sichtbarkeit vorher per _isolate_for_embed() auf
-                # target_obj reduziert hat (nur noch ein simples fitAll() darin, siehe dort) -
-                # das fehlte hier, wodurch die Kamera immer nur auf die GANZE (unveraenderte)
-                # Baugruppe gezoomt wurde, egal welches Teil eigentlich gemeint war.
-                self._isolate_for_embed(focus_doc, target_obj)
-                self._embed_one(mdi_area, focus_doc, view_container, target_obj)
+            try:
+                gui_doc = Gui.getDocument(focus_doc.Name)
+                if gui_doc and gui_doc.ActiveView:
+                    self._fit_view_to_object(gui_doc.ActiveView, focus_doc, target_obj)
+            except Exception as e:
+                App.Console.PrintWarning(
+                    f"FCProject PartExchange: Fokus auf '{target_obj.Label}' fehlgeschlagen: {str(e)}\n"
+                )
             self._do_addselection(focus_doc.Name, target_obj.Name, "")
             self._highlight_reference(target_obj, entry.get("subelement") or "", (1.0, 0.0, 1.0))
-        btn_row = QtWidgets.QHBoxLayout()
-        cancel_btn = QtWidgets.QPushButton("Abbrechen")
-        btn_row.addWidget(cancel_btn)
-        btn_row.addStretch()
-        no_btn = QtWidgets.QPushButton("Nein (überspringen)")
-        all_btn = QtWidgets.QPushButton("Alle ersetzen")
-        yes_btn = QtWidgets.QPushButton("Ja")
-        yes_btn.setDefault(True)
-        for btn in (no_btn, all_btn, yes_btn):
-            btn_row.addWidget(btn)
-        layout.addLayout(btn_row)
 
-        result = {"decision": "no"}
+        # FCPROJECT-PATCH (2026-09-07, Nutzer-Report "Aufgaben geht weg, du addressierst zum
+        # falschen Fenster" - bestaetigt korrekt): _highlight_reference() ruft selbst am Ende
+        # Gui.setActiveDocument() auf DESSEN eigenes Dokument auf, das von `doc` abweichen kann,
+        # wenn target_obj (z.B. per App::Link) in einer ANDEREN Datei liegt. Der VORHERIGE Code
+        # las hier einfach "was auch immer gerade aktiv ist" (Gui.ActiveDocument) - das hing das
+        # Panel an ein FALSCHES Dokument, sobald diese Abweichung auftrat: es verschwand dann
+        # von selbst, sobald spaeter irgendwas (z.B. der naechste Fokus-Wechsel) das WIRKLICH
+        # gemeinte `doc` wieder aktiv machte. Fix: explizit auf `doc` adressieren (das Dokument,
+        # dessen Vorkommen hier gerade bestaetigt werden soll) und aktives Dokument davor nochmal
+        # gezielt darauf zuruecksetzen, statt uns auf einen Nebeneffekt zu verlassen.
+        try:
+            Gui.setActiveDocument(doc.Name)
+        except Exception:
+            pass
+        gui_active_doc = Gui.getDocument(doc.Name)
+        # FCPROJECT-PATCH (2026-09-07, Nutzer-Report "ich ersetze nicht Joints sondern Parts,
+        # bitte interne Name"): entry["label"] betont bisher den JOINT ("Joint 'Abstand' ..."),
+        # dabei geht es dem Nutzer eigentlich um das TEIL, das ersetzt wird - hier zusaetzlich
+        # explizit voranstellen, mit internem Namen (Label ist nicht eindeutig, siehe
+        # [[feedback_fcproject_never_use_label_for_addressing]]).
+        panel_label = entry.get("label", "")
+        if target_obj is not None:
+            target_display = (
+                target_obj.Label if target_obj.Label == target_obj.Name
+                else f"{target_obj.Label} ({target_obj.Name})"
+            )
+            panel_label = f"Teil: {target_display}\n{panel_label}"
 
-        def _choose(decision):
-            result["decision"] = decision
-            box.accept()
+        panel = _ReplaceInstanceTaskPanel(panel_label, gui_active_doc, on_decision)
+        try:
+            Gui.Control.showDialog(panel, gui_active_doc)
+        except Exception as e:
+            App.Console.PrintWarning(
+                f"FCProject PartExchange: Aufgabenbereich-Panel konnte nicht geoeffnet werden: "
+                f"{str(e)} - ueberspringe dieses Vorkommen.\n"
+            )
+            on_decision("no")
+            return
 
-        cancel_btn.clicked.connect(lambda: _choose("cancel"))
-        no_btn.clicked.connect(lambda: _choose("no"))
-        all_btn.clicked.connect(lambda: _choose("all"))
-        yes_btn.clicked.connect(lambda: _choose("yes"))
-        box.exec()
-        # Die frisch eingebettete 3D-Ansicht (samt Isolations-Ausblendung) wird pro Vorkommen
-        # neu erzeugt (siehe oben) - hier wieder verwerfen/rueckgaengig machen, sonst sammeln
-        # sich bei vielen Vorkommen viele Zusatz-Ansichten an bzw. bleibt die Baugruppe
-        # ausgeblendet.
-        self._restore_3d_views()
-        for vobj in self._isolation_hidden:
+        # FCPROJECT-PATCH (2026-09-07, per Live-Diagnose ZWEIFELSFREI verifiziert - siehe
+        # _ReplaceInstanceTaskPanel-Docstring): showDialog() haengt unser Panel korrekt als neue
+        # Seite in das QStackedWidget des "Aufgaben"-Docks (objectName "Tasks") ein, schaltet
+        # dessen currentIndex aber in diesem FreeCAD-Dev-Build nicht zuverlaessig um - die neue
+        # Seite blieb unsichtbar hinter der alten (leeren) Seite 0. Nutzer-Report: ein SOFORTIGER
+        # (synchroner) Fix griff nur kurz ("kommt kurz was, dann geht weg") - FreeCAD scheint
+        # currentIndex kurz DANACH nochmal selbst zurueckzusetzen (vermutlich eigene, noch
+        # ausstehende Events/Layout-Nacharbeit). Deshalb jetzt per QTimer.singleShot(0, ...) auf
+        # den naechsten Event-Loop-Durchlauf verschoben, NACH FreeCADs eigenem Aufraeumen.
+        def _fix_tasks_tab(retries_left=8):
+            # Abbrechen, falls der Nutzer inzwischen schon geklickt hat (Dialog dann schon
+            # geschlossen) - sonst wuerde hier sinnlos/gefaehrlich an einem ggf. schon ANDEREN,
+            # zwischenzeitlich aktiven Panel herumgeschaltet werden.
             try:
-                vobj.Visibility = True
+                if not Gui.Control.activeDialog(gui_active_doc):
+                    return
             except Exception:
-                pass
-        self._isolation_hidden.clear()
-        return result["decision"]
+                return
+            try:
+                tasks_dock = Gui.getMainWindow().findChild(QtWidgets.QDockWidget, "Tasks")
+                if tasks_dock is not None:
+                    stacked = tasks_dock.widget()
+                    if isinstance(stacked, QtWidgets.QStackedWidget) and stacked.count() > 0:
+                        stacked.setCurrentIndex(stacked.count() - 1)
+                    tasks_dock.setVisible(True)
+                    tasks_dock.raise_()
+            except Exception as e:
+                App.Console.PrintWarning(
+                    f"FCProject PartExchange: Aufgaben-Panel konnte nicht in den Vordergrund "
+                    f"geholt werden: {str(e)}\n"
+                )
+                return
+            # Ueber ein kurzes Zeitfenster wiederholen (Nutzer-Report "kommt kurz was, dann geht
+            # weg" - ein einzelner Versuch reicht offenbar nicht, FreeCAD scheint currentIndex
+            # mehrfach/verzoegert selbst zurueckzusetzen). Bricht von selbst ab, sobald der
+            # Nutzer schon geklickt hat (self._attached_doc-Dialog dann bereits geschlossen).
+            if retries_left > 0:
+                QtCore.QTimer.singleShot(100, lambda: _fix_tasks_tab(retries_left - 1))
+
+        QtCore.QTimer.singleShot(0, _fix_tasks_tab)
 
     def _confirm_save_doc(self, doc):
         """Fragt nach dem Bearbeiten EINER Datei explizit, ob/wie gespeichert werden soll
@@ -1154,8 +1235,20 @@ class PartExchangeWindow(QtWidgets.QDialog):
             except Exception as e:
                 QtWidgets.QMessageBox.warning(self, "FCProject", f"Speichern fehlgeschlagen: {str(e)}")
         elif clicked is saveas_btn:
+            # FCPROJECT-PATCH (2026-09-07, Nutzer-Report "Speichern unter Fenster kommt nicht
+            # und blockiert FreeCAD" - lange bekannter, bisher nicht untersuchter Bug, siehe
+            # [[project_fcproject_partexchange_redesign_status]]): zwei Verdaechtige behoben.
+            # 1. `self` ist zu diesem Zeitpunkt bereits per self.hide() versteckt (siehe
+            #    _on_apply()) - als Parent eines MODALEN Dialogs kann das zu einem unsichtbaren,
+            #    aber trotzdem blockierenden Dialog fuehren. Jetzt Gui.getMainWindow() statt
+            #    self als Parent.
+            # 2. DontUseNativeDialog ergaenzt - an einer ANDEREN Stelle im selben Werkzeug
+            #    (PartExchangeCommand.py._on_browse_file()) war das schon aus genau diesem
+            #    Grund noetig (nativer Dialog verschwindet/reagiert nicht zuverlaessig) - hier
+            #    fehlte die gleiche Absicherung bisher.
             path, _ = QtWidgets.QFileDialog.getSaveFileName(
-                self, "Speichern unter", doc.FileName or "", "FreeCAD-Dokument (*.FCStd)"
+                Gui.getMainWindow(), "Speichern unter", doc.FileName or "",
+                "FreeCAD-Dokument (*.FCStd)", options=QtWidgets.QFileDialog.DontUseNativeDialog
             )
             if path:
                 try:
@@ -1177,11 +1270,19 @@ class PartExchangeWindow(QtWidgets.QDialog):
         Nutzerwunsch 2026-09-02 ("4 gleiche Parts, nur eins soll geaendert werden"): anders als
         frueher wird NICHT mehr automatisch JEDES Vorkommen ersetzt, das die Zuordnungstabelle
         abdeckt - stattdessen wird pro angehakter Datei und darin PRO EINZELNEM Joint-Vorkommen
-        einzeln nachgefragt (_confirm_replace_instance(), mit "Alle ersetzen"-Abkuerzung), und
-        nach jeder Datei explizit gefragt, ob/wie gespeichert werden soll
-        (_confirm_save_doc())."""
-        errors = []
-        rewired_joints = 0
+        einzeln nachgefragt (_show_replace_instance_panel(), mit "Alle ersetzen"-Abkuerzung), und
+        nach jeder Datei explizit gefragt, ob/wie gespeichert werden soll (_confirm_save_doc()).
+
+        FCPROJECT-PATCH (2026-09-07, Nutzerwunsch): "ruf nicht gleich alle Dateien zum Tausch,
+        nur eine Datei, dann schliessen, dann andere" - komplett auf eine ereignisgesteuerte
+        Zustandsmaschine (self._apply_ctx) umgebaut, weil Gui.Control.showDialog() (fuer das
+        neue Aufgabenbereich-Panel, siehe _ReplaceInstanceTaskPanel) NICHT blockierend ist wie
+        das vorherige QDialog.exec() - die urspruengliche lineare for-Schleife konnte deshalb
+        nicht mehr einfach "auf die Nutzer-Antwort warten". Ablauf jetzt: _apply_next_doc()
+        oeffnet EINE Datei, verarbeitet all ihre Vorkommen (_apply_next_entry()/
+        _apply_on_decision()), schliesst sie danach wieder (_apply_finish_doc()/
+        _maybe_close_doc(), ausser Original-/Ersatzteil-Dokument) und geht erst DANN zur
+        naechsten Datei weiter - nie mehrere gleichzeitig offen."""
         mapping_by_key = {_joint_key(m["original"]): m for m in self._mappings}
 
         # Nur Dateien beruecksichtigen, die der Nutzer in der Checkliste angehakt hat
@@ -1200,13 +1301,9 @@ class PartExchangeWindow(QtWidgets.QDialog):
             )
             return
 
-        # FCPROJECT-PATCH (2026-09-06, Nutzerwunsch): das Referenz-Zuordnungs-Fenster (mit den
-        # beiden eingebetteten 3D-Ansichten) wird ab hier nicht mehr benoetigt - der naechste
-        # Schritt (pro Datei/Vorkommen einzeln per Ja/Nein/"Alle ersetzen" bestaetigen,
-        # _confirm_replace_instance()) soll in einem EIGENEN, unabhaengigen Kontext laufen statt
-        # mit dem jetzt inhaltlich ueberholten Zuordnungs-Fenster im Hintergrund. hide() statt
-        # close(): das Python-Objekt (und damit self.xxx fuer den Rest dieser Methode) bleibt
-        # gueltig, WA_DeleteOnClose ist fuer diese Klasse nicht gesetzt.
+        # Das Referenz-Zuordnungs-Fenster (mit den beiden eingebetteten 3D-Ansichten) wird ab
+        # hier nicht mehr benoetigt. hide() statt close(): das Python-Objekt (und damit self.xxx
+        # fuer den Rest dieser Methode) bleibt gueltig, WA_DeleteOnClose ist nicht gesetzt.
         self.hide()
         self._restore_3d_views()
         for vobj in self._isolation_hidden:
@@ -1215,6 +1312,25 @@ class PartExchangeWindow(QtWidgets.QDialog):
             except Exception:
                 pass
         self._isolation_hidden.clear()
+        # FCPROJECT-PATCH (2026-09-07, Nutzerwunsch "die zwei Fenster nach Referenzzuweisung
+        # schliessen"): _restore_3d_views() ruft fuer jede getrackte Ansicht widget.close() auf
+        # (das funktioniert - siehe dortige Begruendung), aber das dabei entstehende LEERE
+        # QMdiSubWindow (dessen Inhalt per setParent(None) schon vorher entfernt wurde) blieb
+        # bisher trotz mehrerer Versuche (close()/hide()/removeSubWindow()) als sichtbarer
+        # "(Unbenannt)"-Tab zurueck. Neuer, sichererer Ansatz: HIER, NACHDEM alles Uebrige schon
+        # geschlossen ist, alle MDI-Unterfenster OHNE jeglichen Inhalt (`.widget() is None`)
+        # explizit schliessen - das kann per Definition nichts Inhaltliches zerstoeren, weil dort
+        # nichts mehr drin ist.
+        try:
+            mdi_area = Gui.getMainWindow().findChild(QtWidgets.QMdiArea)
+            if mdi_area is not None:
+                for sub_window in list(mdi_area.subWindowList()):
+                    if sub_window.widget() is None:
+                        sub_window.close()
+        except Exception as e:
+            App.Console.PrintWarning(
+                f"FCProject PartExchange: Leere Zusatzfenster konnten nicht bereinigt werden: {str(e)}\n"
+            )
         self._clear_highlight_selection()
 
         entries_by_doc = {}
@@ -1223,161 +1339,253 @@ class PartExchangeWindow(QtWidgets.QDialog):
                 continue
             entries_by_doc.setdefault(entry["joint_obj"].Document, []).append(entry)
 
-        touched_docs = []  # nur Dokumente, in denen tatsaechlich etwas umgehaengt wurde
-        # "Alle ersetzen" gilt global fuer den Rest dieses Durchlaufs (ueber alle noch
-        # kommenden Dateien/Vorkommen hinweg), nicht nur fuer die aktuelle Datei.
-        replace_all_remaining = False
-        cancelled = False  # Nutzerwunsch 2026-09-06: "Abbrechen"-Knopf im Vorkommen-Dialog
-
+        # FCPROJECT-PATCH (2026-09-07, temporaere Diagnose): Nutzer-Report "sofort leerer
+        # Report, kein Panel, keine Warnung" - "immer teste, nie raten": zeigt live, ob/warum
+        # entries_by_doc leer ist bzw. wie viele Eintraege pro Datei fuer Bestaetigung anstehen.
+        App.Console.PrintMessage(
+            f"FCProject PartExchange DIAG: checked_paths={sorted(checked_paths)}\n"
+        )
+        App.Console.PrintMessage(
+            f"FCProject PartExchange DIAG: {len(self._original_joints)} Eintraege insgesamt, "
+            f"{len(mapping_by_key)} zugeordnet ({sorted(mapping_by_key.keys())}), "
+            f"{len(entries_by_doc)} betroffene(s) Dokument(e) nach Datei-Filter.\n"
+        )
         for doc, doc_entries in entries_by_doc.items():
-            if cancelled:
-                break
-            assembly_obj = find_assembly(doc)
-            local_replacement = self._ensure_local_replacement(doc, self.replacement_obj, assembly_obj)
-            if local_replacement is None:
-                errors.append(
-                    f"'{doc.Name}': Ersatzteil ist die Baugruppe selbst - übersprungen "
-                    "(würde einen zyklischen Verweis erzeugen)."
-                )
-                continue
+            need_confirm = [
+                e for e in doc_entries
+                if e["joint_side"] in WHOLE_OBJECT_SIDES or mapping_by_key.get(_joint_key(e)) is not None
+            ]
+            App.Console.PrintMessage(
+                f"FCProject PartExchange DIAG: '{doc.Name}': {len(doc_entries)} Eintraege, "
+                f"{len(need_confirm)} davon zu bestaetigen (subelements: "
+                f"{sorted({e['subelement'] for e in doc_entries})}).\n"
+            )
 
-            # Ersatzteil startet an der Position des Original-VORKOMMENS in DIESEM Dokument
-            # (nicht zwingend self.original_obj - in einer anderen Datei kann das dieselbe
-            # logische Baugruppe unter einer eigenen, lokalen Platzierung sein) -> bessere
-            # Solver-Konvergenz.
-            local_originals = {}
-            for entry in doc_entries:
-                local_orig = _entry_original_obj(entry)
-                if local_orig is not None:
-                    local_originals[local_orig.Name] = local_orig
-            if local_originals:
-                try:
-                    local_replacement.Placement = next(iter(local_originals.values())).Placement
-                except Exception:
-                    pass
+        self._apply_ctx = {
+            "mapping_by_key": mapping_by_key,
+            "doc_queue": list(entries_by_doc.items()),
+            "doc_index": 0,
+            # "Alle ersetzen" gilt global fuer den Rest dieses Durchlaufs (ueber alle noch
+            # kommenden Dateien/Vorkommen hinweg), nicht nur fuer die aktuelle Datei.
+            "replace_all_remaining": False,
+            "cancelled": False,  # "Abbrechen"-Knopf im Vorkommen-Panel
+            "errors": [],
+            "rewired_joints": 0,
+            "touched_docs": [],  # nur Dokumente, in denen tatsaechlich etwas umgehaengt wurde
+        }
+        self._apply_next_doc()
 
-            # WICHTIG (2026-08-30, Nutzer-Report "Teil springt nicht zur Stange"): Bevor das
-            # frisch erzeugte/platzierte Ersatzteil-Objekt einer Joint-Referenz (Reference1/2)
-            # zugewiesen wird, MUSS es einmal neu berechnet werden. FreeCAD legt beim Zuweisen
-            # einer Sub-Element-Referenz einen "Shadow"-Hash zur robusten Kanten-Wiedererkennung
-            # an - wird der auf Basis eines noch nicht fertig berechneten Shapes erzeugt, zeigt er
-            # spaeter auf die falsche Kante, obwohl die Nummer (z.B. "Edge34") gleich bleibt.
-            # Bestaetigt per Live-Test: manuelles Neu-Anklicken derselben Kante NACH einem
-            # Recompute hat das Problem behoben, ohne dass Kante oder Offset2 sich geaendert
-            # haetten - die Ersatzteil-Seite (nicht die unveraenderte Original-Seite) war
-            # betroffen.
-            # WICHTIG (2026-08-30, Nutzer-Report "Stange hat sich gedreht, ohne dass ich
-            # etwas berechnet habe"): doc.recompute() loest bei Assembly-Dokumenten IMMER
-            # automatisch einen internen Solve aus (FreeCAD koppelt das fest, laesst sich
-            # nicht abschalten) - schon das Entfernen des expliziten _solve_assembly_for()-
-            # Aufrufs reicht also NICHT. Per git-Vergleich (vor/nach-Commit) belegt: Ondsels
-            # automatische Redundant-Constraint-Aufloesung kann dabei den per GroundedJoint
-            # fest geerdeten Teil selbst verschieben, obwohl der per Definition unbeweglich
-            # sein soll. Deshalb: Placement aller geerdeten Teile VOR dem Recompute sichern
-            # und danach explizit zurueckschreiben, falls der Solve sie trotzdem verschoben
-            # hat.
+    def _apply_next_doc(self):
+        """Naechste Datei aus der Warteschlange oeffnen und verarbeiten - siehe _on_apply()."""
+        ctx = self._apply_ctx
+        if ctx["cancelled"] or ctx["doc_index"] >= len(ctx["doc_queue"]):
+            self._apply_finish_all()
+            return
+
+        doc, doc_entries = ctx["doc_queue"][ctx["doc_index"]]
+        ctx["doc_index"] += 1
+        ctx["current_doc"] = doc
+        ctx["current_entries"] = doc_entries
+        ctx["entry_index"] = 0
+        ctx["applied_here"] = 0
+        ctx["joint_names_here"] = []
+        ctx["applied_originals"] = []  # NUR tatsaechlich ersetzte Original-Instanzen (fuer Ausblenden)
+
+        assembly_obj = find_assembly(doc)
+        local_replacement = self._ensure_local_replacement(doc, self.replacement_obj, assembly_obj)
+        if local_replacement is None:
+            ctx["errors"].append(
+                f"'{doc.Name}': Ersatzteil ist die Baugruppe selbst - übersprungen "
+                "(würde einen zyklischen Verweis erzeugen)."
+            )
+            self._apply_next_doc()
+            return
+        ctx["local_replacement"] = local_replacement
+
+        # Ersatzteil startet an der Position des Original-VORKOMMENS in DIESEM Dokument (nicht
+        # zwingend self.original_obj - in einer anderen Datei kann das dieselbe logische
+        # Baugruppe unter einer eigenen, lokalen Platzierung sein) -> bessere Solver-Konvergenz.
+        local_originals = {}
+        for entry in doc_entries:
+            local_orig = _entry_original_obj(entry)
+            if local_orig is not None:
+                local_originals[local_orig.Name] = local_orig
+        if local_originals:
             try:
-                self._recompute_preserving_grounded(doc)
+                local_replacement.Placement = next(iter(local_originals.values())).Placement
             except Exception:
                 pass
 
-            self._bring_doc_to_front(doc)
+        # WICHTIG (2026-08-30, Nutzer-Report "Teil springt nicht zur Stange"): Bevor das frisch
+        # erzeugte/platzierte Ersatzteil-Objekt einer Joint-Referenz (Reference1/2) zugewiesen
+        # wird, MUSS es einmal neu berechnet werden. FreeCAD legt beim Zuweisen einer Sub-
+        # Element-Referenz einen "Shadow"-Hash zur robusten Kanten-Wiedererkennung an - wird der
+        # auf Basis eines noch nicht fertig berechneten Shapes erzeugt, zeigt er spaeter auf die
+        # falsche Kante, obwohl die Nummer (z.B. "Edge34") gleich bleibt.
+        # WICHTIG (2026-08-30, Nutzer-Report "Stange hat sich gedreht, ohne dass ich etwas
+        # berechnet habe"): doc.recompute() loest bei Assembly-Dokumenten IMMER automatisch
+        # einen internen Solve aus (FreeCAD koppelt das fest). Ondsels automatische Redundant-
+        # Constraint-Aufloesung kann dabei den per GroundedJoint fest geerdeten Teil selbst
+        # verschieben - deshalb wird das Placement aller geerdeten Teile in
+        # _recompute_preserving_grounded() vor dem Recompute gesichert und danach zurueckgeschrieben.
+        try:
+            self._recompute_preserving_grounded(doc)
+        except Exception:
+            pass
 
-            applied_here = 0
-            joint_names_here = []
-            applied_originals = []  # NUR tatsaechlich ersetzte Original-Instanzen (fuer Ausblenden)
-            for entry in doc_entries:
-                # Fuer normale Referenzen (nicht GroundedJoint/RigidGroup) muss ueberhaupt erst
-                # eine Zuordnung existieren - sonst gibt's nichts zu bestaetigen/anzuwenden.
-                if entry["joint_side"] not in WHOLE_OBJECT_SIDES:
-                    if mapping_by_key.get(_joint_key(entry)) is None:
-                        continue
+        self._bring_doc_to_front(doc)
+        # Nutzerwunsch 2026-09-07: die volle Baugruppe soll sichtbar bleiben (kein Ausblenden
+        # aller Nachbarteile mehr, siehe _apply_next_doc()-Kommentar oben), aber die vielen
+        # Joint-Kreuz-Icons stoeren dabei nur - gezielt NUR diese ausblenden.
+        self._hide_joint_markers(doc)
+        self._apply_next_entry()
 
-                # Pro Vorkommen einzeln nachfragen (Nutzerwunsch 2026-09-02), es sei denn
-                # "Alle ersetzen" wurde schon fuer den Rest dieses Durchlaufs gewaehlt.
-                if replace_all_remaining:
-                    decision = "yes"
-                else:
-                    decision = self._confirm_replace_instance(entry)
-                    if decision == "cancel":
-                        cancelled = True
-                        break
-                    if decision == "all":
-                        replace_all_remaining = True
-                        decision = "yes"
+    def _hide_joint_markers(self, doc):
+        """Blendet NUR die Joint-Marker in `doc` aus (Nutzerwunsch 2026-09-07) - anders als die
+        fruehere volle Isolation (_isolate_for_embed()) bleiben alle uebrigen Teile normal
+        sichtbar. Wiederhergestellt in _apply_finish_doc()."""
+        for obj in doc.Objects:
+            if not is_joint(obj):
+                continue
+            vobj = getattr(obj, "ViewObject", None)
+            if vobj is None or not vobj.Visibility:
+                continue
+            self._isolation_hidden.append(vobj)
+            vobj.Visibility = False
 
-                if decision != "yes":
+    def _apply_next_entry(self):
+        """Naechstes noch unbearbeitetes Vorkommen der aktuellen Datei behandeln - fragt per
+        Aufgabenbereich-Panel nach (ausser "Alle ersetzen" ist schon aktiv) und kehrt dann
+        asynchron ueber _apply_on_decision() hierher zurueck, bis alle Vorkommen dieser Datei
+        durch sind."""
+        ctx = self._apply_ctx
+        doc_entries = ctx["current_entries"]
+        mapping_by_key = ctx["mapping_by_key"]
+
+        while ctx["entry_index"] < len(doc_entries):
+            entry = doc_entries[ctx["entry_index"]]
+            ctx["entry_index"] += 1
+
+            # Fuer normale Referenzen (nicht GroundedJoint/RigidGroup) muss ueberhaupt erst eine
+            # Zuordnung existieren - sonst gibt's nichts zu bestaetigen/anzuwenden.
+            if entry["joint_side"] not in WHOLE_OBJECT_SIDES:
+                if mapping_by_key.get(_joint_key(entry)) is None:
                     continue
 
-                # GroundedJoint braucht keine manuelle Zuordnung (kein Face/Edge-Konzept -
-                # ObjectToGround erdet immer das GANZE Objekt) - wird deshalb hier immer
-                # automatisch auf das Ersatzteil umgehaengt, unabhaengig von den Nutzer-
-                # Zuordnungen (2026-08-30, Nutzer-Report "GroundedJoint ist beim alten
-                # Original geblieben").
-                if entry["joint_side"] == GROUND_SIDE:
-                    try:
-                        entry["joint_obj"].ObjectToGround = local_replacement
-                        rewired_joints += 1
-                        applied_here += 1
-                        joint_names_here.append(entry["joint_obj"].Name)
-                        orig = _entry_original_obj(entry)
-                        if orig is not None:
-                            applied_originals.append(orig)
-                    except Exception as e:
-                        errors.append(
-                            f"GroundedJoint '{entry['joint_obj'].Label}': ObjectToGround "
-                            f"konnte nicht umgehängt werden ({str(e)})"
-                        )
-                    continue
-
-                if entry["joint_side"] == RIGID_GROUP_SIDE:
-                    # RigidGroupJoint.ObjectsToRigidGroup ist eine LISTE - das alte Original
-                    # (entry["target_obj"]) muss darin durch das Ersatzteil ERSETZT werden,
-                    # nicht die ganze Liste ueberschrieben werden (andere Mitglieder bleiben
-                    # unveraendert). Analog zu GroundedJoint keine manuelle Zuordnung noetig.
-                    try:
-                        original_member = entry.get("target_obj")
-                        members = list(entry["joint_obj"].ObjectsToRigidGroup or [])
-                        members = [
-                            local_replacement if m is original_member else m
-                            for m in members
-                        ]
-                        entry["joint_obj"].ObjectsToRigidGroup = members
-                        rewired_joints += 1
-                        applied_here += 1
-                        joint_names_here.append(entry["joint_obj"].Name)
-                        if original_member is not None:
-                            applied_originals.append(original_member)
-                    except Exception as e:
-                        errors.append(
-                            f"RigidGroup '{entry['joint_obj'].Label}': Mitgliedschaft "
-                            f"konnte nicht umgehängt werden ({str(e)})"
-                        )
-                    continue
-
-                mapping = mapping_by_key.get(_joint_key(entry))
-                if self._rewire_joint(
-                    entry["joint_obj"], entry["joint_side"],
-                    local_replacement, mapping["replacement_subelement"], errors
-                ):
-                    rewired_joints += 1
-                    applied_here += 1
-                    joint_names_here.append(entry["joint_obj"].Name)
-                    orig = _entry_original_obj(entry)
-                    if orig is not None:
-                        applied_originals.append(orig)
-
-            self._clear_highlight_selection()
-
-            if applied_here == 0:
+            if ctx["replace_all_remaining"]:
+                self._apply_rewire_entry(entry)
                 continue
 
-            doc_file_name = os.path.basename(doc.FileName) if doc.FileName else doc.Name
-            touched_docs.append(f"{doc_file_name} [{', '.join(joint_names_here)}]")
+            self._show_replace_instance_panel(
+                entry, ctx["current_doc"],
+                lambda decision, entry=entry: self._apply_on_decision(entry, decision)
+            )
+            return  # warten auf Nutzer-Klick im Panel (asynchron)
 
-            # NUR die tatsaechlich ersetzten Original-Instanzen ausblenden - uebersprungene
-            # (per "Nein" abgelehnte) Instanzen bleiben unangetastet sichtbar.
-            for local_orig in applied_originals:
+        self._apply_finish_doc()
+
+    def _apply_on_decision(self, entry, decision):
+        """Callback aus _ReplaceInstanceTaskPanel fuer GENAU EIN Vorkommen."""
+        ctx = self._apply_ctx
+        if decision == "cancel":
+            ctx["cancelled"] = True
+            self._apply_finish_doc()
+            return
+        if decision == "all":
+            ctx["replace_all_remaining"] = True
+            decision = "yes"
+        if decision == "yes":
+            self._apply_rewire_entry(entry)
+        self._apply_next_entry()
+
+    def _apply_rewire_entry(self, entry):
+        """Haengt EIN bestaetigtes Vorkommen tatsaechlich um (GroundedJoint/RigidGroup/normale
+        Referenz) - inhaltlich unveraendert aus der fruaeheren linearen _on_apply()-Schleife."""
+        ctx = self._apply_ctx
+        local_replacement = ctx["local_replacement"]
+        errors = ctx["errors"]
+
+        # GroundedJoint braucht keine manuelle Zuordnung (kein Face/Edge-Konzept - ObjectToGround
+        # erdet immer das GANZE Objekt) - wird deshalb hier immer automatisch auf das Ersatzteil
+        # umgehaengt, unabhaengig von den Nutzer-Zuordnungen (2026-08-30, Nutzer-Report
+        # "GroundedJoint ist beim alten Original geblieben").
+        if entry["joint_side"] == GROUND_SIDE:
+            try:
+                entry["joint_obj"].ObjectToGround = local_replacement
+                ctx["rewired_joints"] += 1
+                ctx["applied_here"] += 1
+                ctx["joint_names_here"].append(entry["joint_obj"].Name)
+                orig = _entry_original_obj(entry)
+                if orig is not None:
+                    ctx["applied_originals"].append(orig)
+            except Exception as e:
+                errors.append(
+                    f"GroundedJoint '{entry['joint_obj'].Label}': ObjectToGround "
+                    f"konnte nicht umgehängt werden ({str(e)})"
+                )
+            return
+
+        if entry["joint_side"] == RIGID_GROUP_SIDE:
+            # RigidGroupJoint.ObjectsToRigidGroup ist eine LISTE - das alte Original
+            # (entry["target_obj"]) muss darin durch das Ersatzteil ERSETZT werden, nicht die
+            # ganze Liste ueberschrieben werden (andere Mitglieder bleiben unveraendert). Analog
+            # zu GroundedJoint keine manuelle Zuordnung noetig.
+            try:
+                original_member = entry.get("target_obj")
+                members = list(entry["joint_obj"].ObjectsToRigidGroup or [])
+                members = [
+                    local_replacement if m is original_member else m
+                    for m in members
+                ]
+                entry["joint_obj"].ObjectsToRigidGroup = members
+                ctx["rewired_joints"] += 1
+                ctx["applied_here"] += 1
+                ctx["joint_names_here"].append(entry["joint_obj"].Name)
+                if original_member is not None:
+                    ctx["applied_originals"].append(original_member)
+            except Exception as e:
+                errors.append(
+                    f"RigidGroup '{entry['joint_obj'].Label}': Mitgliedschaft "
+                    f"konnte nicht umgehängt werden ({str(e)})"
+                )
+            return
+
+        mapping = ctx["mapping_by_key"].get(_joint_key(entry))
+        if self._rewire_joint(
+            entry["joint_obj"], entry["joint_side"],
+            local_replacement, mapping["replacement_subelement"], errors
+        ):
+            ctx["rewired_joints"] += 1
+            ctx["applied_here"] += 1
+            ctx["joint_names_here"].append(entry["joint_obj"].Name)
+            orig = _entry_original_obj(entry)
+            if orig is not None:
+                ctx["applied_originals"].append(orig)
+
+    def _apply_finish_doc(self):
+        """Alle Vorkommen der aktuellen Datei abgearbeitet (oder Abbruch) - speichert bei Bedarf,
+        schliesst die Datei dann wieder (Nutzerwunsch 2026-09-07: 'nur eine Datei, dann
+        schliessen, dann andere') und geht zur naechsten Datei weiter."""
+        ctx = self._apply_ctx
+        self._clear_highlight_selection()
+        doc = ctx["current_doc"]
+
+        # Joint-Marker (siehe _hide_joint_markers()) wieder einblenden, solange die Datei noch
+        # offen ist - bei einer bereits geschlossenen Datei waere das ohnehin wirkungslos.
+        for vobj in self._isolation_hidden:
+            try:
+                vobj.Visibility = True
+            except Exception:
+                pass
+        self._isolation_hidden.clear()
+
+        if ctx["applied_here"] > 0:
+            doc_file_name = os.path.basename(doc.FileName) if doc.FileName else doc.Name
+            ctx["touched_docs"].append(f"{doc_file_name} [{', '.join(ctx['joint_names_here'])}]")
+
+            # NUR die tatsaechlich ersetzten Original-Instanzen ausblenden - uebersprungene (per
+            # "Nein" abgelehnte) Instanzen bleiben unangetastet sichtbar.
+            for local_orig in ctx["applied_originals"]:
                 try:
                     vobj = getattr(local_orig, "ViewObject", None)
                     if vobj is not None:
@@ -1388,24 +1596,55 @@ class PartExchangeWindow(QtWidgets.QDialog):
             try:
                 self._recompute_preserving_grounded(doc)
             except Exception as e:
-                errors.append(f"Neuberechnung von '{doc.Name}' fehlgeschlagen: {str(e)}")
+                ctx["errors"].append(f"Neuberechnung von '{doc.Name}' fehlgeschlagen: {str(e)}")
 
             # Explizit nachfragen statt automatisch zu speichern (Nutzerwunsch 2026-09-02).
             self._confirm_save_doc(doc)
 
-        if cancelled:
+        self._maybe_close_doc(doc)
+        self._apply_next_doc()
+
+    def _maybe_close_doc(self, doc):
+        """Schliesst `doc` wieder, sobald diese Sitzung mit ihr fertig ist (Nutzerwunsch
+        2026-09-07: "ruf nicht gleich alle Dateien zum Tausch, nur eine Datei, dann schliessen,
+        dann andere" - vorher blieben ALLE beim anfaenglichen Scannen
+        (find_all_project_joints_referencing()) geoeffneten Dateien bis zum Schluss offen, was
+        bei vielen betroffenen Dateien schnell unuebersichtlich wurde). Original-/Ersatzteil-
+        Dokument werden NIE automatisch geschlossen - der Nutzer hat sie selbst geoeffnet/
+        ausgewaehlt, bevor dieses Werkzeug ueberhaupt gestartet wurde. Ebenso nicht geschlossen,
+        wenn noch ungespeicherte Aenderungen vorliegen (der Nutzer hat sich bei
+        _confirm_save_doc() bewusst gegen Speichern entschieden - ein Zwangs-Schliessen wuerde
+        entweder Daten stillschweigend verwerfen oder eine zweite, verwirrende 'ungespeicherte
+        Aenderungen'-Rueckfrage von FreeCAD selbst ausloesen)."""
+        if doc is self.original_doc or doc is self.replacement_doc:
+            return
+        try:
+            if doc.Modified:
+                return
+            App.closeDocument(doc.Name)
+        except Exception as e:
+            App.Console.PrintWarning(
+                f"FCProject PartExchange: '{doc.Name}' konnte nicht geschlossen werden: {str(e)}\n"
+            )
+
+    def _apply_finish_all(self):
+        """Letzter Schritt, nachdem alle (oder bis zum Abbruch) Dateien durchgearbeitet sind."""
+        ctx = self._apply_ctx
+        if ctx["cancelled"]:
             App.Console.PrintMessage("FCProject PartExchange: Vom Nutzer abgebrochen.\n")
         App.Console.PrintMessage(
-            f"FCProject PartExchange: {rewired_joints} Joint(s) in {len(touched_docs)} "
-            f"Datei(en) erfolgreich umgehängt: {', '.join(touched_docs)}\n"
+            f"FCProject PartExchange: {ctx['rewired_joints']} Joint(s) in "
+            f"{len(ctx['touched_docs'])} Datei(en) erfolgreich umgehängt: "
+            f"{', '.join(ctx['touched_docs'])}\n"
         )
-        for err in errors:
+        for err in ctx["errors"]:
             App.Console.PrintWarning(f"FCProject PartExchange: {err}\n")
 
         try:
             Gui.setActiveDocument(self.original_doc.Name)
         except Exception:
             pass
+        self._apply_ctx = None
         self.close()
 
     @staticmethod
