@@ -18,6 +18,7 @@ from PartExchangeAnalyzer import (
     find_reference_root_and_path, full_reference_path, find_assembly,
     find_all_project_joints_referencing, GROUND_SIDE, RIGID_GROUP_SIDE, is_joint
 )
+from ObjectUtils import resolve_linked_object
 
 WHOLE_OBJECT_SIDES = (GROUND_SIDE, RIGID_GROUP_SIDE)  # kein Face/Edge-Konzept, keine manuelle Zuordnung noetig
 
@@ -45,6 +46,30 @@ def _entry_original_obj(entry):
         return entry.get("target_obj")
     ref = entry["joint_obj"].Reference1 if entry["joint_side"] == 1 else entry["joint_obj"].Reference2
     return ref[0] if ref else None
+
+
+def _group_entries_by_target(doc_entries):
+    """Gruppiert Eintraege nach ihrem Ziel-TEIL statt nach einzelnem Joint/Referenz.
+
+    FCPROJECT-PATCH (2026-09-09, Nutzerwunsch: "das wird mehr gefragt als es Parts gibt, du
+    fragst mich Joints ab, obwohl ich nur zu Teilen ja/nein sagen soll"): ein Teil kann ueber
+    mehrere Flaechen/Kanten an mehreren Joints beteiligt sein (z.B. 4 Joints auf 4
+    verschiedenen Faces desselben Latten-Teils) - bisher wurde PRO JOINT-EINTRAG einzeln
+    nachgefragt. Jetzt wird EINMAL pro Teil gefragt; bei "Ja"/"Alle ersetzen" werden dann ALLE
+    zu diesem Teil gehoerenden Eintraege in einem Zug umgehaengt.
+
+    Gibt eine Liste von {"target": target_obj, "entries": [entry, ...]} zurueck, Reihenfolge
+    wie im ersten Auftreten in `doc_entries`."""
+    groups = {}
+    order = []
+    for entry in doc_entries:
+        target = _entry_original_obj(entry)
+        key = target.Name if target is not None else id(entry)
+        if key not in groups:
+            groups[key] = {"target": target, "entries": []}
+            order.append(key)
+        groups[key]["entries"].append(entry)
+    return [groups[k] for k in order]
 
 
 def _joint_key(entry):
@@ -208,6 +233,11 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._forced_visible = []  # ViewObjects, die für die Hervorhebung sichtbar gemacht wurden
         self._isolation_hidden = []  # ViewObjects, dauerhaft (bis Fenster-Schliessen) fuer die
         # Original/Ersatzteil-Isolation ausgeblendet - siehe _isolate_for_embed()
+        # Nutzerwunsch 2026-09-09: "ich brauche die Joints nicht zu sehen" - anders als
+        # _isolation_hidden (oben) wird DIESE Liste absichtlich NIE wiederhergestellt, damit
+        # die Joint-Marker in der bearbeiteten Datei dauerhaft (auch nach dem Speichern)
+        # ausgeblendet bleiben - siehe _hide_joint_markers().
+        self._joint_markers_hidden = []
         self._color_overrides = {}  # (doc.Name, obj.Name, prop) -> (ViewObject, prop, Original-Farbliste)
         self._embedded_views = []  # [(widget, doc)] - aus dem Haupt-MDI-Bereich ausgeliehene 3D-Ansichten
         self._highlighted_docs = set()  # doc.Name - für Datum-Hervorhebung (Gui.Selection) benutzte Dokumente
@@ -778,19 +808,16 @@ class PartExchangeWindow(QtWidgets.QDialog):
     def _resolve_display_obj(obj):
         """Das Objekt, das `obj`s tatsächliche Geometrie traegt (fuer App::Link-Ketten, z.B.
         Pattern-Kopie → Assembly-Link → Teil-Dokument, wird die gesamte LinkedObject-Kette
-        durchlaufen, bis kein weiterer Link mehr folgt)."""
-        seen = set()
-        current = obj
-        while True:
-            obj_id = id(current)
-            if obj_id in seen:
-                break
-            seen.add(obj_id)
-            linked = getattr(current, "LinkedObject", None)
-            if linked is None:
-                break
-            current = linked
-        return current
+        durchlaufen, bis kein weiterer Link mehr folgt).
+
+        FCPROJECT-PATCH (2026-09-09, siehe [[feedback_fcproject_need_unified_search_utils]]):
+        war bisher eine eigene, handgeschriebene Nachbildung von FreeCADs eingebauter
+        DocumentObject::getLinkedObject(recurse=True) - genau die Kern-API, die
+        AssemblyPatternCreator.py/PatternFeatures.py/SectionSketchFeature.py fuer denselben
+        Zweck bereits direkt nutzen. Jetzt konsolidiert auf ObjectUtils.resolve_linked_object()
+        (duenner Wrapper um dieselbe Kern-API) - Methode bleibt fuer alle bestehenden
+        Aufrufstellen unveraendert bestehen, nur die Implementierung ist jetzt konsistent."""
+        return resolve_linked_object(obj)
 
     @staticmethod
     def _resolve_display_doc(obj):
@@ -1104,12 +1131,19 @@ class PartExchangeWindow(QtWidgets.QDialog):
                 f"geholt werden: {str(e)}\n"
             )
 
-    def _show_replace_instance_panel(self, entry, doc, on_decision):
-        """Zeigt EIN Bestätigungs-Panel für GENAU dieses Vorkommen (Nutzerwunsch 2026-09-02): bei
+    def _show_replace_instance_panel(self, group, ready_entries, doc, on_decision):
+        """Zeigt EIN Bestätigungs-Panel für GENAU EIN TEIL (Nutzerwunsch 2026-09-02): bei
         mehreren identischen Teilen im Projekt soll gezielt nur eine einzelne Instanz ersetzt
         werden können, statt automatisch alle gleichnamigen Vorkommen auf einmal. Hebt vorher die
         betroffene Original-Instanz im 3D-Fenster/Baum hervor ("Ziel selektieren"), damit der
         Nutzer sieht, welches der mehreren gleichen Teile gerade zur Debatte steht.
+
+        FCPROJECT-PATCH (2026-09-09, Nutzerwunsch "ich soll nur zu Teilen ja/nein sagen"):
+        `group`/`ready_entries` statt einem einzelnen Joint-Eintrag (siehe
+        _group_entries_by_target()) - ALLE Joint-Referenzen dieses EINEN Teils werden
+        zusammen bestaetigt, nicht mehr einzeln pro Joint. Deshalb auch keine
+        Einzel-Referenz-Hervorhebung mehr (welche der mehreren Faces sollte das sein?) -
+        stattdessen wird nur noch das GANZE Teil selektiert/fokussiert.
 
         FCPROJECT-PATCH (2026-09-07, Nutzerwunsch, ersetzt den fruaeheren freischwebenden
         QDialog mit eigener eingebetteter 3D-Ansicht - siehe _ReplaceInstanceTaskPanel):
@@ -1119,7 +1153,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
         (anders als QDialog.exec()) - `on_decision(decision)` wird deshalb asynchron aus dem
         Panel heraus aufgerufen, sobald der Nutzer einen Knopf klickt, statt einen Rueckgabewert
         zu liefern."""
-        target_obj = _entry_original_obj(entry)
+        target_obj = group["target"]
         self._clear_highlight_selection()
         self._bring_doc_to_front(doc)
         if target_obj is not None:
@@ -1132,8 +1166,11 @@ class PartExchangeWindow(QtWidgets.QDialog):
                 App.Console.PrintWarning(
                     f"FCProject PartExchange: Fokus auf '{target_obj.Label}' fehlgeschlagen: {str(e)}\n"
                 )
+            # Kein _highlight_reference() mehr fuer eine EINZELNE Referenz - bei mehreren
+            # Joint-Referenzen pro Teil (siehe group["entries"]) waere unklar, welche davon
+            # gemeint ist. Die Ganzobjekt-Auswahl (_do_addselection()) markiert das Teil schon
+            # ausreichend gruen im 3D-Fenster/Baum.
             self._do_addselection(focus_doc.Name, target_obj.Name, "")
-            self._highlight_reference(target_obj, entry.get("subelement") or "", (1.0, 0.0, 1.0))
 
         # FCPROJECT-PATCH (2026-09-07, Nutzer-Report "Aufgaben geht weg, du addressierst zum
         # falschen Fenster" - bestaetigt korrekt): _highlight_reference() ruft selbst am Ende
@@ -1150,18 +1187,25 @@ class PartExchangeWindow(QtWidgets.QDialog):
         except Exception:
             pass
         gui_active_doc = Gui.getDocument(doc.Name)
-        # FCPROJECT-PATCH (2026-09-07, Nutzer-Report "ich ersetze nicht Joints sondern Parts,
-        # bitte interne Name"): entry["label"] betont bisher den JOINT ("Joint 'Abstand' ..."),
-        # dabei geht es dem Nutzer eigentlich um das TEIL, das ersetzt wird - hier zusaetzlich
-        # explizit voranstellen, mit internem Namen (Label ist nicht eindeutig, siehe
-        # [[feedback_fcproject_never_use_label_for_addressing]]).
-        panel_label = entry.get("label", "")
+        # FCPROJECT-PATCH (2026-09-09, Nutzerwunsch: "ich ersetze nicht jede Referenz sondern
+        # Part, ich brauche in Beschriftung nicht was fuer Joint das ist"): entry["label"]
+        # betonte bisher den JOINT ("Joint 'Abstand' (Reference1) – ..."), das interessiert den
+        # Nutzer beim Bestaetigen gar nicht - es geht ihm nur um das TEIL. Zeigt jetzt NUR noch
+        # das Teil (mit internem Namen, Label ist nicht eindeutig, siehe
+        # [[feedback_fcproject_never_use_label_for_addressing]]), keine Joint-Details mehr.
         if target_obj is not None:
             target_display = (
                 target_obj.Label if target_obj.Label == target_obj.Name
                 else f"{target_obj.Label} ({target_obj.Name})"
             )
-            panel_label = f"Teil: {target_display}\n{panel_label}"
+            panel_label = f"Teil: {target_display}"
+        else:
+            panel_label = ready_entries[0].get("label", "") if ready_entries else ""
+
+        # Letzter Aufruf VOR der eigentlichen Anzeige - falls ein Solve (aus dem VORHERIGEN
+        # Vorkommen) die Marker zwischenzeitlich wieder eingeblendet hat, hier nochmal sicher
+        # ausblenden, ganz kurz vor showDialog().
+        self._hide_joint_markers(doc)
 
         panel = _ReplaceInstanceTaskPanel(panel_label, gui_active_doc, on_decision)
         try:
@@ -1385,11 +1429,15 @@ class PartExchangeWindow(QtWidgets.QDialog):
         doc, doc_entries = ctx["doc_queue"][ctx["doc_index"]]
         ctx["doc_index"] += 1
         ctx["current_doc"] = doc
-        ctx["current_entries"] = doc_entries
-        ctx["entry_index"] = 0
+        # Nutzerwunsch 2026-09-09: pro TEIL fragen, nicht pro Joint/Referenz - siehe
+        # _group_entries_by_target().
+        ctx["current_groups"] = _group_entries_by_target(doc_entries)
+        ctx["group_index"] = 0
         ctx["applied_here"] = 0
         ctx["joint_names_here"] = []
         ctx["applied_originals"] = []  # NUR tatsaechlich ersetzte Original-Instanzen (fuer Ausblenden)
+        ctx["applied_details"] = []  # Nutzerwunsch 2026-09-09: Log-Eintrag "welches Teil mit
+        # welchen Joints/Referenzen ersetzt" - siehe _apply_rewire_entry()/_apply_finish_doc()
 
         assembly_obj = find_assembly(doc)
         local_replacement = self._ensure_local_replacement(doc, self.replacement_obj, assembly_obj)
@@ -1443,49 +1491,90 @@ class PartExchangeWindow(QtWidgets.QDialog):
     def _hide_joint_markers(self, doc):
         """Blendet NUR die Joint-Marker in `doc` aus (Nutzerwunsch 2026-09-07) - anders als die
         fruehere volle Isolation (_isolate_for_embed()) bleiben alle uebrigen Teile normal
-        sichtbar. Wiederhergestellt in _apply_finish_doc()."""
+        sichtbar.
+
+        FCPROJECT-PATCH (2026-09-09, Nutzerwunsch "ich brauche die Joints nicht zu sehen" -
+        soll DAUERHAFT gelten, nicht nur waehrend der Abfrage): benutzt jetzt die eigene Liste
+        self._joint_markers_hidden statt self._isolation_hidden - letztere wird an mehreren
+        Stellen wiederhergestellt (Referenz-Dialog-Aufraeumen), Joint-Marker sollen aber
+        NIRGENDS mehr automatisch zurueckgesetzt werden, damit sie auch nach dem Speichern
+        ausgeblendet bleiben.
+
+        FCPROJECT-PATCH (2026-09-09, Nutzer-Report "Joints immer noch da" trotz Aufruf VOR
+        jedem Panel): reines Setzen von Visibility=False reicht offenbar nicht, wenn direkt
+        danach (noch VOR dem naechsten Redraw) ein Assembly-Solve stattfindet, der es wieder
+        zuruecksetzt - Qt zeichnet dann nur den LETZTEN Zustand, der zufaellig "sichtbar" sein
+        kann, wenn der Solve NACH diesem Aufruf, aber VOR dem naechsten Redraw laeuft. Deshalb
+        hier zusaetzlich Gui.updateGui() (erzwingt sofortigen Redraw JETZT, mit garantiert
+        korrektem Zustand) - behebt es nicht, falls der Solve WIRKLICH erst danach passiert,
+        entfernt aber diese eine Fehlerquelle mit Sicherheit."""
         for obj in doc.Objects:
             if not is_joint(obj):
                 continue
             vobj = getattr(obj, "ViewObject", None)
             if vobj is None or not vobj.Visibility:
                 continue
-            self._isolation_hidden.append(vobj)
+            self._joint_markers_hidden.append(vobj)
             vobj.Visibility = False
+        try:
+            Gui.updateGui()
+        except Exception:
+            pass
 
     def _apply_next_entry(self):
-        """Naechstes noch unbearbeitetes Vorkommen der aktuellen Datei behandeln - fragt per
-        Aufgabenbereich-Panel nach (ausser "Alle ersetzen" ist schon aktiv) und kehrt dann
-        asynchron ueber _apply_on_decision() hierher zurueck, bis alle Vorkommen dieser Datei
-        durch sind."""
+        """Naechstes noch unbearbeitetes TEIL (nicht Joint!) der aktuellen Datei behandeln -
+        fragt per Aufgabenbereich-Panel nach (ausser "Alle ersetzen" ist schon aktiv) und kehrt
+        dann asynchron ueber _apply_on_decision() hierher zurueck, bis alle Teile dieser Datei
+        durch sind.
+
+        FCPROJECT-PATCH (2026-09-09, Nutzerwunsch "das wird mehr gefragt als es Parts gibt"):
+        fragt jetzt EINMAL pro Teil (siehe _group_entries_by_target()), nicht mehr einmal pro
+        einzelnem Joint/Referenz-Eintrag - ein Teil mit 4 Joint-Verbindungen wurde bisher 4x
+        einzeln abgefragt."""
         ctx = self._apply_ctx
-        doc_entries = ctx["current_entries"]
+        # FCPROJECT-PATCH (2026-09-09, per Live-Diagnose bestaetigt): das Setzen von
+        # Reference1/Reference2 in _rewire_joint() (fuer das VORHERIGE Teil, falls schon eines
+        # bestaetigt wurde) loest FreeCADs eigenen automatischen Assembly-Solve aus - der
+        # scheint die Joint-Marker als Nebeneffekt wieder einzublenden (dieselbe Beobachtung wie
+        # 2026-09-05: "Joints werden sichtbar" korreliert mit einem Solve, nicht nur mit "ganze
+        # Baugruppe zeigen"). Einmaliges Ausblenden in _apply_next_doc() reichte deshalb nur bis
+        # zum ERSTEN Umhaengen - hier bei JEDEM Eintritt (nach jeder Nutzer-Entscheidung) erneut
+        # ausblenden, nicht nur einmal am Anfang der Datei.
+        self._hide_joint_markers(ctx["current_doc"])
+        groups = ctx["current_groups"]
         mapping_by_key = ctx["mapping_by_key"]
 
-        while ctx["entry_index"] < len(doc_entries):
-            entry = doc_entries[ctx["entry_index"]]
-            ctx["entry_index"] += 1
+        while ctx["group_index"] < len(groups):
+            group = groups[ctx["group_index"]]
+            ctx["group_index"] += 1
 
-            # Fuer normale Referenzen (nicht GroundedJoint/RigidGroup) muss ueberhaupt erst eine
-            # Zuordnung existieren - sonst gibt's nichts zu bestaetigen/anzuwenden.
-            if entry["joint_side"] not in WHOLE_OBJECT_SIDES:
-                if mapping_by_key.get(_joint_key(entry)) is None:
-                    continue
+            # Nur Eintraege dieses Teils behalten, fuer die auch tatsaechlich etwas anzuwenden
+            # ist (fuer normale Referenzen muss ueberhaupt erst eine Zuordnung existieren -
+            # GroundedJoint/RigidGroup brauchen keine).
+            ready_entries = [
+                e for e in group["entries"]
+                if e["joint_side"] in WHOLE_OBJECT_SIDES
+                or mapping_by_key.get(_joint_key(e)) is not None
+            ]
+            if not ready_entries:
+                continue
 
             if ctx["replace_all_remaining"]:
-                self._apply_rewire_entry(entry)
+                for e in ready_entries:
+                    self._apply_rewire_entry(e)
                 continue
 
             self._show_replace_instance_panel(
-                entry, ctx["current_doc"],
-                lambda decision, entry=entry: self._apply_on_decision(entry, decision)
+                group, ready_entries, ctx["current_doc"],
+                lambda decision, entries=ready_entries: self._apply_on_decision(entries, decision)
             )
             return  # warten auf Nutzer-Klick im Panel (asynchron)
 
         self._apply_finish_doc()
 
-    def _apply_on_decision(self, entry, decision):
-        """Callback aus _ReplaceInstanceTaskPanel fuer GENAU EIN Vorkommen."""
+    def _apply_on_decision(self, entries, decision):
+        """Callback aus _ReplaceInstanceTaskPanel fuer GENAU EIN Teil (kann mehrere
+        Joint-Eintraege umfassen, siehe _group_entries_by_target())."""
         ctx = self._apply_ctx
         if decision == "cancel":
             ctx["cancelled"] = True
@@ -1495,7 +1584,8 @@ class PartExchangeWindow(QtWidgets.QDialog):
             ctx["replace_all_remaining"] = True
             decision = "yes"
         if decision == "yes":
-            self._apply_rewire_entry(entry)
+            for entry in entries:
+                self._apply_rewire_entry(entry)
         self._apply_next_entry()
 
     def _apply_rewire_entry(self, entry):
@@ -1518,6 +1608,9 @@ class PartExchangeWindow(QtWidgets.QDialog):
                 orig = _entry_original_obj(entry)
                 if orig is not None:
                     ctx["applied_originals"].append(orig)
+                    ctx["applied_details"].append(
+                        f"{orig.Name} (Erdung) via {entry['joint_obj'].Name}"
+                    )
             except Exception as e:
                 errors.append(
                     f"GroundedJoint '{entry['joint_obj'].Label}': ObjectToGround "
@@ -1543,6 +1636,9 @@ class PartExchangeWindow(QtWidgets.QDialog):
                 ctx["joint_names_here"].append(entry["joint_obj"].Name)
                 if original_member is not None:
                     ctx["applied_originals"].append(original_member)
+                    ctx["applied_details"].append(
+                        f"{original_member.Name} (RigidGroup-Mitgliedschaft) via {entry['joint_obj'].Name}"
+                    )
             except Exception as e:
                 errors.append(
                     f"RigidGroup '{entry['joint_obj'].Label}': Mitgliedschaft "
@@ -1561,6 +1657,9 @@ class PartExchangeWindow(QtWidgets.QDialog):
             orig = _entry_original_obj(entry)
             if orig is not None:
                 ctx["applied_originals"].append(orig)
+                ctx["applied_details"].append(
+                    f"{orig.Name} ({entry.get('subelement') or '?'}) via {entry['joint_obj'].Name}"
+                )
 
     def _apply_finish_doc(self):
         """Alle Vorkommen der aktuellen Datei abgearbeitet (oder Abbruch) - speichert bei Bedarf,
@@ -1570,18 +1669,25 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._clear_highlight_selection()
         doc = ctx["current_doc"]
 
-        # Joint-Marker (siehe _hide_joint_markers()) wieder einblenden, solange die Datei noch
-        # offen ist - bei einer bereits geschlossenen Datei waere das ohnehin wirkungslos.
-        for vobj in self._isolation_hidden:
-            try:
-                vobj.Visibility = True
-            except Exception:
-                pass
-        self._isolation_hidden.clear()
+        # FCPROJECT-PATCH (2026-09-09, Nutzerwunsch "ich brauche die Joints nicht zu sehen"):
+        # Joint-Marker (self._joint_markers_hidden, siehe _hide_joint_markers()) werden hier
+        # BEWUSST NICHT mehr wiederhergestellt - sollen dauerhaft ausgeblendet bleiben, auch
+        # nach dem gleich folgenden Speichern. Vorher stand hier ein Restore-Block fuer
+        # self._isolation_hidden - das war falsch adressiert, siehe _hide_joint_markers().
 
         if ctx["applied_here"] > 0:
             doc_file_name = os.path.basename(doc.FileName) if doc.FileName else doc.Name
             ctx["touched_docs"].append(f"{doc_file_name} [{', '.join(ctx['joint_names_here'])}]")
+
+            # Nutzerwunsch 2026-09-09: "mach Eintrag in Log was fuer Teil war ersetzt mit
+            # welchen Joints und Referenzen" - pro Datei sofort ins Report View, nicht nur in
+            # der Gesamt-Zusammenfassung am Ende (_apply_finish_all()).
+            App.Console.PrintMessage(
+                f"FCProject PartExchange: '{doc_file_name}' - Ersatzteil "
+                f"'{self.replacement_obj.Label}' ({self.replacement_obj.Name}) ersetzt:\n"
+            )
+            for detail in ctx["applied_details"]:
+                App.Console.PrintMessage(f"    {detail}\n")
 
             # NUR die tatsaechlich ersetzten Original-Instanzen ausblenden - uebersprungene (per
             # "Nein" abgelehnte) Instanzen bleiben unangetastet sichtbar.

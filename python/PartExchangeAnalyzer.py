@@ -15,6 +15,8 @@ import zipfile
 
 import FreeCAD as App
 
+from ObjectUtils import find_same_source_siblings
+
 
 def find_project_root(doc):
     """Findet den Projektordner (Konvention: "PROJ_<Name>", siehe ProjectManager.py) fuer das
@@ -298,33 +300,50 @@ def find_all_project_joints_referencing(obj, log=None):
 
 
 def find_joints_referencing(obj):
-    """Liefert alle Joints, die `obj` referenzieren (Original-Seite des Tauschs).
+    """Liefert alle Joints, die `obj` ODER eine Kopie derselben Quelle (siehe
+    ObjectUtils.find_same_source_siblings(), z.B. "GWH_002_P_Latte" + "...001" + "...002")
+    referenzieren - Original-Seite des Tauschs.
+
+    FCPROJECT-PATCH (2026-09-09, Nutzer-Report "wir haben 4 Latten, du selektierst immer
+    gleiche" - siehe [[project_fcproject_partexchange_redesign_status]]/
+    [[feedback_fcproject_need_unified_search_utils]]): suchte bisher NUR auf dem einen
+    explizit gewaehlten `obj` - Joints auf Geschwister-Kopien im selben Dokument wurden
+    komplett uebersehen. Erste Version nutzte reine Namens-Muster-Erkennung
+    (find_name_pattern_siblings(), Ziffern-Suffix) - per Live-Diagnose widerlegt: fand
+    "GWH_002_P_Latte001" korrekt, uebersah aber "GWH_008_P_Latte_Copy_1/2/3" (andere
+    Namenskonvention, gleiche Quelldatei). find_same_source_siblings() erkennt Kopien
+    stattdessen ueber die AUFGELOESTE QUELLE, unabhaengig von der Namenskonvention. Jetzt werden
+    alle Geschwister als eigene, unterscheidbare Vorkommen gefunden - full_reference_path()
+    zeigt dabei automatisch den jeweils richtigen internen Namen an.
 
     Jeder Eintrag: {"label", "joint_obj", "joint_side", "subelement", "full_path"}.
     """
     entries = []
+    targets = find_same_source_siblings(obj, obj.Document.Objects)
     for joint in iter_joints(obj.Document):
-        for side in _joint_sides_for(joint, obj):
-            sub = subelement_for_side(joint, side)
-            full_path = full_reference_path(obj, sub)
-            if side == GROUND_SIDE:
-                label = f'GroundedJoint "{joint.Label}" (Erdung) – {full_path}'
-            elif side == RIGID_GROUP_SIDE:
-                label = f'RigidGroup "{joint.Label}" (Mitgliedschaft) – {full_path}'
-            else:
-                label = f'Joint "{joint.Label}" (Reference{side}) – {full_path}'
-            entries.append({
-                "label": label,
-                "joint_obj": joint,
-                "joint_side": side,
-                "subelement": sub,
-                "full_path": full_path,
-                # GroundedJoint/RigidGroupJoint referenzieren `obj` nicht ueber ein
-                # [Objekt, Sub]-Tupel wie Reference1/2, sondern direkt/als Listenmitglied -
-                # `obj` hier explizit mitspeichern, damit _entry_original_obj() in
-                # PartExchangeWindow.py es fuer beide Faelle einheitlich auflösen kann.
-                "target_obj": obj,
-            })
+        for target in targets:
+            for side in _joint_sides_for(joint, target):
+                sub = subelement_for_side(joint, side)
+                full_path = full_reference_path(target, sub)
+                if side == GROUND_SIDE:
+                    label = f'GroundedJoint "{joint.Label}" (Erdung) – {full_path}'
+                elif side == RIGID_GROUP_SIDE:
+                    label = f'RigidGroup "{joint.Label}" (Mitgliedschaft) – {full_path}'
+                else:
+                    label = f'Joint "{joint.Label}" (Reference{side}) – {full_path}'
+                entries.append({
+                    "label": label,
+                    "joint_obj": joint,
+                    "joint_side": side,
+                    "subelement": sub,
+                    "full_path": full_path,
+                    # GroundedJoint/RigidGroupJoint referenzieren `target` nicht ueber ein
+                    # [Objekt, Sub]-Tupel wie Reference1/2, sondern direkt/als Listenmitglied -
+                    # `target` (NICHT das urspruengliche `obj`!) hier explizit mitspeichern,
+                    # damit _entry_original_obj() in PartExchangeWindow.py fuer beide Faelle
+                    # einheitlich die richtige KONKRETE Instanz aufloesen kann.
+                    "target_obj": target,
+                })
     return entries
 
 
