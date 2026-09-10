@@ -18,6 +18,16 @@ import FreeCAD as App
 from ObjectUtils import find_same_source_siblings
 
 
+# Eigenes Unterverzeichnis fuer "Speichern unter"-Zwischenstaende aus PartExchangeWindow._confirm_
+# save_doc() (Nutzerwunsch 2026-09-10: "ich will nicht Originaldatei ueberschreiben, deswegen
+# brauche ich Speichern unter"). Der Projekt-Scan unten (find_external_project_references()) UEBER-
+# SPRINGT dieses Verzeichnis bewusst komplett - sonst wird eine per "Speichern unter" erzeugte
+# Zwischenkopie beim naechsten PartExchange-Lauf faelschlich als "weitere Projektdatei, die auch
+# umgehaengt werden muss" wiedergefunden und automatisch mitgeoeffnet (Nutzer-Report: "ich habe
+# jetzt 3 Dateien offen, obwohl ich nur eine ausgewaehlt habe").
+BACKUP_DIR_NAME = "_PartExchange_Backups"
+
+
 def find_project_root(doc):
     """Findet den Projektordner (Konvention: "PROJ_<Name>", siehe ProjectManager.py) fuer das
     Dokument, in dem `doc` liegt - geht vom Dateipfad aus so lange nach oben, bis ein
@@ -58,7 +68,10 @@ def find_external_project_references(obj):
 
     needle = obj.Name.encode("utf-8")
     results = []
-    for dirpath, _dirnames, filenames in os.walk(project_root):
+    for dirpath, dirnames, filenames in os.walk(project_root):
+        # Backup-Verzeichnis (siehe BACKUP_DIR_NAME) NIE mitdurchsuchen - Kopien dort sind
+        # bewusste Zwischenstaende des Nutzers, keine echten, mit umzuhaengenden Projektdateien.
+        dirnames[:] = [d for d in dirnames if d != BACKUP_DIR_NAME]
         for filename in filenames:
             if not filename.lower().endswith(".fcstd"):
                 continue

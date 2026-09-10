@@ -6,6 +6,7 @@
 # Auswirkungen auf andere Abhängigkeiten (Gruppenmitgliedschaft, generische
 # Links, Ausblenden/Umbenennen des Originals) sind explizit ein späterer Schritt.
 
+import json
 import os
 import re
 import weakref
@@ -15,10 +16,10 @@ import FreeCADGui as Gui
 from PySide6 import QtWidgets, QtCore
 
 from PartExchangeAnalyzer import (
-    find_reference_root_and_path, full_reference_path, find_assembly,
-    find_all_project_joints_referencing, GROUND_SIDE, RIGID_GROUP_SIDE, is_joint
+    find_reference_root_and_path, full_reference_path, find_assembly, find_project_root,
+    find_all_project_joints_referencing, GROUND_SIDE, RIGID_GROUP_SIDE, is_joint, BACKUP_DIR_NAME
 )
-from ObjectUtils import resolve_linked_object
+from ObjectUtils import resolve_linked_object, source_type_key
 
 WHOLE_OBJECT_SIDES = (GROUND_SIDE, RIGID_GROUP_SIDE)  # kein Face/Edge-Konzept, keine manuelle Zuordnung noetig
 
@@ -46,6 +47,24 @@ def _entry_original_obj(entry):
         return entry.get("target_obj")
     ref = entry["joint_obj"].Reference1 if entry["joint_side"] == 1 else entry["joint_obj"].Reference2
     return ref[0] if ref else None
+
+
+def _record_joint_for_part(ctx, part_obj, joint_name):
+    """Traegt einen erfolgreich umgehaengten Joint unter seinem urspruenglichen TEIL in
+    ctx["joints_by_part_here"] ein - Grundlage fuer die "Teil - Joints"-Gruppierung im
+    Abschluss-Log (2026-09-10, Nutzerwunsch: statt einer flachen Joint-Liste pro Datei je eine
+    Zeile pro ersetztem Teil mit dessen Joints) - siehe _apply_finish_doc()/_apply_finish_all()."""
+    if part_obj is None:
+        return
+    bucket = ctx["joints_by_part_here"].setdefault(part_obj.Name, {"obj": part_obj, "joints": []})
+    bucket["joints"].append(joint_name)
+
+
+def _label_with_name(obj):
+    """Label, ergaenzt um den internen Namen in Klammern falls abweichend - Label ist nicht
+    eindeutig (siehe [[feedback_fcproject_never_use_label_for_addressing]]), fuer reine
+    Log-/UI-Anzeige aber lesbarer als der interne Name allein."""
+    return obj.Label if obj.Label == obj.Name else f"{obj.Label} ({obj.Name})"
 
 
 def _group_entries_by_target(doc_entries):
@@ -79,6 +98,31 @@ def _joint_key(entry):
     soll sie nur EINMAL zuordnen muessen, _on_apply() wendet dieselbe Zuordnung dann auf ALLE
     Vorkommen an."""
     return entry["subelement"]
+
+
+def _pair_key(original_type, replacement_type):
+    """Schluessel fuer ein Teilepaar in der Zuordnungs-Vorlage (siehe
+    PartExchangeWindow._mapping_template_path()) - rein zur menschenlesbaren Anzeige/als
+    JSON-Dict-Schluessel, die eigentliche Identitaet steckt in original_type/replacement_type
+    (source_type_key())."""
+    return f"{original_type} -> {replacement_type}"
+
+
+def _load_mapping_store(path):
+    """Liest die gesamte Zuordnungs-Vorlagen-Datei (alle bisher gespeicherten Teilepaare eines
+    Projekts). Liefert ein leeres Dict, falls die Datei noch nicht existiert oder nicht lesbar
+    ist (z.B. beim allerersten Speichern) - kein Fehler, einfach ein leerer Anfangszustand."""
+    if not path or not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        App.Console.PrintWarning(
+            f"FCProject PartExchange: Zuordnungs-Vorlage '{path}' konnte nicht gelesen werden, "
+            f"wird ignoriert: {str(e)}\n"
+        )
+        return {}
 
 
 class _ReplacementSelectionObserver:
@@ -249,6 +293,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
 
         self._build_ui()
         self._populate_joint_list()
+        self._apply_saved_mapping_template()
         self._update_pending_label()
         self._update_apply_button_state()
 
@@ -334,6 +379,25 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self.mapping_table.verticalHeader().setVisible(False)
         self.mapping_table.cellClicked.connect(self._on_mapping_row_clicked)
         mapping_layout.addWidget(self.mapping_table)
+
+        # Zuordnungs-Vorlage (Nutzerwunsch 2026-09-10: "Referenzenzuordnung zu Teilenpaar
+        # speichern, dass ich nicht jedesmal zuordnung neu zuweisen muss") - Knopf speichert die
+        # aktuelle Tabelle unter dem Teilepaar (Original-Typ, Ersatzteil-Typ) in
+        # {Projektname}_Referenzenzuordnung.json im Projektordner; beim naechsten Oeffnen dieses
+        # Fensters fuer dasselbe Teilepaar wird sie automatisch vorgeschlagen (_apply_saved_
+        # mapping_template(), in __init__).
+        save_template_row = QtWidgets.QHBoxLayout()
+        self.save_template_btn = QtWidgets.QPushButton("Zuordnung für dieses Teilepaar speichern")
+        self.save_template_btn.setToolTip(
+            "Speichert die obige Tabelle als Vorlage für das Teilepaar "
+            f"'{self.original_obj.Label}' → '{self.replacement_obj.Label}' - wird beim nächsten "
+            "Ersetzen desselben Teilepaars automatisch vorgeschlagen."
+        )
+        self.save_template_btn.clicked.connect(self._on_save_mapping_template)
+        save_template_row.addWidget(self.save_template_btn)
+        save_template_row.addStretch()
+        mapping_layout.addLayout(save_template_row)
+
         main_layout.addWidget(mapping_box, stretch=1)
 
         bottom_row = QtWidgets.QHBoxLayout()
@@ -802,6 +866,114 @@ class PartExchangeWindow(QtWidgets.QDialog):
             has_ground_only or (len(required_keys) > 0 and required_keys.issubset(mapped_keys))
         )
 
+    # ------------------------------------------------- Zuordnungs-Vorlage (Teilepaar)
+
+    def _mapping_template_path(self):
+        """Pfad der Zuordnungs-Vorlagen-Datei fuer das Projekt, dem self.original_obj angehoert -
+        {Projektname}_Referenzenzuordnung.json im Projektordner (find_project_root(), dieselbe
+        "PROJ_<Name>"-Konvention wie find_external_project_references()). None, falls das
+        Original-Dokument noch nie gespeichert wurde (kein Dateipfad, also kein Projektordner
+        ermittelbar)."""
+        project_root = find_project_root(self.original_obj.Document)
+        if project_root is None:
+            return None
+        project_name = os.path.basename(project_root)
+        return os.path.join(project_root, f"{project_name}_Referenzenzuordnung.json")
+
+    def _apply_saved_mapping_template(self):
+        """Laedt beim Oeffnen automatisch eine zuvor gespeicherte Zuordnung fuer dasselbe
+        Teilepaar (Original-Typ, Ersatzteil-Typ - siehe source_type_key()), falls vorhanden -
+        das ist der eigentliche Zweck des Speicher-Knopfs: "nicht jedesmal neu zuweisen muessen".
+        Nur Eintraege uebernehmen, deren original_subelement auch in DIESEM Projekt/dieser
+        Sitzung tatsaechlich als Referenz vorkommt (self._original_joints) - eine veraltete oder
+        aus einem anderen Projekt stammende Vorlage darf keine Phantom-Zuordnungen erzeugen.
+        replacement_full_path wird bewusst NEU berechnet (nicht aus der Vorlage uebernommen),
+        weil self.replacement_obj in dieser Sitzung ein anderes konkretes Objekt (andere
+        Instanz/anderes Label) als beim Speichern sein kann."""
+        path = self._mapping_template_path()
+        if path is None:
+            return
+        pair_key = _pair_key(source_type_key(self.original_obj), source_type_key(self.replacement_obj))
+        saved = _load_mapping_store(path).get("pairs", {}).get(pair_key)
+        if not saved:
+            return
+
+        representative_by_key = {}
+        for entry in self._original_joints:
+            if entry["joint_side"] in WHOLE_OBJECT_SIDES:
+                continue
+            representative_by_key.setdefault(_joint_key(entry), entry)
+
+        applied = 0
+        for saved_mapping in saved.get("mappings", []):
+            entry = representative_by_key.get(saved_mapping.get("original_subelement"))
+            replacement_sub = saved_mapping.get("replacement_subelement")
+            if entry is None or not replacement_sub:
+                continue
+            key = _joint_key(entry)
+            self._mappings = [m for m in self._mappings if _joint_key(m["original"]) != key]
+            self._mappings.append({
+                "original": entry,
+                "replacement_subelement": replacement_sub,
+                "replacement_full_path": full_reference_path(self.replacement_obj, replacement_sub),
+            })
+            applied += 1
+
+        if applied:
+            self._refresh_mapping_table()
+            self._update_apply_button_state()
+            App.Console.PrintMessage(
+                f"FCProject PartExchange: {applied} Zuordnung(en) aus gespeicherter Vorlage "
+                f"('{pair_key}') automatisch übernommen - bitte prüfen.\n"
+            )
+
+    def _on_save_mapping_template(self):
+        if not self._mappings:
+            QtWidgets.QMessageBox.information(
+                self, "FCProject", "Es sind noch keine Zuordnungen vorhanden - nichts zu speichern."
+            )
+            return
+        path = self._mapping_template_path()
+        if path is None:
+            QtWidgets.QMessageBox.warning(
+                self, "FCProject",
+                "Das Original-Dokument wurde noch nie gespeichert - Projektordner kann nicht "
+                "ermittelt werden. Bitte zuerst speichern."
+            )
+            return
+
+        pair_key = _pair_key(source_type_key(self.original_obj), source_type_key(self.replacement_obj))
+        data = _load_mapping_store(path)
+        data.setdefault("pairs", {})[pair_key] = {
+            "original_type": source_type_key(self.original_obj),
+            "replacement_type": source_type_key(self.replacement_obj),
+            "mappings": [
+                {
+                    "original_subelement": m["original"]["subelement"],
+                    "original_label": m["original"]["label"],
+                    "replacement_subelement": m["replacement_subelement"],
+                    "replacement_label": m.get("replacement_full_path") or "",
+                }
+                for m in self._mappings
+            ],
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "FCProject", f"Speichern fehlgeschlagen: {str(e)}")
+            return
+
+        App.Console.PrintMessage(
+            f"FCProject PartExchange: {len(self._mappings)} Zuordnung(en) für Teilepaar "
+            f"'{pair_key}' gespeichert in '{path}'.\n"
+        )
+        QtWidgets.QMessageBox.information(
+            self, "FCProject",
+            f"{len(self._mappings)} Zuordnung(en) für dieses Teilepaar gespeichert.\n"
+            "Werden beim nächsten Ersetzen desselben Teilepaars automatisch vorgeschlagen."
+        )
+
     # ------------------------------------------------------- Fenster-Layout
 
     @staticmethod
@@ -1194,11 +1366,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
         # das Teil (mit internem Namen, Label ist nicht eindeutig, siehe
         # [[feedback_fcproject_never_use_label_for_addressing]]), keine Joint-Details mehr.
         if target_obj is not None:
-            target_display = (
-                target_obj.Label if target_obj.Label == target_obj.Name
-                else f"{target_obj.Label} ({target_obj.Name})"
-            )
-            panel_label = f"Teil: {target_display}"
+            panel_label = f"Teil: {_label_with_name(target_obj)}"
         else:
             panel_label = ready_entries[0].get("label", "") if ready_entries else ""
 
@@ -1290,8 +1458,26 @@ class PartExchangeWindow(QtWidgets.QDialog):
             #    (PartExchangeCommand.py._on_browse_file()) war das schon aus genau diesem
             #    Grund noetig (nativer Dialog verschwindet/reagiert nicht zuverlaessig) - hier
             #    fehlte die gleiche Absicherung bisher.
+            # Nutzerwunsch 2026-09-10 ("ich will nicht Originaldatei ueberschreiben, deswegen
+            # brauche ich Speichern unter"): Vorschlag standardmaessig in
+            # PartExchangeAnalyzer.BACKUP_DIR_NAME statt im Projekt-Hauptordner - der
+            # Projekt-Scan (find_external_project_references()) ueberspringt dieses Verzeichnis
+            # bewusst, damit so gespeicherte Zwischenstaende beim naechsten Lauf nicht wieder als
+            # weitere Projektdatei gefunden/geoeffnet werden ("3 Dateien offen, obwohl nur eine
+            # ausgewaehlt"). Nutzer kann im Dialog trotzdem jeden anderen Ort waehlen.
+            default_path = doc.FileName or ""
+            if doc.FileName:
+                backup_dir = os.path.join(os.path.dirname(doc.FileName), BACKUP_DIR_NAME)
+                try:
+                    os.makedirs(backup_dir, exist_ok=True)
+                    default_path = os.path.join(backup_dir, os.path.basename(doc.FileName))
+                except Exception as e:
+                    App.Console.PrintWarning(
+                        f"FCProject PartExchange: Backup-Verzeichnis '{backup_dir}' konnte nicht "
+                        f"angelegt werden ({str(e)}) - schlage Projekt-Hauptordner vor.\n"
+                    )
             path, _ = QtWidgets.QFileDialog.getSaveFileName(
-                Gui.getMainWindow(), "Speichern unter", doc.FileName or "",
+                Gui.getMainWindow(), "Speichern unter", default_path,
                 "FreeCAD-Dokument (*.FCStd)", options=QtWidgets.QFileDialog.DontUseNativeDialog
             )
             if path:
@@ -1438,48 +1624,22 @@ class PartExchangeWindow(QtWidgets.QDialog):
         ctx["applied_originals"] = []  # NUR tatsaechlich ersetzte Original-Instanzen (fuer Ausblenden)
         ctx["applied_details"] = []  # Nutzerwunsch 2026-09-09: Log-Eintrag "welches Teil mit
         # welchen Joints/Referenzen ersetzt" - siehe _apply_rewire_entry()/_apply_finish_doc()
+        ctx["joints_by_part_here"] = {}  # orig.Name -> {"obj": orig, "joints": [joint.Name, ...]}
+        # Nutzerwunsch 2026-09-10: Abschluss-Log gruppiert "Teil - Joints" statt einer flachen
+        # Joint-Liste pro Datei - siehe _apply_rewire_entry()/_apply_finish_doc()/_apply_finish_all().
 
-        assembly_obj = find_assembly(doc)
-        local_replacement = self._ensure_local_replacement(doc, self.replacement_obj, assembly_obj)
-        if local_replacement is None:
-            ctx["errors"].append(
-                f"'{doc.Name}': Ersatzteil ist die Baugruppe selbst - übersprungen "
-                "(würde einen zyklischen Verweis erzeugen)."
-            )
-            self._apply_next_doc()
-            return
-        ctx["local_replacement"] = local_replacement
-
-        # Ersatzteil startet an der Position des Original-VORKOMMENS in DIESEM Dokument (nicht
-        # zwingend self.original_obj - in einer anderen Datei kann das dieselbe logische
-        # Baugruppe unter einer eigenen, lokalen Platzierung sein) -> bessere Solver-Konvergenz.
-        local_originals = {}
-        for entry in doc_entries:
-            local_orig = _entry_original_obj(entry)
-            if local_orig is not None:
-                local_originals[local_orig.Name] = local_orig
-        if local_originals:
-            try:
-                local_replacement.Placement = next(iter(local_originals.values())).Placement
-            except Exception:
-                pass
-
-        # WICHTIG (2026-08-30, Nutzer-Report "Teil springt nicht zur Stange"): Bevor das frisch
-        # erzeugte/platzierte Ersatzteil-Objekt einer Joint-Referenz (Reference1/2) zugewiesen
-        # wird, MUSS es einmal neu berechnet werden. FreeCAD legt beim Zuweisen einer Sub-
-        # Element-Referenz einen "Shadow"-Hash zur robusten Kanten-Wiedererkennung an - wird der
-        # auf Basis eines noch nicht fertig berechneten Shapes erzeugt, zeigt er spaeter auf die
-        # falsche Kante, obwohl die Nummer (z.B. "Edge34") gleich bleibt.
-        # WICHTIG (2026-08-30, Nutzer-Report "Stange hat sich gedreht, ohne dass ich etwas
-        # berechnet habe"): doc.recompute() loest bei Assembly-Dokumenten IMMER automatisch
-        # einen internen Solve aus (FreeCAD koppelt das fest). Ondsels automatische Redundant-
-        # Constraint-Aufloesung kann dabei den per GroundedJoint fest geerdeten Teil selbst
-        # verschieben - deshalb wird das Placement aller geerdeten Teile in
-        # _recompute_preserving_grounded() vor dem Recompute gesichert und danach zurueckgeschrieben.
-        try:
-            self._recompute_preserving_grounded(doc)
-        except Exception:
-            pass
+        # FCPROJECT-FIX (2026-09-10, per Live-Diagnose bestaetigt - Nutzer-Report "zweites Teil:
+        # altes ist raus, neues ist nicht da"): frueher wurde HIER EIN EINZIGER lokaler
+        # Ersatzteil-Link fuer die GESAMTE Datei erzeugt und von ALLEN bestaetigten
+        # Original-Vorkommen GEMEINSAM benutzt. Ein physisches Objekt kann aber nur an EINER
+        # Position gleichzeitig stehen - bei zwei bestaetigten Original-Instanzen an
+        # unterschiedlichen Positionen zog das zweite Vorkommen denselben, bereits an Position 1
+        # stehenden Link an seine Joints, wodurch an Position 2 sichtbar nichts erschien. Jetzt
+        # bekommt JEDES bestaetigte Original-Vorkommen seinen EIGENEN Ersatzteil-Link, erzeugt
+        # erst beim tatsaechlichen Anwenden dieses einen Vorkommens - siehe
+        # _prepare_replacement_for_group()/_apply_next_entry()/_apply_on_decision().
+        ctx["assembly_obj"] = find_assembly(doc)
+        ctx["local_replacement"] = None
 
         self._bring_doc_to_front(doc)
         # Nutzerwunsch 2026-09-07: die volle Baugruppe soll sichtbar bleiben (kein Ausblenden
@@ -1560,19 +1720,76 @@ class PartExchangeWindow(QtWidgets.QDialog):
                 continue
 
             if ctx["replace_all_remaining"]:
-                for e in ready_entries:
-                    self._apply_rewire_entry(e)
+                if self._prepare_replacement_for_group(group["target"]) is not None:
+                    for e in ready_entries:
+                        self._apply_rewire_entry(e)
                 continue
 
             self._show_replace_instance_panel(
                 group, ready_entries, ctx["current_doc"],
-                lambda decision, entries=ready_entries: self._apply_on_decision(entries, decision)
+                lambda decision, entries=ready_entries, target=group["target"]: (
+                    self._apply_on_decision(entries, target, decision)
+                )
             )
             return  # warten auf Nutzer-Klick im Panel (asynchron)
 
         self._apply_finish_doc()
 
-    def _apply_on_decision(self, entries, decision):
+    def _prepare_replacement_for_group(self, target):
+        """Erzeugt einen EIGENEN, frisch platzierten Ersatzteil-Link fuer GENAU DIESES
+        bestaetigte Original-Vorkommen (`target`) und traegt ihn in ctx["local_replacement"] ein.
+
+        FCPROJECT-FIX (2026-09-10, per Live-Diagnose bestaetigt - Nutzer-Report "zweites Teil:
+        altes ist raus, neues ist nicht da" - siehe [[project_fcproject_partexchange_redesign_status]]):
+        vorher wurde EIN lokaler Ersatzteil-Link fuer die GANZE Datei erzeugt und von ALLEN
+        bestaetigten Original-Vorkommen gemeinsam benutzt - ein physisches Objekt kann aber nur
+        an EINER Position stehen. Jetzt bekommt jedes Vorkommen seinen eigenen Link (siehe
+        _ensure_local_replacement(): erzeugt ohnehin IMMER einen frischen App::Link, nie
+        Wiederverwendung), platziert an GENAU DER Position von `target`.
+
+        Gibt den neuen Link zurueck, oder None falls das Ersatzteil die Baugruppe selbst ist
+        (zyklischer Verweis, siehe _ensure_local_replacement()) - dann wird nichts angewendet."""
+        ctx = self._apply_ctx
+        doc = ctx["current_doc"]
+        local_replacement = self._ensure_local_replacement(doc, self.replacement_obj, ctx.get("assembly_obj"))
+        if local_replacement is None:
+            ctx["errors"].append(
+                f"'{doc.Name}': Ersatzteil ist die Baugruppe selbst - übersprungen "
+                "(würde einen zyklischen Verweis erzeugen)."
+            )
+            ctx["local_replacement"] = None
+            return None
+
+        # Ersatzteil startet an der Position von `target` (nicht zwingend self.original_obj -
+        # in einer anderen Datei/bei einer anderen Instanz kann das dieselbe logische Baugruppe
+        # unter einer eigenen, lokalen Platzierung sein) -> bessere Solver-Konvergenz.
+        if target is not None:
+            try:
+                local_replacement.Placement = target.Placement
+            except Exception:
+                pass
+
+        # WICHTIG (2026-08-30, Nutzer-Report "Teil springt nicht zur Stange"): Bevor das frisch
+        # erzeugte/platzierte Ersatzteil-Objekt einer Joint-Referenz (Reference1/2) zugewiesen
+        # wird, MUSS es einmal neu berechnet werden. FreeCAD legt beim Zuweisen einer Sub-
+        # Element-Referenz einen "Shadow"-Hash zur robusten Kanten-Wiedererkennung an - wird der
+        # auf Basis eines noch nicht fertig berechneten Shapes erzeugt, zeigt er spaeter auf die
+        # falsche Kante, obwohl die Nummer (z.B. "Edge34") gleich bleibt.
+        # WICHTIG (2026-08-30, Nutzer-Report "Stange hat sich gedreht, ohne dass ich etwas
+        # berechnet habe"): doc.recompute() loest bei Assembly-Dokumenten IMMER automatisch
+        # einen internen Solve aus (FreeCAD koppelt das fest). Ondsels automatische Redundant-
+        # Constraint-Aufloesung kann dabei den per GroundedJoint fest geerdeten Teil selbst
+        # verschieben - deshalb wird das Placement aller geerdeten Teile in
+        # _recompute_preserving_grounded() vor dem Recompute gesichert und danach zurueckgeschrieben.
+        try:
+            self._recompute_preserving_grounded(doc)
+        except Exception:
+            pass
+
+        ctx["local_replacement"] = local_replacement
+        return local_replacement
+
+    def _apply_on_decision(self, entries, target, decision):
         """Callback aus _ReplaceInstanceTaskPanel fuer GENAU EIN Teil (kann mehrere
         Joint-Eintraege umfassen, siehe _group_entries_by_target())."""
         ctx = self._apply_ctx
@@ -1584,8 +1801,9 @@ class PartExchangeWindow(QtWidgets.QDialog):
             ctx["replace_all_remaining"] = True
             decision = "yes"
         if decision == "yes":
-            for entry in entries:
-                self._apply_rewire_entry(entry)
+            if self._prepare_replacement_for_group(target) is not None:
+                for entry in entries:
+                    self._apply_rewire_entry(entry)
         self._apply_next_entry()
 
     def _apply_rewire_entry(self, entry):
@@ -1611,6 +1829,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
                     ctx["applied_details"].append(
                         f"{orig.Name} (Erdung) via {entry['joint_obj'].Name}"
                     )
+                    _record_joint_for_part(ctx, orig, entry["joint_obj"].Name)
             except Exception as e:
                 errors.append(
                     f"GroundedJoint '{entry['joint_obj'].Label}': ObjectToGround "
@@ -1639,6 +1858,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
                     ctx["applied_details"].append(
                         f"{original_member.Name} (RigidGroup-Mitgliedschaft) via {entry['joint_obj'].Name}"
                     )
+                    _record_joint_for_part(ctx, original_member, entry["joint_obj"].Name)
             except Exception as e:
                 errors.append(
                     f"RigidGroup '{entry['joint_obj'].Label}': Mitgliedschaft "
@@ -1647,6 +1867,14 @@ class PartExchangeWindow(QtWidgets.QDialog):
             return
 
         mapping = ctx["mapping_by_key"].get(_joint_key(entry))
+        # FCPROJECT-FIX (2026-09-10, per Live-Diagnose bestaetigt - Nutzer-Report "Body_Link
+        # ausgeblendet, alle 3 GWH_002 sind noch drin"): MUSS VOR self._rewire_joint() ermittelt
+        # werden. _entry_original_obj() liest Reference1/2 direkt vom LIVE Joint-Objekt - ruft man
+        # es danach auf, zeigt Reference1/2 schon auf local_replacement (das Ersatzteil selbst),
+        # nicht mehr auf das echte Original. Dadurch wurden bisher faelschlich der Ersatzteil-Link
+        # (z.B. "Body_Link") als "Original" geloggt UND ausgeblendet, waehrend die echten
+        # Original-Instanzen (z.B. "GWH_002_P_Latte001") sichtbar blieben.
+        orig = _entry_original_obj(entry)
         if self._rewire_joint(
             entry["joint_obj"], entry["joint_side"],
             local_replacement, mapping["replacement_subelement"], errors
@@ -1654,12 +1882,12 @@ class PartExchangeWindow(QtWidgets.QDialog):
             ctx["rewired_joints"] += 1
             ctx["applied_here"] += 1
             ctx["joint_names_here"].append(entry["joint_obj"].Name)
-            orig = _entry_original_obj(entry)
             if orig is not None:
                 ctx["applied_originals"].append(orig)
                 ctx["applied_details"].append(
                     f"{orig.Name} ({entry.get('subelement') or '?'}) via {entry['joint_obj'].Name}"
                 )
+                _record_joint_for_part(ctx, orig, entry["joint_obj"].Name)
 
     def _apply_finish_doc(self):
         """Alle Vorkommen der aktuellen Datei abgearbeitet (oder Abbruch) - speichert bei Bedarf,
@@ -1677,7 +1905,15 @@ class PartExchangeWindow(QtWidgets.QDialog):
 
         if ctx["applied_here"] > 0:
             doc_file_name = os.path.basename(doc.FileName) if doc.FileName else doc.Name
-            ctx["touched_docs"].append(f"{doc_file_name} [{', '.join(ctx['joint_names_here'])}]")
+            # Nutzerwunsch 2026-09-10: Abschluss-Log gruppiert "Teil - Joints" statt einer
+            # flachen Joint-Liste - siehe _record_joint_for_part()/_apply_finish_all().
+            ctx["touched_docs"].append({
+                "file": doc_file_name,
+                "parts": [
+                    (_label_with_name(bucket["obj"]), bucket["joints"])
+                    for bucket in ctx["joints_by_part_here"].values()
+                ],
+            })
 
             # Nutzerwunsch 2026-09-09: "mach Eintrag in Log was fuer Teil war ersetzt mit
             # welchen Joints und Referenzen" - pro Datei sofort ins Report View, nicht nur in
@@ -1704,6 +1940,15 @@ class PartExchangeWindow(QtWidgets.QDialog):
             except Exception as e:
                 ctx["errors"].append(f"Neuberechnung von '{doc.Name}' fehlgeschlagen: {str(e)}")
 
+            # FCPROJECT-FIX (2026-09-10, Nutzer-Report "zweite [Datei] hat schon wieder alle
+            # Joints eingeblendet"): die Neuberechnung direkt oben (Assembly-Solve) loest denselben
+            # Sichtbarkeits-Nebeneffekt aus wie jeder andere Solve (siehe _hide_joint_markers()-
+            # Docstring) - bisher wurde nach DIESEM letzten Solve kein erneutes Ausblenden mehr
+            # aufgerufen (nur vor/waehrend der Bestaetigungs-Runde), wodurch die Joints genau in
+            # der gespeicherten Datei wieder sichtbar waren. Erneut ausblenden, BEVOR gespeichert
+            # wird.
+            self._hide_joint_markers(doc)
+
             # Explizit nachfragen statt automatisch zu speichern (Nutzerwunsch 2026-09-02).
             self._confirm_save_doc(doc)
 
@@ -1725,7 +1970,15 @@ class PartExchangeWindow(QtWidgets.QDialog):
         if doc is self.original_doc or doc is self.replacement_doc:
             return
         try:
-            if doc.Modified:
+            # FCPROJECT-FIX (2026-09-10, per Quellcode-Pruefung bestaetigt: App::Document hat
+            # KEIN "Modified"-Attribut - das gibt es nur auf Gui::Document (siehe Gui/Document.h
+            # isModified()/Document.pyi). "doc.Modified" hier warf bei JEDEM Aufruf eine
+            # AttributeError, die von der except-Klausel unten stillschweigend geschluckt wurde -
+            # das Dokument blieb dadurch IMMER offen, unabhaengig vom tatsaechlichen
+            # Speicherstand (Nutzer-Report "am Ende zwei Fenster" - Dateien schlossen sich nie
+            # automatisch wie vorgesehen).
+            gui_doc = Gui.getDocument(doc.Name)
+            if gui_doc is not None and gui_doc.Modified:
                 return
             App.closeDocument(doc.Name)
         except Exception as e:
@@ -1738,11 +1991,17 @@ class PartExchangeWindow(QtWidgets.QDialog):
         ctx = self._apply_ctx
         if ctx["cancelled"]:
             App.Console.PrintMessage("FCProject PartExchange: Vom Nutzer abgebrochen.\n")
-        App.Console.PrintMessage(
+        # Nutzerwunsch 2026-09-10: statt einer flachen "Datei [Joint, Joint, ...]"-Zeile jetzt
+        # gruppiert "Datei" / "Teil - Joints" pro Zeile, ueber alle Dateien.
+        summary_lines = [
             f"FCProject PartExchange: {ctx['rewired_joints']} Joint(s) in "
-            f"{len(ctx['touched_docs'])} Datei(en) erfolgreich umgehängt: "
-            f"{', '.join(ctx['touched_docs'])}\n"
-        )
+            f"{len(ctx['touched_docs'])} Datei(en) erfolgreich umgehängt:"
+        ]
+        for doc_summary in ctx["touched_docs"]:
+            summary_lines.append(doc_summary["file"])
+            for part_label, joint_names in doc_summary["parts"]:
+                summary_lines.append(f"    {part_label} - {', '.join(joint_names)}")
+        App.Console.PrintMessage("\n".join(summary_lines) + "\n")
         for err in ctx["errors"]:
             App.Console.PrintWarning(f"FCProject PartExchange: {err}\n")
 

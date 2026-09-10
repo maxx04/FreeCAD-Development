@@ -10,6 +10,7 @@
 # bewusst ohne Abhaengigkeiten zu anderen FCProject-Modulen (nur FreeCAD-Kern-API), damit
 # jedes Werkzeug es gefahrlos importieren kann.
 
+import os
 import re
 
 # FreeCADs eigenes Kollisions-Suffix beim Anlegen (doc.addObject() bei Namenskonflikt,
@@ -74,3 +75,20 @@ def find_same_source_siblings(obj, objects):
     siehe [[feedback_fcproject_need_unified_search_utils]]."""
     target_key = _source_key(obj)
     return [o for o in objects if _source_key(o) == target_key]
+
+
+def source_type_key(obj):
+    """Liefert eine ueber Instanzen UND SITZUNGEN hinweg stabile Kennung fuer den TYP von `obj`
+    (nach Aufloesung etwaiger App::Link-Ketten, siehe resolve_linked_object()) - fuer
+    Persistenz-Zwecke (z.B. eine Zuordnungs-Vorlage als JSON speichern, siehe
+    PartExchangeWindow._mapping_template_path()), wo doc.Name/obj.Name NICHT geeignet sind:
+    doc.Name ist nur ein interner, pro Sitzung ggf. abweichender Bezeichner (FreeCAD haengt bei
+    Namenskollision ein Suffix an), waehrend der Dateiname der Quelldatei (z.B.
+    "GWH_012_P_Latte.FCStd") den eigentlichen TEILE-TYP identifiziert und ueber alle Instanzen
+    und Sitzungen hinweg gleich bleibt. Faellt auf den internen Dokumentnamen zurueck, falls das
+    Dokument noch nie gespeichert wurde (kein FileName)."""
+    source = resolve_linked_object(obj)
+    doc = getattr(source, "Document", None)
+    if doc is None:
+        return source.Name
+    return os.path.basename(doc.FileName) if doc.FileName else doc.Name
