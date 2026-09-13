@@ -21,7 +21,9 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         # normale Funktions-Variable (nicht ueber den exec()-Rahmen) aufgeloest wird - siehe
         # _addon_paths.py fuer den Grund, warum __file__ hier direkt nicht funktioniert.
         import _addon_paths
-        self.Icon = os.path.join(_addon_paths.REPO_ROOT, 'resources', 'icons', 'fcproject.svg')
+        # resources/ liegt (wie bei allen anderen Command-Modulen dieses Addons) INNERHALB von
+        # python/, nicht an der Repo-Wurzel - deshalb PYTHON_DIR statt REPO_ROOT.
+        self.Icon = os.path.join(_addon_paths.PYTHON_DIR, 'resources', 'icons', 'fcproject.svg')
 
     def Initialize(self):
         import ProjectManager as ProjectManager
