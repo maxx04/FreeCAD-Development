@@ -1,24 +1,27 @@
 #FCProject: InitGui Hintergrund-Scanner mit Versions-Guard
 import os
-import sys
 import FreeCAD as App
 import FreeCADGui
 
-
-# Pfad-Injektion für Module
-user_mod_dir = os.path.join(App.getUserAppDataDir(), "Mod", "FCProject")
-if not os.path.exists(user_mod_dir):
-    user_mod_dir = os.path.join(App.getHomePath(), "Mod", "FCProject")
-
-if user_mod_dir not in sys.path:
-    sys.path.append(user_mod_dir)
-
 class FCProjectWorkbench(FreeCADGui.Workbench):
-    Icon = os.path.join(App.getUserAppDataDir(), 'Mod', 'FCProject', 'resources', 'icons', 'fcproject.svg') #FreeCADGui.getIcon("freecad")
     MenuText = "FCProject"
 
     # Muss exakt mit der Version des ProjectManagers übereinstimmen!
     SUPPORTED_VERSION = "1.1"
+
+    def __init__(self):
+        # Icon-Pfad bewusst erst HIER (Instanz statt Klassen-Attribut) bestimmen: FreeCAD
+        # fuehrt InitGui.py per exec() aus, nicht per import - ein ganz oben in dieser Datei
+        # gebundener Name (z.B. "from _addon_paths import REPO_ROOT") landet dadurch nur im
+        # lokalen exec()-Rahmen und ist fuer einen verschachtelten Klassenkoerper UNSICHTBAR
+        # (NameError) - "os"/"App"/"FreeCADGui" funktionierten oben nur zufaellig, weil diese
+        # Namen schon vorher in FreeCADGuiInit.pys eigenem globalen Namensraum existierten,
+        # den der exec()-Aufruf mitbenutzt. Ein frischer, LOKALER Import innerhalb einer
+        # Funktion ist dagegen unabhaengig von diesem Scope-Problem, weil er ueber eine
+        # normale Funktions-Variable (nicht ueber den exec()-Rahmen) aufgeloest wird - siehe
+        # _addon_paths.py fuer den Grund, warum __file__ hier direkt nicht funktioniert.
+        import _addon_paths
+        self.Icon = os.path.join(_addon_paths.REPO_ROOT, 'resources', 'icons', 'fcproject.svg')
 
     def Initialize(self):
         import ProjectManager as ProjectManager

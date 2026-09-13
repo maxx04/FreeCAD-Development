@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<package format="1" xmlns="https://wiki.freecad.org/Package_Metadata">
+    <name>FCProject</name>
+    <description>Projektmanagement und BOM-Strukturierung für Assemblies</description>
+    <icon>resources/icons/fcproject.svg</icon>
+    <version>0.2.0</version>
+    <date>2026-09-13</date>
+    <maintainer>maxx</maintainer>
+    <author>maxx</author>
+    <license>LGPL-2.1-or-later</license>
+    <url type="repository" branch="main">https://github.com/maxx04/FreeCAD-Development</url>
+
+    <content>
+        <workbench>
+            <name>FCProject</name>
+            <subdirectory>python</subdirectory>
+            <classname>FCProjectWorkbench</classname>
+        </workbench>
+    </content>
+</package>

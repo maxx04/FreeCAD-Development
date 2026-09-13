@@ -3,9 +3,11 @@ import os
 import FreeCAD as App
 import FreeCADGui as Gui
 from PySide6 import QtWidgets
-from FCProjectCore import BOMManager
-
-import debugpy
+# 2026-09-13: von der kompilierten FCProjectCore.BOMManager (C++/pybind11) auf den reinen
+# Python-Ersatz in BOMManager.py umgestellt - siehe dort fuer den Grund (Addon-Manager-
+# Git-Installation kann kein C++ mitbauen). Gleiche oeffentliche Schnittstelle, daher sonst
+# keine Aenderung an dieser Datei noetig.
+from BOMManager import BOMManager
 
 class BOMExportCommand:
     def GetResources(self):
@@ -49,9 +51,7 @@ class BOMExportCommand:
                 App.Console.PrintError("Fehler: Bitte klicke zuerst die Hauptbaugruppe im Baum an!")
                 return
                 # Nimm das erste App::DocumentObject, das der Nutzer angeklickt hat
-                
-            debugpy.breakpoint()
-            
+
             root_assembly = auswahl[0]
 
             manager = BOMManager(root_assembly.Name)
