@@ -1,3 +1,6 @@
+Hauptsächlich bearbeitet mit [Claude Code](https://claude.com/claude-code) (Anthropic).
+
+
 # FCProject
 
 FreeCAD-Workbench für Projektmanagement, Stücklisten (BOM) und Assembly-Werkzeuge rund um

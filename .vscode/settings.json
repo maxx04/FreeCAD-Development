@@ -50,9 +50,16 @@
     "cmake.ignoreKitEnv": true,
     "cmake.options.statusBarVisibility": "visible",
     "cmake.useCMakePresets": "always",
-    "python-envs.defaultEnvManager": "ms-python.python:venv"
+    "python-envs.defaultEnvManager": "ms-python.python:venv",
 
-
+    "workbench.editor.autoLockGroups": {
+    "diffEditor": false,
+    "diffEditorSideBySide": false,
+    "mergeEditor": false,
+    "imagePreview.previewEditor": false,
+    "notebook": false,
+    "vscode.markdown.preview.editor": false
+}
 
 
 }
