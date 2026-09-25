@@ -647,6 +647,40 @@ cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.
 der einzige Aufruf der neuen Funktion auskommentiert ist - keine Laufzeit-/Absturzwirkung ohne
 weitere Änderung.)
 
+**Update 2026-09-21, an Upstream-Umbau angepasst (`update-and-rebuild-freecad.sh` schlug fehl:
+"AssemblyLink.cpp:644"/"AssemblyLink.h:98 passt nicht mehr an"):** Upstream-Commit `67103b19c9`
+("Assembly: support generated arrays and suppressed link elements", 2026-09-09) hat
+`AssemblyLink::handleJointReference()`s `objLinkMap`-Lookup UNABHAENGIG selbst erweitert - neues
+Member `objSubPrefixMap` + Fallback ueber `App::LinkElement::getLinkGroup()`, aber NUR fuer
+`Part::LinkArray`-Elemente (`ShowElement`), befuellt in `synchronizeComponents()`. Das ist ein
+anderer, engerer Anwendungsfall als unser `findLocalAncestor()` (beliebige strukturelle
+Verschachtelungstiefe, ueber die `Group`-Property nach oben laufend) - **nicht redundant**,
+beide Mechanismen bleiben noetig. Patch von Hand nachgezogen: `findLocalAncestor()` wird jetzt
+als Fallback aufgerufen, NACHDEM Upstreams eigener `objLinkMap`/`objSubPrefixMap`/LinkGroup-
+Lookup erfolglos war (`localLink` bleibt `nullptr`) - `subPrefix` wird dabei bewusst von
+`findLocalAncestor()` ueberschrieben (beginnt selbst mit `outSubPrefix.clear()`), da ein
+uebernommener `objSubPrefixMap`-Praefix an dieser Stelle ohnehin schon nicht zum Ziel gefuehrt
+hat. Header-Hunk analog angepasst: `static bool updatingContents;` wandert jetzt in die von
+Upstream bereits neu angelegte `private:`-Sektion (dort steht seitdem auch `objSubPrefixMap`),
+statt selbst eine zweite `private:`-Sektion zu erzeugen. Verifiziert: `git apply --check` auf
+frischem `main`-Checkout erfolgreich, inkrementeller Build von `Assembly` fehlerfrei
+durchgelaufen (kein `AssemblyGui`-Rebuild noetig - keine Signaturaenderung an oeffentlich
+aufgerufenen Methoden). `getJoints(false, true)`-Hunk (Zeile ~78, Kommentar "Adressieren statt
+Kopieren") unveraendert im Patch belassen - gehoert laut
+[[project_fcproject_freecad_source_patch_branch_workflow]] eigentlich zum Sandbox-Experiment
+(dessen `subjoints-revert`-Patch genau diese Zeile inzwischen zurueckdreht), war aber nicht
+Ursache des Fehlschlags - bewusst nicht angefasst, nur die zwei tatsaechlich gescheiterten Hunks
+repariert.
+
+**Update 2026-09-24, erneut an Upstream angepasst (derselbe Hunk, diesmal nur `.cpp:704`,
+`.h` passte bereits wieder):** rein kosmetischer Upstream-Umbau - `Base::Console().warning(...)`
+nutzt jetzt `{}`-Platzhalter (fmt-Stil) statt `%s`/`printf`-Stil, exakt in der Warnzeile, an die
+unser Hunk anschliesst. Inhaltlich nichts geaendert, nur der Text der Warn-Nachricht in unserem
+Hunk auf `{}` nachgezogen. Gleiches Vorgehen wie beim Update vom 21.09.: `git apply --reject`
+(zeigt exakt, welcher Hunk scheitert, statt zu raten), Hand-Fix nur an der betroffenen Stelle,
+inkrementeller `Assembly`-Build erfolgreich, frischer Patch per `git diff` exportiert und gegen
+sauberen `main`-Checkout re-verifiziert.
+
 ## freecad-cmake-disable-tests.patch
 
 Betrifft `CMakeLists.txt`. `ENABLE_DEVELOPER_TESTS` zieht `add_subdirectory(tests)`

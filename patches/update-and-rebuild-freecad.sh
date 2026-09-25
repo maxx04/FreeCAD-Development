@@ -170,6 +170,30 @@ run() {
 
 cd "$FC_SRC"
 
+# FCPROJECT-FIX (2026-09-25, Nutzer-Report nach Arbeitsumgebungswechsel - CMake-Schritt 5
+# brach mit "ImportError: libshiboken6.abi3.so.6.11: cannot open shared object file" ab):
+# CMakeLists.txt findet das venv-Python zwar ueber CMakeUserPresets.json, aber sobald dieses
+# Python versucht, shiboken6/PySide6 zu importieren (fuer den PySide6.QtSvgWidgets-Check),
+# braucht es passende .so-Dateien. SITE_PACKAGES/PySide6/Qt/lib (die alte Quelle) ist
+# inzwischen LEER - die venv-PySide6-Installation wurde auf Version 6.11 aktualisiert, OHNE
+# eigene Qt-/PySide-/shiboken-.so-Dateien zu buendeln (frueher: 6.6, mitgebuendelt). Die
+# echten .so-Dateien fuer 6.11 liegen jetzt in einem separaten Qt6.11-Sysroot (vermutlich aus
+# KDE-Neon-apt-Paketen extrahiert, siehe neon-qt6-pyside6/apt-sandbox/) - siehe identischer
+# Befund + Live-Verifikation in run-freecad-26.3.sh (dort ausfuehrlicher kommentiert).
+# Python-PAKETE (.py/.pyi) kommen weiterhin aus der venv, nur die .so-Bibliotheken aus dem
+# Sysroot.
+VENV_DIR="/home/maxx/Dokumente/FreeCAD-Development/.venv"
+NEON_QT_LIB="/home/maxx/Dokumente/FreeCAD-Development/neon-qt6-pyside6/root/usr/lib/x86_64-linux-gnu"
+if [[ -d "$VENV_DIR" ]]; then
+  # shellcheck disable=SC1091
+  source "${VENV_DIR}/bin/activate"
+  export VIRTUAL_ENV="${VENV_DIR}"
+  export LD_LIBRARY_PATH="${NEON_QT_LIB}:/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  export PYTHONNOUSERSITE=1
+else
+  echo "WARNUNG: venv '${VENV_DIR}' nicht gefunden - CMake-Schritt 5 (PySide6/shiboken6-Check) wird vermutlich fehlschlagen."
+fi
+
 # WICHTIG (Vorfall 2026-09-04): dieses Skript setzt voraus, dass FC_SRC auf einem
 # PLAIN-Branch steht, der ein sauberer Vorfahre von origin/main ist (git-apply-
 # basierte Patches, kein eigener Commit-Verlauf) - sonst schlaegt der ff-only-

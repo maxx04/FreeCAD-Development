@@ -1,5 +1,5 @@
 diff --git a/src/Mod/Assembly/App/AssemblyLink.cpp b/src/Mod/Assembly/App/AssemblyLink.cpp
-index d2dface315..5e1c6b53a0 100644
+index c4b69bde0a..01b45c4a3f 100644
 --- a/src/Mod/Assembly/App/AssemblyLink.cpp
 +++ b/src/Mod/Assembly/App/AssemblyLink.cpp
 @@ -21,7 +21,9 @@
@@ -20,7 +20,7 @@ index d2dface315..5e1c6b53a0 100644
  #include <App/PropertyPythonObject.h>
  #include <Base/Console.h>
  #include <Base/Placement.h>
-@@ -57,6 +60,8 @@ using namespace Assembly;
+@@ -71,6 +74,8 @@ void syncSuppressedState(App::DocumentObject* source, App::DocumentObject* targe
  
  PROPERTY_SOURCE(Assembly::AssemblyLink, App::Part)
  
@@ -29,7 +29,7 @@ index d2dface315..5e1c6b53a0 100644
  AssemblyLink::AssemblyLink()
  {
      ADD_PROPERTY_TYPE(
-@@ -315,6 +320,13 @@ void AssemblyLink::updateParentJoints()
+@@ -329,6 +334,13 @@ void AssemblyLink::updateParentJoints()
  
  void AssemblyLink::updateContents()
  {
@@ -43,7 +43,7 @@ index d2dface315..5e1c6b53a0 100644
      synchronizeComponents();
  
      if (isRigid()) {
-@@ -322,6 +334,14 @@ void AssemblyLink::updateContents()
+@@ -336,6 +348,14 @@ void AssemblyLink::updateContents()
      }
      else {
          synchronizeJoints();
@@ -58,7 +58,7 @@ index d2dface315..5e1c6b53a0 100644
      }
      purgeTouched();
  }
-@@ -568,7 +588,19 @@ void AssemblyLink::synchronizeJoints()
+@@ -616,7 +636,19 @@ void AssemblyLink::synchronizeJoints()
  
      JointGroup* jGroup = ensureJointGroup();
  
@@ -79,7 +79,7 @@ index d2dface315..5e1c6b53a0 100644
      std::vector<App::DocumentObject*> assemblyLinkJoints = getJoints();
  
      // We delete the excess of joints if any
-@@ -624,6 +656,329 @@ void AssemblyLink::synchronizeJoints()
+@@ -672,6 +704,329 @@ void AssemblyLink::synchronizeJoints()
      }
  }
  
@@ -409,55 +409,42 @@ index d2dface315..5e1c6b53a0 100644
  
  void AssemblyLink::handleJointReference(
      App::DocumentObject* joint,
-@@ -644,8 +999,20 @@ void AssemblyLink::handleJointReference(
+@@ -704,7 +1059,21 @@ void AssemblyLink::handleJointReference(
+             it = objLinkMap.find(linkGroup);
+         }
      }
- 
-     // 2. Map to local link
-+    App::DocumentObject* localLink = nullptr;
-+    std::string subPrefix;  // nur belegt, wenn ueber findLocalAncestor() gefunden
-     auto it = objLinkMap.find(externalComponent);
 -    if (it == objLinkMap.end()) {
-+    if (it != objLinkMap.end()) {
-+        localLink = it->second;
++    App::DocumentObject* localLink = (it != objLinkMap.end()) ? it->second : nullptr;
++    std::string subPrefix;
++    if (prefixIt != objSubPrefixMap.end()) {
++        subPrefix = prefixIt->second;
 +    }
-+    else {
++    if (!localLink) {
 +        // FCPROJECT-PATCH: siehe patches/bugreport-rigid-nested-joint-reference/README.md -
-+        // externalComponent ist kein direktes Kind (z.B. ein Enkelkind aus einer
-+        // verschachtelten Rigid=False-Unterbaugruppe) - Eltern-Kette hochlaufen statt
-+        // sofort aufzugeben.
++        // externalComponent ist weder ein direktes Kind noch (ueber LinkGroup) ein
++        // LinkArray-Element - z.B. ein Enkelkind aus einer verschachtelten Rigid=False-
++        // Unterbaugruppe. Eltern-Kette hochlaufen statt sofort aufzugeben; ueberschreibt
++        // subPrefix bewusst (findLocalAncestor() beginnt selbst mit outSubPrefix.clear()) -
++        // der obige objSubPrefixMap-Treffer war ja gerade NICHT erfolgreich aufloesbar.
 +        localLink = findLocalAncestor(externalComponent, subPrefix);
 +    }
 +    if (!localLink) {
          Base::Console().warning(
-             "AssemblyLink: Could not map external component %s to a local link for joint %s\n",
+             "AssemblyLink: Could not map external component {} to a local link for joint {}\n",
              externalComponent->getNameInDocument(),
-@@ -653,7 +1020,6 @@ void AssemblyLink::handleJointReference(
+@@ -712,11 +1081,6 @@ void AssemblyLink::handleJointReference(
          );
          return;
      }
 -    App::DocumentObject* localLink = it->second;
+-    std::string subPrefix;
+-    if (prefixIt != objSubPrefixMap.end()) {
+-        subPrefix = prefixIt->second;
+-    }
  
      // 3. Set the new reference
      // The local joint now points to the local link [LocalLink, "Sub"]
-@@ -663,8 +1029,16 @@ void AssemblyLink::handleJointReference(
- 
-     // 4. Sync sub-elements
-     // The sub-elements (e.g. "Body.Face1") are relative to the component.
--    // Since the LocalLink points to the ExternalPart, the relative path is identical.
-+    // Since the LocalLink points to the ExternalPart, the relative path is identical - außer
-+    // wenn wir gerade ueber findLocalAncestor() umgeleitet haben: dann ist localLink nicht
-+    // mehr die ExternalPart selbst, sondern ein Vorfahre davon, und subPrefix traegt den
-+    // fehlenden Zwischenpfad (z.B. "Halter." bei Reference auf "Halter.Edge34" statt "Edge34").
-     std::vector<std::string> subs1 = prop1->getSubValues();
-+    if (!subPrefix.empty()) {
-+        for (auto& sub : subs1) {
-+            sub = subPrefix + sub;
-+        }
-+    }
-     std::vector<std::string> subs2 = prop2->getSubValues();
- 
-     bool changed = false;
-@@ -685,6 +1059,63 @@ void AssemblyLink::handleJointReference(
+@@ -758,6 +1122,63 @@ void AssemblyLink::handleJointReference(
      }
  }
  
@@ -522,7 +509,7 @@ index d2dface315..5e1c6b53a0 100644
  {
      // Make sure there is no joint group
 diff --git a/src/Mod/Assembly/App/AssemblyLink.h b/src/Mod/Assembly/App/AssemblyLink.h
-index 700b1821d9..3a50c514ab 100644
+index 9309b26e5b..5cef073bc0 100644
 --- a/src/Mod/Assembly/App/AssemblyLink.h
 +++ b/src/Mod/Assembly/App/AssemblyLink.h
 @@ -80,6 +80,32 @@ public:
@@ -558,12 +545,11 @@ index 700b1821d9..3a50c514ab 100644
      void ensureNoJointGroup();
      JointGroup* ensureJointGroup();
      std::vector<App::DocumentObject*> getJoints();
-@@ -98,6 +124,26 @@ protected:
-     /// get called by the container whenever a property has been changed
-     void onChanged(const App::Property* prop) override;
-     void onDocumentRestored() override;
+@@ -101,6 +127,25 @@ protected:
+ 
+ private:
+     std::unordered_map<App::DocumentObject*, std::string> objSubPrefixMap;
 +
-+private:
 +    // Reentrancy guard for updateContents(). synchronizeComponents() adds/removes objects in
 +    // this AssemblyLink's own Group, which synchronously re-enters onChanged(&Group) ->
 +    // updateContents(). That re-entry is not limited to the same instance: onChanged(&Group)
