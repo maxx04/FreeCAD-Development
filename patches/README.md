@@ -21,6 +21,13 @@ ignorieren.
 ./patches/update-and-rebuild-freecad.sh --dry-run   # nur anzeigen, was passieren würde
 ```
 
+**`PATCHES.txt`** ist die einzige Stelle, die geändert werden muss, um einen Patch zu
+aktivieren/deaktivieren - das Skript liest die beiden Listen (`[ENV]`/`[FEATURE]`) direkt von
+dort, welche Dateien jeder Patch berührt wird automatisch aus dem Patch selbst ermittelt
+(keine zweite, von Hand gepflegte Dateiliste mehr). Dateiname-Präfix jedes Patches ist das
+Datum seiner letzten inhaltlichen Änderung (`YYYY.MM.DD-`), keine Anwendungsreihenfolge - die
+ergibt sich aus der Zeilenreihenfolge in `PATCHES.txt` innerhalb des jeweiligen Abschnitts.
+
 Nutzt dafür den CMake-Preset `FC-dev` aus
 `freecad-source/CMakeUserPresets.json` (zeigt bewusst auf den bestehenden
 `build/`-Ordner, von dem FCProjects `CMakeLists.txt` selbst abhängt - nicht
@@ -38,7 +45,7 @@ Repo gedacht") und würde sonst genauso unbemerkt verlorengehen wie die
 Umgebungs-Patches vorhin. Das Skript stellt sie bei Bedarf automatisch
 wieder her.
 
-## freecad-assembly-jointobject.patch
+## 2026.09.04-freecad-assembly-jointobject.patch
 
 Betrifft `src/Mod/Assembly/JointObject.py` (Assembly-Workbench):
 
@@ -392,7 +399,7 @@ Nach einem frischen Checkout/Build von FreeCAD:
 
 ```bash
 cd /home/maxx/freecad/freecad-source
-git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-jointobject.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/2026.09.04-freecad-assembly-jointobject.patch
 cp src/Mod/Assembly/JointObject.py /home/maxx/freecad/install/Mod/Assembly/JointObject.py
 cp src/Mod/Assembly/CommandSolveAssembly.py /home/maxx/freecad/install/Mod/Assembly/CommandSolveAssembly.py
 cmake --build build --target Assembly -- -j$(nproc)
@@ -407,7 +414,7 @@ bauen.)
 ## freecad-assembly-link-delete-hang.patch
 
 **⚠️ Konsolidiert (2026-08-23) - Inhalt lebt jetzt vollständig in
-`freecad-assembly-grounded-joint-nested-flex.patch`, diese Datei wird vom Update-Skript
+`2026.09.25-freecad-assembly-grounded-joint-nested-flex.patch`, diese Datei wird vom Update-Skript
 NICHT mehr separat angewendet.** Grund: beide Patches touchten exakt dieselben zwei Dateien
 (`AssemblyLink.cpp`/`.h`) und wurden beide jeweils per `git diff` als VOLLSTÄNDIGER
 kumulativer Snapshot dieser Dateien generiert - beim sequenziellen `git apply` (erst dieser,
@@ -476,10 +483,10 @@ of scope"-Validierung) - dieser Fix hier betrifft nur normale Joint-Referenzen
 ### Anwenden
 
 **Nicht mehr separat anwenden - siehe Konsolidierungs-Hinweis oben.** Inhalt (inkl. Fix 2,
-`findLocalAncestor()`) ist Teil von `freecad-assembly-grounded-joint-nested-flex.patch`,
+`findLocalAncestor()`) ist Teil von `2026.09.25-freecad-assembly-grounded-joint-nested-flex.patch`,
 dort mit anwenden.
 
-## freecad-assembly-viewprovider-null-crash.patch
+## 2026.09.05-freecad-assembly-viewprovider-null-crash.patch
 
 **Ausgangsbug** (2026-08-23, Nutzer-Repro: "beim aktivieren Baugruppe Freecad stürzt"): reproduzierbarer
 SIGSEGV-Absturz beim Aktivieren (Doppelklick/`setEdit()`) einer `Assembly::AssemblyObject`, wenn das
@@ -538,7 +545,7 @@ Anwenden:
 
 ```bash
 cd /home/maxx/freecad/freecad-source
-git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-viewprovider-null-crash.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/2026.09.05-freecad-assembly-viewprovider-null-crash.patch
 cmake --build build --target AssemblyGui -- -j$(nproc)
 cp build/Mod/Assembly/AssemblyGui.so /home/maxx/freecad/install/lib/AssemblyGui.so
 ```
@@ -549,7 +556,7 @@ prüfen, ob `AssemblyGui` (oder andere Module) dieselbe Methode aufrufen und mit
 ein reines `Assembly`-Rebuild ohne `AssemblyGui`-Rebuild führt sonst zu `undefined symbol`-Fehlern
 beim Laden, siehe Vorfall 2026-08-23 in [[project_fcproject_manual_placement_workaround_status]].)
 
-## freecad-assembly-grounded-joint-nested-flex.patch
+## 2026.09.25-freecad-assembly-grounded-joint-nested-flex.patch
 
 **⚠️ Aktuell WIRKUNGSLOS (Aufruf auskommentiert) - hat live einen FreeCAD-Absturz verursacht,
 NICHT ohne Reentrancy-Fix reaktivieren.** Betrifft `src/Mod/Assembly/App/AssemblyLink.{cpp,h}`.
@@ -638,7 +645,7 @@ Grundlagen-Code für den nächsten Anlauf, aktuell ohne jede Laufzeitwirkung, da
 
 ```bash
 cd /home/maxx/freecad/freecad-source
-git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-grounded-joint-nested-flex.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/2026.09.25-freecad-assembly-grounded-joint-nested-flex.patch
 cmake --build build --target Assembly -- -j$(nproc)
 cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.so
 ```
@@ -681,7 +688,7 @@ Hunk auf `{}` nachgezogen. Gleiches Vorgehen wie beim Update vom 21.09.: `git ap
 inkrementeller `Assembly`-Build erfolgreich, frischer Patch per `git diff` exportiert und gegen
 sauberen `main`-Checkout re-verifiziert.
 
-## freecad-assembly-grounded-placement-drift.patch
+## 2026.09.27-freecad-assembly-grounded-placement-drift.patch
 
 Betrifft `src/Mod/Assembly/App/AssemblyObject.{cpp,h}` + `src/Mod/Assembly/JointObject.py`.
 Behebt [GitHub-Issue #32650](https://github.com/FreeCAD/FreeCAD/issues/32650) "Assembly:
@@ -739,7 +746,7 @@ Hand nachgezogen, `Assembly`-Target inkrementell erfolgreich gebaut, frischer Pa
 
 ```bash
 cd /home/maxx/freecad/freecad-source
-git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-grounded-placement-drift.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/2026.09.27-freecad-assembly-grounded-placement-drift.patch
 cmake --build build --target Assembly -- -j$(nproc)
 cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.so
 ```
@@ -747,14 +754,14 @@ cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.
 (C++ + Python - Rebuild des `Assembly`-Targets noetig, die Python-Aenderung in
 `JointObject.py` wirkt schon durchs reine Kopieren.)
 
-## freecad-cmake-disable-tests.patch
+## 2026.09.05-freecad-cmake-disable-tests.patch
 
 Betrifft `CMakeLists.txt`. `ENABLE_DEVELOPER_TESTS` zieht `add_subdirectory(tests)`
 nach, was `find_package(GTest REQUIRED)` voraussetzt. GTest ist auf dieser
 Maschine nicht installiert, daher schlägt die CMake-Konfiguration sonst fehl.
 Kommentiert `add_subdirectory(tests)` aus.
 
-## freecad-navigation-qbytearray-fix.patch
+## 2026.09.05-freecad-navigation-qbytearray-fix.patch
 
 Betrifft `src/Gui/PreferencePages/DlgSettingsNavigation.cpp` und
 `src/Mod/Start/Gui/GeneralSettingsWidget.cpp`. `QByteArray data(style.first.getName())`
@@ -763,7 +770,7 @@ kein `const char*` mehr direkt liefert, das eindeutig auf einen der
 `QByteArray`-Konstruktoren passt. Fix: explizit `.data()` und `.size()`
 übergeben.
 
-## freecad-filedialog-search-filter.patch
+## 2026.08.21-freecad-filedialog-search-filter.patch
 
 Betrifft `src/Gui/FileDialog.{cpp,h}` (`Gui::FileDialog`, der nicht-native
 Öffnen/Speichern-Dialog - wird von FCProject bewusst erzwungen, siehe
@@ -843,7 +850,7 @@ finale Stand griff.
 
 ```bash
 cd /home/maxx/freecad/freecad-source
-git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-filedialog-search-filter.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/2026.08.21-freecad-filedialog-search-filter.patch
 cmake --build build --target FreeCADGui -- -j$(nproc)
 cp build/lib/libFreeCADGui.so /home/maxx/freecad/install/lib/libFreeCADGui.so
 ```
@@ -853,7 +860,7 @@ reines Kopieren wie bei den Python-Patches reicht hier nicht. Der Rebuild
 zieht wegen des geänderten Headers viele abhängige `.cpp`-Dateien im
 Gui-Modul mit - ca. 1-2 Minuten inkrementell.)
 
-## freecad-propertyeditor-qstring-fix.patch
+## 2026.09.05-freecad-propertyeditor-qstring-fix.patch
 
 Betrifft `src/Gui/propertyeditor/PropertyEditor.cpp`. `QString::operator+=`
 mit einem `std::string`-Argument (Rückgabe der lokalen `indent()`-Hilfsfunktion)
@@ -867,13 +874,13 @@ beim Umstieg von 1.2.0dev auf 26.3.0dev auf (neuer Code in `getPropUses`/
 
 ```bash
 cd /home/maxx/freecad/freecad-source
-git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-jointobject.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/2026.09.04-freecad-assembly-jointobject.patch
 git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-link-delete-hang.patch
-git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-grounded-joint-nested-flex.patch
-git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-cmake-disable-tests.patch
-git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-navigation-qbytearray-fix.patch
-git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-propertyeditor-qstring-fix.patch
-git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-filedialog-search-filter.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/2026.09.25-freecad-assembly-grounded-joint-nested-flex.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/2026.09.05-freecad-cmake-disable-tests.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/2026.09.05-freecad-navigation-qbytearray-fix.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/2026.09.05-freecad-propertyeditor-qstring-fix.patch
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/2026.08.21-freecad-filedialog-search-filter.patch
 cp src/Mod/Assembly/JointObject.py /home/maxx/freecad/install/Mod/Assembly/JointObject.py
 cp src/Mod/Assembly/CommandSolveAssembly.py /home/maxx/freecad/install/Mod/Assembly/CommandSolveAssembly.py
 cmake --build build --target Assembly -- -j$(nproc)

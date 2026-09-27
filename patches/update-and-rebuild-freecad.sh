@@ -70,89 +70,45 @@ if [[ -z "${JOBS:-}" ]]; then
 fi
 LOG_FILE="${LOG_DIR}/update-${TS}.log"
 
-# Reine Build-Umgebungs-Patches: muessen VOR dem ersten Konfigurieren/Bauen
-# angewendet sein, sonst schlaegt der Build unabhaengig von Feature-Fixes fehl.
-ENV_PATCHES=(
-  "freecad-cmake-disable-tests.patch"
-  "freecad-navigation-qbytearray-fix.patch"
-  "freecad-propertyeditor-qstring-fix.patch"
-)
-# Dateien, die die obigen Umgebungs-Patches beruehren - werden in Schritt 1
-# wie die Feature-Patches zurueckgesetzt (pristiner Baum fuer den ff-only-
-# Merge) und in Schritt 4 frisch wieder angewendet.
-ENV_PATCHED_FILES=(
-  "CMakeLists.txt"
-  "src/Gui/PreferencePages/DlgSettingsNavigation.cpp"
-  "src/Mod/Start/Gui/GeneralSettingsWidget.cpp"
-  "src/Gui/propertyeditor/PropertyEditor.cpp"
-)
+# FCPROJECT-PATCH (2026-09-27, Nutzerwunsch "PATCHES.txt anlegen, an dem beim Update Patches
+# angewendet werden sollen"): ENV_PATCHES/FEATURE_PATCHES kommen jetzt aus PATCHES.txt (einzige
+# Stelle zum Aktivieren/Deaktivieren eines Patches) statt hier hartkodiert zu sein - Grund und
+# Hintergrund zu jedem einzelnen Patch steht weiterhin in README.md, nicht hier verdoppelt.
+# Reine Build-Umgebungs-Patches (ENV) muessen VOR dem ersten Konfigurieren/Bauen angewendet
+# sein, sonst schlaegt der Build unabhaengig von Feature-Fixes fehl - FEATURE-Patches werden
+# erst nach einem gruenen Vanilla-Build wieder aufgelegt (siehe Ablauf oben).
+parse_patch_list() {
+  local section="$1" in_section=0 line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ ^\[([A-Z]+)\]$ ]]; then
+      [[ "${BASH_REMATCH[1]}" == "$section" ]] && in_section=1 || in_section=0
+      continue
+    fi
+    [[ $in_section -eq 0 ]] && continue
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    printf '%s\n' "$line"
+  done < "${PATCHES_DIR}/PATCHES.txt"
+}
+mapfile -t ENV_PATCHES < <(parse_patch_list ENV)
+mapfile -t FEATURE_PATCHES < <(parse_patch_list FEATURE)
 
-# Feature-/Bugfix-Patches: nur relevant fuer FCProjects eigenen Workflow,
-# werden ERST nach einem gruenen Vanilla-Build wieder aufgelegt.
-#
-# WICHTIG (2026-09-05, Nutzerkorrektur - ersetzt die 2026-09-04-Regel "strikte
-# Trennung, gar keine Assembly-Patches mehr hier"): jene Regel hatte zur Folge,
-# dass JEDER Lauf dieses Skripts ein FreeCAD mit komplett VANILLA Assembly-Modul
-# installierte - alle unten stehenden, bereits validierten (nicht-
-# experimentellen) Assembly-Bugfixes gingen dabei automatisch verloren, ohne
-# dass es auffiel (bestaetigt: JointObject.py der Installation war 0 Byte
-# Unterschied zu sauberem main, obwohl die Fixes laengst dokumentiert waren -
-# fuehrte zum "onDistanceChanged: Base::Quantity cannot be converted"-Vorfall).
-# Automatische Anwendung dieser Patches hat vorher bereits mehrfach zuverlaessig
-# funktioniert und ist wieder aktiv. NUR das aktiv laufende Experiment
-# "Adressieren statt Kopieren" (freecad-assembly-addressing-utils.patch,
-# freecad-assembly-link-subjoints-revert.patch) bleibt ausschliesslich in
-# /home/maxx/Dokumente/FreeCAD-Development/assembly-solver-sandbox/patches/ und
-# wird hier NICHT automatisch angewendet, solange es dort noch in aktiver
-# Entwicklung ist.
-#
-# WICHTIG (Vorfall 2026-09-05, echter Kompilierfehler): freecad-assembly-
-# jointobject.patch (grosser kumulativer Snapshot) ruft resolveJointReference()/
-# ResolvedJointRef auf - die sind aber ERST durch freecad-assembly-addressing-
-# utils.patch definiert (der oben genannte, bewusst ausgeschlossene aktive
-# Sandbox-Patch). jointobject.patch ist textuell konfliktfrei anwendbar, aber
-# NICHT ohne addressing-utils.patch kompilierbar - deshalb hier NICHT
-# eingetragen. Stattdessen: freecad-assembly-quantity-signal-fix.patch, ein
-# eigenstaendiger, aus jointobject.patch herausgeloester Mini-Fix (nur die
-# valueChanged->textChanged-Signalverbindungen fuer die Joint-Distanz-/Winkel-
-# Spinboxen, behebt GENAU den obigen "Base::Quantity cannot be converted"-Bug),
-# ohne jede Abhaengigkeit zu addressing-utils.
-# WICHTIG (Vorfall 2026-09-05, zweiter Fund): App::Link hat keine eigene "Shape"-Property
-# im normalen Sinn - sie wird on-demand aus LinkedObject berechnet
-# (LinkBaseExtension::extensionGetPropertyByName() schliesst "Shape" bewusst vom
-# generischen Property-Forwarding aus, siehe src/App/Link.cpp). Ist LinkedObject waehrend
-# der Lade-Kaskade einer Mehrdatei-Baugruppe noch nicht aufgeloest, fehlt das Attribut
-# kurzzeitig komplett -> "'App.DocumentObject' object has no attribute 'Shape'" in
-# UtilsAssembly.findPlacement(), reproduzierbar live per Python-Konsole verifiziert
-# (selbstheilend: Sekunden spaeter, sobald alles geladen ist, wieder normal aufloesbar).
-# freecad-assembly-link-shape-race-fix.patch behandelt das defensiv wie einen nicht
-# aufloesbaren Sub-Element-Fall (Identity-Placement statt Absturz).
-FEATURE_PATCHES=(
-  "freecad-filedialog-search-filter.patch"
-  "freecad-app-getplacementof-partdesign-feature.patch"
-  "freecad-assembly-grounded-joint-nested-flex.patch"
-  "freecad-assembly-quantity-signal-fix.patch"
-  "freecad-assembly-viewprovider-null-crash.patch"
-  "freecad-assembly-link-shape-race-fix.patch"
-  "freecad-assembly-grounded-placement-drift.patch"
-)
-# WICHTIG: hier ALLE von den FEATURE_PATCHES beruehrten Dateien eintragen,
-# nicht nur einen Teil - sonst faellt eine vergessene Datei beim Resume nach
-# einem Abbruch faelschlich als "unerwartete Aenderung" durch Schritt 1 und muss
-# jedes Mal von Hand bereinigt werden (siehe Vorfall 2026-08-18/2026-08-23).
-FEATURE_PATCHED_FILES=(
-  "src/Gui/FileDialog.cpp"
-  "src/Gui/FileDialog.h"
-  "src/App/DocumentObject.cpp"
-  "src/App/Link.cpp"
-  "src/Mod/Assembly/App/AssemblyLink.cpp"
-  "src/Mod/Assembly/App/AssemblyLink.h"
-  "src/Mod/Assembly/App/AssemblyObject.cpp"
-  "src/Mod/Assembly/App/AssemblyObject.h"
-  "src/Mod/Assembly/JointObject.py"
-  "src/Mod/Assembly/Gui/ViewProviderAssembly.cpp"
-  "src/Mod/Assembly/UtilsAssembly.py"
-)
+# Dateien, die die obigen Patches beruehren, werden AUTOMATISCH aus jedem Patch selbst
+# ermittelt ("diff --git a/<Datei> b/..."-Zeilen) statt von Hand in einer zweiten Liste
+# gepflegt zu werden - letzteres war wiederholt Ursache vergessener Eintraege, die einen
+# Resume nach Abbruch faelschlich als "unerwartete Aenderung" durchfallen liessen (Vorfall
+# 2026-08-18/2026-08-23).
+files_touched_by_patches() {
+  local p
+  for p in "$@"; do
+    # "|| true": unter set -o pipefail wuerde ein Patch ganz ohne "diff --git a/"-Zeile
+    # (sollte nie vorkommen, aber besser defensiv) sonst die ganze Funktion vorzeitig
+    # abbrechen und die restlichen Patches der Schleife stillschweigend auslassen.
+    grep -E '^diff --git a/' "${PATCHES_DIR}/${p}" | sed -E 's#^diff --git a/(.+) b/.*#\1#' || true
+  done | sort -u
+}
+mapfile -t ENV_PATCHED_FILES < <(files_touched_by_patches "${ENV_PATCHES[@]}")
+mapfile -t FEATURE_PATCHED_FILES < <(files_touched_by_patches "${FEATURE_PATCHES[@]}")
 
 DRY_RUN=0
 if [[ "${1:-}" == "--dry-run" ]]; then

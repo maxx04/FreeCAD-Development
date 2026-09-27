@@ -1,0 +1,40 @@
+# FCProject: Liste der Patches, die update-and-rebuild-freecad.sh automatisch anwendet.
+#
+# Dies ist die EINZIGE Stelle, die geaendert werden muss, um einen Patch zu
+# aktivieren/deaktivieren - update-and-rebuild-freecad.sh liest ENV_PATCHES/FEATURE_PATCHES
+# direkt aus den beiden Abschnitten unten ([ENV] / [FEATURE]). Welche Dateien jeder Patch
+# beruehrt (fuer den Reset in Schritt 1) wird automatisch aus dem Patch selbst ermittelt
+# ("diff --git a/<Datei> b/..."-Zeilen), nicht mehr von Hand in einer zweiten Liste gepflegt -
+# das war wiederholt Ursache vergessener Eintraege (Vorfall 2026-08-18/2026-08-23, siehe
+# README.md).
+#
+# Format: eine Datei pro Zeile, Dateiname-PRAEFIX ist das Datum der letzten inhaltlichen
+# Aenderung des Patches (YYYY.MM.DD) - KEINE Anwendungsreihenfolge. Die tatsaechliche
+# Reihenfolge beim Anwenden ist: erst alle [ENV]-Patches (Zeile fuer Zeile von oben nach
+# unten), danach - nur bei gruenem Vanilla-Build - alle [FEATURE]-Patches, ebenso von oben
+# nach unten. Leerzeilen und "#"-Kommentare werden ignoriert.
+#
+# Details zu jedem einzelnen Patch: siehe README.md.
+
+[ENV]
+# Reine Build-Umgebungs-Patches - MUESSEN vor dem ersten Vanilla-Build angewendet sein
+# (Schritt 4/5), sonst schlaegt der Build unabhaengig von Feature-Fixes fehl.
+2026.09.05-freecad-cmake-disable-tests.patch
+2026.09.05-freecad-navigation-qbytearray-fix.patch
+2026.09.05-freecad-propertyeditor-qstring-fix.patch
+
+[FEATURE]
+# FCProject-eigene Bugfix-/Feature-Patches - werden ERST nach einem gruenen Vanilla-Build
+# wieder aufgelegt (Schritt 6).
+2026.08.21-freecad-filedialog-search-filter.patch
+2026.09.04-freecad-app-getplacementof-partdesign-feature.patch
+2026.09.25-freecad-assembly-grounded-joint-nested-flex.patch
+2026.09.05-freecad-assembly-quantity-signal-fix.patch
+2026.09.05-freecad-assembly-viewprovider-null-crash.patch
+2026.09.05-freecad-assembly-link-shape-race-fix.patch
+2026.09.27-freecad-assembly-grounded-placement-drift.patch
+
+# Bewusst NICHT hier eingetragen (also NICHT automatisch angewendet), siehe README.md fuer
+# den jeweiligen Grund:
+# - 2026.09.04-freecad-assembly-jointobject.patch (kumulativer Snapshot, braucht
+#   freecad-assembly-addressing-utils.patch aus dem Sandbox-Zweig, sonst nicht kompilierbar)
