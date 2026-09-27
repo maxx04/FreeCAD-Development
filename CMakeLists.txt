@@ -73,7 +73,14 @@ target_include_directories(FCProjectCore PUBLIC
     include
     ${FreeCAD_INCLUDE_DIRS}
 )
-target_compile_features(FCProjectCore PUBLIC cxx_std_20)
+# FCPROJECT-FIX (2026-09-27, Nutzer-Report "error: 'to_underlying' is not a member of 'std' -
+# only available from C++23 onwards" in Base/Bitmask.h): Upstream-Commit cab33d0a50 (22. Sep.,
+# "Base: Convert enum flags with std::to_underlying") hat Base/Bitmask.h - von so gut wie
+# jeder FreeCAD-Kopfdatei transitiv eingebunden (App/Document.h -> ... -> Bitmask.h) - auf
+# C++23 umgestellt. FCProjectCore inkludiert diese Header direkt (AssemblyPatternCreator.cpp,
+# BOMManager.cpp, Module.cpp, Utils.cpp), braucht deshalb denselben Sprachstandard wie
+# freecad-source selbst - cxx_std_20 reicht seitdem nicht mehr.
+target_compile_features(FCProjectCore PUBLIC cxx_std_23)
 
 # 5. Linken
 # Die Bibliotheken FreeCADApp und FreeCADGui sind Teil von FreeCAD_LIBRARIES
@@ -116,26 +123,28 @@ install(TARGETS FCProjectCore
 
 # Kopiere die Python-Dateien mit in das Installationsverzeichnis
 
-# Kopiert das gesamte Verzeichnis "resources" nach:
-# ~/.local/share/FreeCAD/v1-2/Mod/FCProject/resources/
-
-install(DIRECTORY resources/icons/ 
-            DESTINATION "${FC_MOD_DIR}/resources/icons"
-
-)
-
+# FCPROJECT-FIX (2026-09-27, Nutzer-Report "CMake Error ... file INSTALL cannot find
+# .../resources/icons"): resources/ wurde in Commit a31e15e ("Icons blieben leer - resources/
+# nach python/ verschoben") nach python/resources/ verschoben, package.xml/InitGui.py/
+# README.md wurden im Nachtrag-Commit b2a1fc8 angepasst - hier (install()-Regeln unten) aber
+# vergessen, deshalb bisher unbemerkt (der Fehler kam erst zum Vorschein, nachdem der
+# C++23-Bau-Fix oben das Erreichen dieses Installationsschritts ueberhaupt erst wieder
+# ermoeglichte). Die eigene "resources/icons"-Regel ist jetzt ausserdem ueberfluessig: die
+# blanket "python/"-Kopie unten (install(DIRECTORY python/ ...)) installiert
+# python/resources/icons schon automatisch mit, da resources/ jetzt EIN Unterordner von
+# python/ ist - komplett entfernt statt nur den Pfad zu flicken.
 install(DIRECTORY python/
         DESTINATION "${FC_MOD_DIR}"
         PATTERN "__pycache__" EXCLUDE
 )
 
 # Startskript nach ~/freecad/ installieren (PROGRAMS setzt automatisch +x)
-install(PROGRAMS resources/run-freecad-26.3.sh
+install(PROGRAMS python/resources/run-freecad-26.3.sh
     DESTINATION "/home/maxx/freecad"
 )
 
 # Desktop-Eintrag nach ~/.local/share/applications/ installieren
-install(FILES resources/freecaad.desktop
+install(FILES python/resources/freecaad.desktop
     DESTINATION "/home/maxx/.local/share/applications"
     RENAME "freecad-26-3.desktop"
 )
