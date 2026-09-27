@@ -23,10 +23,33 @@ fi
 source "${VENV_DIR}/bin/activate"
 export VIRTUAL_ENV="${VENV_DIR}"
 
-PYSIDE_QT="${VIRTUAL_ENV}/lib/python3.12/site-packages/PySide6/Qt"
+SITE_PACKAGES="${VIRTUAL_ENV}/lib/python3.12/site-packages"
 
-export QT_PLUGIN_PATH="${PYSIDE_QT}/plugins"
-export LD_LIBRARY_PATH="${PYSIDE_QT}/lib:/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# FCPROJECT-FIX (2026-09-25, Nutzer-Report nach Arbeitsumgebungswechsel - FreeCAD stuerzte
+# beim Start ab, Log zeigte kaskadierende "ImportError: libshiboken6.abi3.so.6.11: cannot
+# open shared object file" bzw. "libpyside6.abi3.so.6.11: ... nicht gefunden" quer durch
+# alle Mod/*-Python-Module, endend in "No viable version of PySide was found"):
+# SITE_PACKAGES/PySide6/Qt/lib (die bisherige Quelle) ist inzwischen LEER - die venv-
+# PySide6-Installation wurde offenbar auf Version 6.11 aktualisiert, OHNE eigene Qt-/
+# PySide-/shiboken-.so-Dateien zu buendeln (frueher: 6.6, mitgebuendelt). Die echten
+# .so-Dateien fuer 6.11 liegen jetzt in einem separaten, dafuer vorbereiteten Qt6.11-
+# Sysroot (vermutlich aus KDE-Neon-apt-Paketen extrahiert, siehe
+# neon-qt6-pyside6/apt-sandbox/) - NUR von dort kommen sowohl passende Qt6-Bibliotheken
+# ALS AUCH libpyside6/libshiboken6 in Version 6.11 (zur venv-Python-Seite passend). Live
+# verifiziert: "import shiboken6/PySide6/PySide6.QtCore" im venv-Python klappt erst damit.
+# Python-PAKETE (.py/.pyi) kommen weiterhin aus der venv (SITE_PACKAGES via PYTHONPATH
+# unten) - nur die .so-Bibliotheken/Plugins kommen aus diesem Sysroot.
+#
+# WICHTIG (2026-09-27, Nutzer-Report "error while loading shared libraries:
+# libpyside6.abi3.so.6.11: cannot open shared object file"): dieser Fix wurde zuerst NUR in
+# der per CMake DEPLOYTEN Kopie (~/freecad/run-freecad-26.3.sh) gemacht, nie hier in der
+# Repo-Quelle - ein ganz normaler `cmake --build --target install`-Lauf (fuer FCProjectCore,
+# nichts mit Qt zu tun) hat die deployte Kopie beim naechsten Mal wieder mit DIESER
+# (damals noch alten) Datei ueberschrieben und den Fix damit stillschweigend rueckgaengig
+# gemacht. Immer HIER (Repo-Quelle) aendern, nie nur an der deployten Kopie direkt.
+NEON_QT_LIB="/home/maxx/Dokumente/FreeCAD-Development/neon-qt6-pyside6/root/usr/lib/x86_64-linux-gnu"
+export QT_PLUGIN_PATH="${NEON_QT_LIB}/qt6/plugins"
+export LD_LIBRARY_PATH="${NEON_QT_LIB}:/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PYTHONNOUSERSITE=1
 export PYTHONPATH="${VIRTUAL_ENV}/lib/python3.12/site-packages"
 # XWayland erzwingen: Coin3D (FreeCAD 3D-Engine) nutzt GLX, nicht EGL –
