@@ -1,10 +1,6 @@
 import os
 import FreeCAD as App
-
-try:
-    from PySide2 import QtCore
-except ImportError:
-    from PySide6 import QtCore
+from PySide import QtCore
 
 
 class FCProjectDocObserver:
@@ -130,12 +126,8 @@ def _build_expected_stem(obj):
 
 
 def _ask_rename(doc, expected_stem):
-    try:
-        from PySide2 import QtWidgets
-        import FreeCADGui
-    except ImportError:
-        from PySide6 import QtWidgets
-        import FreeCADGui
+    from PySide import QtWidgets
+    import FreeCADGui
 
     if not doc.FileName:
         return

@@ -681,6 +681,72 @@ Hunk auf `{}` nachgezogen. Gleiches Vorgehen wie beim Update vom 21.09.: `git ap
 inkrementeller `Assembly`-Build erfolgreich, frischer Patch per `git diff` exportiert und gegen
 sauberen `main`-Checkout re-verifiziert.
 
+## freecad-assembly-grounded-placement-drift.patch
+
+Betrifft `src/Mod/Assembly/App/AssemblyObject.{cpp,h}` + `src/Mod/Assembly/JointObject.py`.
+Behebt [GitHub-Issue #32650](https://github.com/FreeCAD/FreeCAD/issues/32650) "Assembly:
+grounded part's Placement moves unexpectedly" - beim Aufbau einer echten Mehrteil-Baugruppe
+(ein Basisteil erden, mehrere weitere Teile per `Fixed`-Joint anbinden, `Offset1`/`Offset2`
+interaktiv anpassen) sprang das **geerdete Teil selbst** wiederholt - teils drastisch
+(hunderte mm + volle Drehung) - ohne jede Fehlermeldung. Live gemeinsam mit dem
+Datei-Besitzer untersucht (siehe `assembly-solver-sandbox`, Commits `ac39171f14`/
+`a07a1f078f`), zwei unabhaengige Ursachen gefunden, das GitHub-Issue enthaelt die volle
+Analyse:
+
+**Ursache 1 (`AssemblyObject.cpp`/`.h`):** `fixGroundedParts()` baut die Erdung als ganz
+normalen `ASMTFixedJoint`. OndselSolvers Redundanz-Elimination (generische Gauss-Elimination
+mit Voll-Pivotisierung, `GESpMatFullPvPosIC.cpp` - waehlt rein nach Betragsgroesse des
+Pivot-Elements, kennt keine Objekt-Identitaet) kann dabei auch die Erdungs-eigenen
+Gleichungen als redundant verwerfen, wenn andere `Fixed`-Joints im System nur ANNAEHERND
+(nicht exakt) konsistent sind - passiert bei echter, importierter CAD-Geometrie ohne
+absichtlich "schlechte" Daten. Danach ist die Erdung wirkungslos, das verbundene
+Teile-Cluster bleibt um die fehlenden Freiheitsgrade frei und landet nach jedem `solve()`
+woanders. Fix: `fixGroundedParts()` merkt sich zusaetzlich Objekt+Zielwert des einen
+(per Definition genau einen) explizit geerdeten Teils dieser Ebene
+(`groundedTargetObj`/`groundedTargetPlc`). Neue Methode `computeGroundCorrection()`
+vergleicht danach dessen TATSAECHLICH geloeste Placement gegen diesen Zielwert und liefert
+die Differenz als eine starre Koordinatentransformation, die `setNewPlacements()` auf ALLE
+geloesten Placements dieser Ebene anwendet - aendert keine bereits korrekt geloeste
+Relativgeometrie zwischen Teilen, biegt nur das Gesamtergebnis so zurecht, dass das geerdete
+Teil exakt an seinem vorgegebenen Platz landet. Kein persistenter Zustand noetig: jeder
+`solve()`-Durchlauf korrigiert sich selbst zu einem stabilen Fixpunkt.
+
+**Ursache 2 (`JointObject.py`, unabhaengig, vermischte urspruenglich die Diagnose):** beim
+Anlegen eines neuen Joints (zweite Referenz gewaehlt) oder beim Aendern von
+`Offset1`/`Offset2` eines bestehenden Joints pruefen `matchJCS()`/
+`ensureUnconnectedIsSecondRef()` ueber `assembly.Type == "Assembly"`, ob eine echte
+Verbindungspruefung stattfinden soll. Diese `Type`-Property wird aber NUR einmalig in
+`CommandCreateAssembly.py` beim "Neue Baugruppe"-Befehl hartkodiert gesetzt - bei jeder
+anders entstandenen Baugruppe (z.B. aeltere Dateien) bleibt sie ein leerer String, die
+Pruefung wird faelschlich `False`, und der Code faellt in einen Fallback, der blind annimmt
+"das zweite ausgewaehlte Element ist das bewegliche Teil" - unabhaengig von echter
+Verbindung/Erdung. Traf abwechselnd das neu gewaehlte UND das bereits geerdete Teil, je nach
+Klickreihenfolge - im zweiten Fall wurde dessen `Placement` direkt ueberschrieben, komplett
+ausserhalb von `AssemblyObject::solve()`. Fix: alle 6 betroffenen Stellen von
+`assembly.Type == "Assembly"`/`!= "Assembly"` auf `assembly is not None`/`assembly is None`
+umgestellt - `getAssembly(joint)` liefert laut eigener Definition ohnehin nur `None` oder ein
+echtes, bereits per `isDerivedFrom()` bestaetigtes `AssemblyObject`.
+
+**Update 2026-09-27, an Upstream angepasst (urspruenglicher Sandbox-Commit vom 13.09., main
+seitdem weit vorgelaufen):** `git apply --reject` zeigte 2 gescheiterte Hunks in
+`AssemblyObject.cpp` (Kontext um `updateRigidPlacementCache()`/`setNewPlacements()` durch
+Upstreams eigenen `isFinitePlacement()`-NaN-Schutz verschoben) + 1 in `AssemblyObject.h`
+(zweiter privater Member-Block). `JointObject.py` passte unveraendert (nur Zeilenversatz).
+Hand nachgezogen, `Assembly`-Target inkrementell erfolgreich gebaut, frischer Patch per
+`git diff` exportiert und gegen sauberen `main`-Checkout re-verifiziert.
+
+### Anwenden
+
+```bash
+cd /home/maxx/freecad/freecad-source
+git apply /home/maxx/Dokumente/FreeCAD-Development/FCProject/patches/freecad-assembly-grounded-placement-drift.patch
+cmake --build build --target Assembly -- -j$(nproc)
+cp build/Mod/Assembly/AssemblyApp.so /home/maxx/freecad/install/lib/AssemblyApp.so
+```
+
+(C++ + Python - Rebuild des `Assembly`-Targets noetig, die Python-Aenderung in
+`JointObject.py` wirkt schon durchs reine Kopieren.)
+
 ## freecad-cmake-disable-tests.patch
 
 Betrifft `CMakeLists.txt`. `ENABLE_DEVELOPER_TESTS` zieht `add_subdirectory(tests)`

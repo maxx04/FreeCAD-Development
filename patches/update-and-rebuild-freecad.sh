@@ -134,6 +134,7 @@ FEATURE_PATCHES=(
   "freecad-assembly-quantity-signal-fix.patch"
   "freecad-assembly-viewprovider-null-crash.patch"
   "freecad-assembly-link-shape-race-fix.patch"
+  "freecad-assembly-grounded-placement-drift.patch"
 )
 # WICHTIG: hier ALLE von den FEATURE_PATCHES beruehrten Dateien eintragen,
 # nicht nur einen Teil - sonst faellt eine vergessene Datei beim Resume nach
@@ -146,6 +147,8 @@ FEATURE_PATCHED_FILES=(
   "src/App/Link.cpp"
   "src/Mod/Assembly/App/AssemblyLink.cpp"
   "src/Mod/Assembly/App/AssemblyLink.h"
+  "src/Mod/Assembly/App/AssemblyObject.cpp"
+  "src/Mod/Assembly/App/AssemblyObject.h"
   "src/Mod/Assembly/JointObject.py"
   "src/Mod/Assembly/Gui/ViewProviderAssembly.cpp"
   "src/Mod/Assembly/UtilsAssembly.py"
@@ -190,6 +193,25 @@ if [[ -d "$VENV_DIR" ]]; then
   export VIRTUAL_ENV="${VENV_DIR}"
   export LD_LIBRARY_PATH="${NEON_QT_LIB}:/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   export PYTHONNOUSERSITE=1
+
+  # FCPROJECT-FIX (2026-09-26, Nutzer-Report "signalmanager.h: Datei oder Verzeichnis nicht
+  # gefunden" beim Bauen von src/Gui/PythonWrapper.cpp): reicht NICHT, das obige
+  # LD_LIBRARY_PATH zu setzen - FreeCadMacros.cmake's find_pip_package() liest Header/.so
+  # direkt AUS dem venv-Package-Verzeichnis selbst (site-packages/PySide6/include bzw.
+  # .../PySide6/*.so.*), nicht aus LD_LIBRARY_PATH. Seit der 6.6->6.11-Migration (siehe
+  # Kommentar oben) fehlen dort include/ komplett und die .so-Dateien liegen nur noch im
+  # Neon-Sysroot - deshalb hier selbstheilend per Symlink nachbilden (idempotent, ueberlebt
+  # eine venv-Neuinstallation). Ergaenzend werden veraltete CMakeCache-Eintraege (z.B. noch
+  # auf "...so.6.6" zeigend, CACHE-Variablen werden von find_pip_package() NICHT
+  # ueberschrieben, wenn schon gesetzt) unten in Schritt 5 per "-U" erzwungen neu ermittelt.
+  VENV_PYSIDE="${VENV_DIR}/lib/python3.12/site-packages/PySide6"
+  NEON_QT_INCLUDE="/home/maxx/Dokumente/FreeCAD-Development/neon-qt6-pyside6/root/usr/include/PySide6"
+  if [[ -d "$VENV_PYSIDE" && -d "$NEON_QT_INCLUDE" ]]; then
+    ln -sfn "$NEON_QT_INCLUDE" "${VENV_PYSIDE}/include"
+    for so in "${NEON_QT_LIB}"/libpyside6*.abi3.so.*; do
+      [[ -e "$so" ]] && ln -sfn "$so" "${VENV_PYSIDE}/$(basename "$so")"
+    done
+  fi
 else
   echo "WARNUNG: venv '${VENV_DIR}' nicht gefunden - CMake-Schritt 5 (PySide6/shiboken6-Check) wird vermutlich fehlschlagen."
 fi
@@ -288,7 +310,7 @@ log "Schritt 5/7: CMake reconfigure + voller Vanilla-Build (nur Umgebungs-Patche
 # bestehenden build/-Ordner (nicht build/debug oder build/release), von dem
 # FCProject (FC_BUILD_DIR) tatsaechlich abhaengt. Gleicher Preset auch fuer
 # VS Codes CMake-Tools-Panel nutzbar, damit beide auf demselben Stand bauen.
-run cmake --preset FC-dev
+run cmake --preset FC-dev -U "PySide6_*" -U "Shiboken6_*"
 run cmake --build --preset FC-dev --parallel "$JOBS"
 
 log "Vanilla-Build gruen. Schritt 6/7: eigene Feature-Patches wieder anwenden"
