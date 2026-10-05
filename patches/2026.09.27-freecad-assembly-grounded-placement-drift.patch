@@ -1,5 +1,5 @@
 diff --git a/src/Mod/Assembly/App/AssemblyObject.cpp b/src/Mod/Assembly/App/AssemblyObject.cpp
-index c40e895b9f..48e98e65d2 100644
+index 171363a633..5a2e0b385b 100644
 --- a/src/Mod/Assembly/App/AssemblyObject.cpp
 +++ b/src/Mod/Assembly/App/AssemblyObject.cpp
 @@ -1058,8 +1058,48 @@ bool isFinitePlacement(const Base::Placement& plc)
@@ -149,84 +149,77 @@ index 63bb7168d8..24440d8ab0 100644
      std::unordered_map<App::DocumentObject*, App::DocumentObject*> rigidRepByPart;
      std::unordered_map<App::DocumentObject*, std::vector<App::DocumentObject*>> rigidMembersByRep;
 diff --git a/src/Mod/Assembly/JointObject.py b/src/Mod/Assembly/JointObject.py
-index a29299b820..837c00cbf2 100644
+index e25c44893f..8e424df643 100644
 --- a/src/Mod/Assembly/JointObject.py
 +++ b/src/Mod/Assembly/JointObject.py
-@@ -144,7 +144,18 @@ JointParallelForbidden = [
+@@ -144,7 +144,21 @@ JointParallelForbidden = [
  
  
  def solveIfAllowed(assembly, storePrev=False):
 -    if assembly.Type == "Assembly" and Preferences.preferences().GetBool(
-+    # FCPROJECT-PATCH (2026-09-13, "geerdetes Teil springt beim Joint-Anlegen" - siehe
-+    # docs/ARCHITECTURE.md §2.4): "assembly.Type == 'Assembly'" ersetzt durch
-+    # "assembly is not None" - assembly kommt hier IMMER aus getAssembly(joint), das laut
-+    # eigener Definition (isDerivedFrom("Assembly::AssemblyObject")-Pruefung) nur None oder ein
-+    # echtes AssemblyObject zurueckliefert. Die Type-Property wird aber nur EINMALIG, hartkodiert
-+    # in CommandCreateAssembly.py beim "Neue Baugruppe"-Befehl gesetzt - bei jeder Baugruppe, die
-+    # nicht ueber GENAU diesen Befehl entstanden ist (z.B. aeltere Dateien), bleibt sie leer, was
-+    # diese Pruefung fuer ein voellig normales, echtes AssemblyObject faelschlich False werden
-+    # liess. Live reproduziert: fuehrte in matchJCS()/ensureUnconnectedIsSecondRef() dazu, dass
-+    # ein bereits geerdetes Teil faelschlich als "beweglich" behandelt und sein Placement direkt
-+    # ueberschrieben wurde.
++    # FCPROJECT-PATCH (2026-09-13, GitHub-Issue #32650 "grounded part's Placement moves
++    # unexpectedly"): "assembly.Type == 'Assembly'" ersetzt durch "assembly is not None" -
++    # assembly kommt hier immer aus getAssembly(joint), das laut eigener Definition
++    # (isDerivedFrom("Assembly::AssemblyObject")-Pruefung) nur None oder ein echtes
++    # AssemblyObject zurueckliefert. Die Type-Property wird aber nur EINMALIG, hartkodiert in
++    # CommandCreateAssembly.py beim "Neue Baugruppe"-Befehl gesetzt - bei jeder Baugruppe, die
++    # nicht ueber GENAU diesen Befehl entstanden ist (z.B. aeltere Dateien), bleibt sie leer,
++    # was diese Pruefung fuer ein voellig normales, echtes AssemblyObject faelschlich False
++    # werden liess. Live reproduziert: fuehrte in matchJCS()/ensureUnconnectedIsSecondRef()
++    # dazu, dass ein bereits geerdetes Teil faelschlich als "beweglich" behandelt und sein
++    # Placement direkt ueberschrieben wurde. (2026-10-05: Upstream-Commit 6e90683e59 hat an 4
++    # weiteren Stellen unten selbst "assembly is not None and" vor dieselbe Type-Pruefung
++    # gesetzt, um einen Crash bei assembly=None zu verhindern - behebt NUR den Crash, nicht den
++    # eigentlichen Bug; "and assembly.Type == 'Assembly'" dort jeweils trotzdem entfernt.)
 +    if assembly is not None and Preferences.preferences().GetBool(
          "SolveInJointCreation", True
      ):
          assembly.solve(storePrev)
-@@ -799,7 +810,8 @@ class Joint:
- 
+@@ -800,7 +814,9 @@ class Joint:
              presolved = joint.JointType in JointUsingPreSolve and self.preSolve(joint, False)
  
--            isAssembly = self.getAssembly(joint).Type == "Assembly"
-+            # FCPROJECT-PATCH (2026-09-13, siehe solveIfAllowed() oben fuer Begruendung):
-+            isAssembly = self.getAssembly(joint) is not None
+             assembly = self.getAssembly(joint)
+-            isAssembly = assembly is not None and assembly.Type == "Assembly"
++            # FCPROJECT-PATCH (2026-09-13/2026-10-05, siehe solveIfAllowed() oben fuer die
++            # volle Begruendung): "and assembly.Type == 'Assembly'" entfernt.
++            isAssembly = assembly is not None
              if isAssembly and not presolved:
-                 solveIfAllowed(self.getAssembly(joint))
+                 solveIfAllowed(assembly)
              else:
-@@ -838,7 +850,8 @@ class Joint:
+@@ -839,7 +855,7 @@ class Joint:
      def setJointConnectors(self, joint, refs):
          # current selection is a vector of strings like "Assembly.Assembly1.Assembly2.Body.Pad.Edge16" including both what selection return as obj_name and obj_sub
          assembly = self.getAssembly(joint)
--        isAssembly = assembly.Type == "Assembly"
-+        # FCPROJECT-PATCH (2026-09-13, siehe solveIfAllowed() oben fuer Begruendung):
-+        isAssembly = assembly is not None
+-        isAssembly = assembly is not None and assembly.Type == "Assembly"
++        isAssembly = assembly is not None  # FCPROJECT-PATCH: siehe solveIfAllowed() oben
  
          if len(refs) >= 1:
              joint.Reference1 = refs[0]
-@@ -928,7 +941,8 @@ class Joint:
+@@ -929,7 +945,7 @@ class Joint:
          if not part1 or not part2:
              return False
  
--        isAssembly = assembly.Type == "Assembly"
-+        # FCPROJECT-PATCH (2026-09-13, siehe solveIfAllowed() oben fuer Begruendung):
-+        isAssembly = assembly is not None
+-        isAssembly = assembly is not None and assembly.Type == "Assembly"
++        isAssembly = assembly is not None  # FCPROJECT-PATCH: siehe solveIfAllowed() oben
          if isAssembly:
              joint.Suppressed = True
              part1Connected = assembly.isPartConnected(part1)
-@@ -1001,7 +1015,8 @@ class Joint:
+@@ -1002,7 +1018,7 @@ class Joint:
          part1 = UtilsAssembly.getMovingPart(joint.Reference1)
          part2 = UtilsAssembly.getMovingPart(joint.Reference2)
  
--        isAssembly = assembly.Type == "Assembly"
-+        # FCPROJECT-PATCH (2026-09-13, siehe solveIfAllowed() oben fuer Begruendung):
-+        isAssembly = assembly is not None
+-        isAssembly = assembly is not None and assembly.Type == "Assembly"
++        isAssembly = assembly is not None  # FCPROJECT-PATCH: siehe solveIfAllowed() oben
          if isAssembly:
              part1ConnectedByJoint = assembly.isJointConnectingPartToGround(joint, "Reference1")
              part2ConnectedByJoint = assembly.isJointConnectingPartToGround(joint, "Reference2")
-@@ -1040,7 +1055,17 @@ class Joint:
+@@ -1041,7 +1057,9 @@ class Joint:
          # See https://github.com/FreeCAD/FreeCAD/issues/29355 for instance.
          # This function swap the references if possible to avoid those issues.
          assembly = self.getAssembly(joint)
 -        if not assembly or assembly.Type != "Assembly":
-+        # FCPROJECT-PATCH (2026-09-13, "geerdetes Teil springt beim Joint-Anlegen" - siehe
-+        # docs/ARCHITECTURE.md §2.4 und solveIfAllowed() oben fuer die volle Begruendung):
-+        # "assembly.Type != 'Assembly'" ersetzt durch "assembly is None" - getAssembly() liefert
-+        # laut eigener Definition nur None oder ein echtes AssemblyObject; die Type-Property wird
-+        # aber nur einmalig in CommandCreateAssembly.py gesetzt und bleibt bei jeder Baugruppe,
-+        # die nicht ueber GENAU diesen Befehl entstand, leer. Live reproduziert: liess diese
-+        # Funktion bei einer voellig normalen, echten Baugruppe silently ohne Tausch zurueckkehren
-+        # - das nachfolgende matchJCS() entschied dann anhand der (falschen) Auswahlreihenfolge
-+        # statt der echten Verbindung, welches Teil sich bewegen soll, und ueberschrieb im
-+        # schlimmsten Fall das Placement eines bereits geerdeten Teils direkt.
++        # FCPROJECT-PATCH (2026-09-13/2026-10-05, siehe solveIfAllowed() oben fuer die volle
++        # Begruendung): "assembly.Type != 'Assembly'" ersetzt durch "assembly is None".
 +        if assembly is None:
              return
  
