@@ -77,8 +77,8 @@ target_include_directories(FCProjectCore PUBLIC
 # only available from C++23 onwards" in Base/Bitmask.h): Upstream-Commit cab33d0a50 (22. Sep.,
 # "Base: Convert enum flags with std::to_underlying") hat Base/Bitmask.h - von so gut wie
 # jeder FreeCAD-Kopfdatei transitiv eingebunden (App/Document.h -> ... -> Bitmask.h) - auf
-# C++23 umgestellt. FCProjectCore inkludiert diese Header direkt (AssemblyPatternCreator.cpp,
-# BOMManager.cpp, Module.cpp, Utils.cpp), braucht deshalb denselben Sprachstandard wie
+# C++23 umgestellt. FCProjectCore inkludiert diese Header direkt (BOMManager.cpp, Module.cpp,
+# Utils.cpp), braucht deshalb denselben Sprachstandard wie
 # freecad-source selbst - cxx_std_20 reicht seitdem nicht mehr.
 target_compile_features(FCProjectCore PUBLIC cxx_std_23)
 

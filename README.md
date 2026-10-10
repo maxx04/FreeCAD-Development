@@ -19,13 +19,16 @@ mit der Workbench selbst nichts zu tun haben.
 | Projekt initialisieren | Erstellt eine strukturierte PDM-Umgebung und setzt das Arbeitsverzeichnis |
 | PDM-Teil erstellen | Erstellt eine neue, strukturierte Bauteil-Datei |
 | Stückliste (BOM) exportieren | Generiert eine Excel-konforme CSV-Stückliste aus dem aktiven Dokument |
-| Lineares/Zirkulares Assembly Pattern | Parametrisches Pattern-Feature (linear bzw. polar) eines Elements in einer Assembly |
 | Part/Assembly ersetzen | Ersetzt ein ausgewähltes Teil/Assembly durch ein Ersatzteil, ordnet Joints/Referenzen neu zu |
 | Auswählbarkeit reparieren | Macht Bauteile wieder auswählbar, die durch den Joint-Isolate-Bug hängen geblieben sind |
 | Schnitt-Sketch erstellen | Erstellt einen Sketch mit den Schnittkonturen aller sichtbaren Körper |
 | Import-Komponente | Bindet eine fertige Unterbaugruppe als normales `App::Link` ein |
 | Interface anlegen/bearbeiten | Erstellt/bearbeitet ein InterfacePlacement-Feature |
 | Part Player | Baut einen PartDesign-Body Feature für Feature in einem neuen Dokument nach |
+
+(Das frühere eigene Pattern-Werkzeug wurde 2026-10-10 entfernt - FreeCADs Assembly-Werkbench
+unterstützt seit Upstream-Commit `67103b19c9` natives `Part::LinkArray` direkt in
+Baugruppen, siehe [docs/ASSEMBLY_PATTERN.md](docs/ASSEMBLY_PATTERN.md).)
 
 ## Weiterführende Dokumentation
 

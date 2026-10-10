@@ -1,6 +1,14 @@
-# AssemblyPattern Command - Dokumentation
+# AssemblyPattern Command - Dokumentation (ENTFERNT, 2026-10-10)
 
-## Übersicht
+**⚠️ Dieses eigene Pattern-Feature wurde aus FCProject entfernt.** FreeCADs
+Assembly-Werkbench unterstützt seit Upstream-Commit `67103b19c9` ("Assembly: support
+generated arrays and suppressed link elements", 9. Sep. 2026) natives `Part::LinkArray`
+direkt in Baugruppen - Joints, Element-Sichtbarkeit etc. sind dort bereits integriert, genau
+der Grund, warum FCProject bisher ein eigenes Pattern-Feature brauchte. Einfach FreeCADs
+normales "Array erstellen" (`Part_LinkArrays`) innerhalb der Baugruppe benutzen. Diese Datei
+bleibt nur noch als historisches Protokoll stehen.
+
+## Übersicht (historisch)
 Der AssemblyPattern Command ermöglicht die Erstellung von Array-Patterns (Reihungen) von Elementen in einer FreeCAD Assembly über Joints.
 
 ## Funktionen

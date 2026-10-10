@@ -1,4 +1,13 @@
 #FCProject: InitGui Hintergrund-Scanner mit Versions-Guard
+#
+# FCPROJECT-PATCH (2026-10-10, Nutzerwunsch "Assembly hat jetzt eigene Arrays"): das eigene
+# Pattern-Feature (AssemblyPatternCommand.py/AssemblyPatternCreator.py/PatternFeatures.py)
+# entfernt - FreeCADs Assembly-Werkbench unterstuetzt seit Upstream-Commit 67103b19c9
+# ("Assembly: support generated arrays and suppressed link elements", 9. Sep.) natives
+# Part::LinkArray direkt in Baugruppen (Joints, Element-Sichtbarkeit etc. alles integriert),
+# der urspruengliche Grund fuer ein eigenes Pattern-Feature (fehlende Array-Unterstuetzung in
+# der Assembly-Werkbench) ist damit entfallen. Normales FreeCAD-"Array erstellen"
+# (Part_LinkArrays) innerhalb der Baugruppe benutzen statt dieser eigenen Werkzeuge.
 import os
 import FreeCAD as App
 import FreeCADGui
@@ -29,8 +38,6 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         import ProjectManager as ProjectManager
         import Commands as Commands
         import BOMCommand as BOMCommand
-        import AssemblyPatternCommand as AssemblyPatternCommand
-        import PatternFeatures as PatternFeatures
         import PartExchangeCommand as PartExchangeCommand
         import SelectableRepairCommand as SelectableRepairCommand
         import SectionSketchFeature as SectionSketchFeature
@@ -44,7 +51,6 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
             "FCProject_ProjectManager",
             "FCProject_CreatePart",
             "FCProject_ExportBOM",
-            "FCProject_PatternGroup",
             "FCProject_PartExchange",
             "FCProject_RepairSelectable",
             "FCProject_CreateSectionSketch",
