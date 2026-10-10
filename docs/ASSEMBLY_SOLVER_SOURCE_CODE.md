@@ -256,4 +256,4 @@ Das ist der eigentliche Kern der FreeCAD-26.3-Assembly-Mechanik – und genau da
 
 ---
 
-Datei: resources/docs/ASSEMBLY_SOLVER_SOURCE_CODE.md
+Datei: docs/ASSEMBLY_SOLVER_SOURCE_CODE.md

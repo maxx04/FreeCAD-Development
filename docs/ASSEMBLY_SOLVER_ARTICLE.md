@@ -583,4 +583,4 @@ Wenn man dieses Modell verstanden hat, wird die Assembly-Mechanik in FreeCAD deu
 
 ---
 
-Datei: resources/docs/ASSEMBLY_SOLVER_ARTICLE.md
+Datei: docs/ASSEMBLY_SOLVER_ARTICLE.md

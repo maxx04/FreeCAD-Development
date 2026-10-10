@@ -29,8 +29,8 @@ mit der Workbench selbst nichts zu tun haben.
 
 ## Weiterführende Dokumentation
 
-Siehe [`python/resources/docs/`](python/resources/docs/), u.a. [Assembly Solver Guide](python/resources/docs/ASSEMBLY_SOLVER_GUIDE.md)
-und [Assembly Pattern](python/resources/docs/ASSEMBLY_PATTERN.md).
+Siehe [`docs/`](docs/), u.a. [Assembly Solver Guide](docs/ASSEMBLY_SOLVER_GUIDE.md)
+und [Assembly Pattern](docs/ASSEMBLY_PATTERN.md).
 
 ## Hinweis zu `src/`/`include/`
 

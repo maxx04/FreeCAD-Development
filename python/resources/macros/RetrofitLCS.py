@@ -1,5 +1,5 @@
 # FCProject: Nachrüst-Macro - ergänzt bei bereits BESTEHENDEN PDM-Objekten (aus der Zeit vor dem
-# LCS-Fix vom 2026-08-17, siehe resources/docs/CONSTRAINTS.md) das dort geforderte ECHTE
+# LCS-Fix vom 2026-08-17, siehe docs/CONSTRAINTS.md) das dort geforderte ECHTE
 # App::LocalCoordinateSystem, falls es noch fehlt. Neu erstellte Objekte bekommen es bereits
 # automatisch (Utils.add_local_coordinate_system(), von allen fünf Creatorn P/A/R/G/B aufgerufen) -
 # dieses Macro schließt die Lücke rückwirkend für vorhandene .FCStd-Dateien.

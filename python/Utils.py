@@ -10,7 +10,7 @@ def floatGerman(value, default=0.0):
 def add_local_coordinate_system(container, name="LCS"):
     """Fügt dem übergebenen Container (App::Part/PartDesign::Body/Assembly::AssemblyObject) ein
     ECHTES Part::LocalCoordinateSystem hinzu, per FreeCAD-Attachment auf die XY-Ebene des
-    Containers gestützt (siehe resources/docs/CONSTRAINTS.md: jedes PDM-Objekt (P/A/R/G/B) soll
+    Containers gestützt (siehe docs/CONSTRAINTS.md: jedes PDM-Objekt (P/A/R/G/B) soll
     ein echtes LCS besitzen). Der automatische App::Origin-Container ist zwar technisch selbst
     auch ein App::LocalCoordinateSystem (App::Origin erbt in FreeCAD davon, siehe App/Origin.h),
     zählt seit dem AssemblyPatternCreator-Fix aber bewusst NICHT mehr als Pattern-/Joint-Referenz

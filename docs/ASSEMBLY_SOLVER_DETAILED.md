@@ -237,4 +237,4 @@ Durch die C++-Implementierung entfallen viele Python-Overheads, sodass große Ba
 
 ---
 
-Datei: resources/docs/ASSEMBLY_SOLVER_DETAILED.md
+Datei: docs/ASSEMBLY_SOLVER_DETAILED.md
