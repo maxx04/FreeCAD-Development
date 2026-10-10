@@ -10,7 +10,6 @@
 #include "Utils.h"
 #include <fstream>
 #include <algorithm>
-#include <Mod/Spreadsheet/App/Sheet.h>
 
 FC_LOG_LEVEL_INIT("FCProject");
 
@@ -44,8 +43,8 @@ BOMManager::BOMManager(const std::string& root_name)  {
 
 
         exportToCsv(docDir.string());
-        //HACK: Wird aktuell in Python aaufgerufen.
-        // exportToSpreadsheet(docDir.string()); 
+        // Spreadsheet-Export: entfernt, laeuft seit der Python-Umstellung nur noch in
+        // python/BOMManager.py (kein Link gegen Spreadsheet.so mehr noetig).
 
 
         auto myMap = getPropertiesAsStringMapbyGroup(obj);
@@ -184,39 +183,5 @@ auto BOMManager::exportToCsv(const std::string& targetDir) -> std::string  {
     }
     return csvPath.string();
 }
-
-auto BOMManager::exportToSpreadsheet(const std::string& /*targetDir*/) -> bool{
-
-    auto doc = App::GetApplication().getActiveDocument();
-    if (!doc) return false;
-
-    auto rows = generateStructuralBom();
-    if (rows.empty()) return false;
-
-    auto* sheet = doc->addObject<Spreadsheet::Sheet>("BOM_Struktur");
-    if (!sheet) return false;
-
-    static const std::vector<std::string> header = {
-        "Position (Struktur-Index)", "Artikel-ID", "Benennung",
-        "Werkstoff", "Rohling/Halbzeug", "Preis", "Menge"
-    };
-    static const char* columns[] = {"A", "B", "C", "D", "E", "F", "G"};
-
-    for (size_t col = 0; col < header.size(); ++col) {
-        std::string address = std::string(columns[col]) + "1";
-        sheet->setCell(address.c_str(), header[col].c_str());
-    }
-
-    for (size_t r = 0; r < rows.size(); ++r) {
-        for (size_t col = 0; col < rows[r].size() && col < std::size(columns); ++col) {
-            std::string address = std::string(columns[col]) + std::to_string(r + 2);
-            sheet->setCell(address.c_str(), rows[r][col].c_str());
-        }
-    }
-
-    doc->recompute();
-    return true;
-}
-
 
 } // namespace FCProject

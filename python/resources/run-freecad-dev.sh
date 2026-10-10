@@ -1,6 +1,21 @@
 #!/bin/bash
-# Startet die selbst gebaute FreeCAD 26.3 mit den Qt-Bibliotheken/Plugins aus dem PySide6-venv,
-# damit keine Qt-Plattform-Plugin-Fehler durch eine inkompatible System-Qt-Version auftreten.
+# Startet die selbst gebaute FreeCAD-Dev-Installation mit den Qt-Bibliotheken/Plugins aus dem
+# PySide6-venv, damit keine Qt-Plattform-Plugin-Fehler durch eine inkompatible System-Qt-Version
+# auftreten.
+#
+# FCPROJECT-FIX (2026-10-10, Nutzer-Report "warum in freecad Dev immer noch arrays drin?"):
+# Dev benutzte bisher FreeCADs Standard-Profilpfad, der an der INTERNEN, von Upstream
+# selbst gemeldeten Versionsnummer haengt (~/.local/share/FreeCAD/v26-3/, inzwischen
+# v27-1/ nach einem Upstream-Versionssprung, siehe freecad-source git log 2026-10-10) -
+# FCProjects eigenes FC_MOD_DIR zeigte aber weiter hart auf v26-3, wodurch ein normaler
+# `cmake --build --target install`-Lauf nur noch die falsche, verwaiste Kopie aktualisierte.
+# Dev lief dadurch unbemerkt mit einer veralteten FCProject-Installation (u.a. dem laengst
+# entfernten eigenen Pattern-Feature) weiter. Fix: eigenes, von der FreeCAD-internen
+# Versionsnummer komplett unabhaengiges Profil - exakt dasselbe Muster wie bei Weekly
+# (App_weekly/run-freecad-weekly.sh) und Sandbox (freecad-sandbox/run-freecad-sandbox.sh).
+ISOLATED_PROFILE="/home/maxx/freecad/freecad-dev-profile"
+mkdir -p "$ISOLATED_PROFILE"
+export FREECAD_USER_HOME="$ISOLATED_PROFILE"
 
 # Gleiches venv-Setup wie in ~/.bashrc, damit FreeCAD
 # exakt dieselbe Umgebung sieht wie ein Terminal mit aktiviertem venv.
@@ -66,19 +81,21 @@ LOG_FILE="${LOG_DIR}/freecad-compiled-${TS}.log"
 # unter-Dialog haengt auf dieser Maschine lautlos fest (Hide/Show main window in den Logs, dann
 # nichts mehr - kein Crash) - vermutlich derselbe XWayland/Mutter-Portal-Konflikt, der schon
 # QT_QPA_PLATFORM=xcb oben noetig macht. Bewusst bei JEDEM Start geprueft statt nur einmalig
-# manuell gesetzt: FreeCAD legt bei einem Versionssprung (z.B. v26-3 -> v27-x) keinen neuen
-# Profil-Ordner an, sondern nimmt den zuletzt genutzten weiter - der Trick ueberlebt das nicht
-# automatisch, ein frischer/anderer Profil-Ordner haette die Einstellung sonst wieder verloren.
-python3 - <<'PYEOF'
-import glob
+# manuell gesetzt.
+#
+# FCPROJECT-FIX (2026-10-10): sucht jetzt gezielt im isolierten Profil ($ISOLATED_PROFILE/
+# user.cfg, siehe FREECAD_USER_HOME oben) statt per Glob ueber ~/.config/FreeCAD/v*/ - der
+# alte Glob-Kommentar ("FreeCAD legt bei einem Versionssprung keinen neuen Profil-Ordner an")
+# war falsch: ein Upstream-Versionssprung (hier v26-3 -> v27-1) erzeugt sehr wohl einen neuen,
+# eigenen Ordner - genau DAS hat FCProjects FC_MOD_DIR damals ins Leere laufen lassen (siehe
+# README/PATCHES.txt-Historie). Mit FREECAD_USER_HOME liegt user.cfg ohnehin direkt im
+# isolierten Profil, nicht mehr unter ~/.config/FreeCAD/vXX/.
+python3 - <<PYEOF
 import os
 import xml.etree.ElementTree as ET
 
-candidates = sorted(
-    glob.glob(os.path.expanduser("~/.config/FreeCAD/v*/user.cfg")),
-    key=os.path.getmtime,
-    reverse=True,
-)
+candidates = [os.path.join("${ISOLATED_PROFILE}", "user.cfg")]
+candidates = [p for p in candidates if os.path.exists(p)]
 if not candidates:
     print("Kein FreeCAD-Profil (user.cfg) gefunden - ueberspringe DontUseNativeDialog-Check "
           "(wird beim naechsten Start erneut versucht, sobald FreeCAD eins angelegt hat).")
@@ -108,6 +125,6 @@ else:
         print(f"FCProject: DontUseNativeDialog=1 in {cfg_path} gesetzt (native Speichern-Dialoge umgangen).")
 PYEOF
 
-echo "Starte FreeCAD 26.3 mit Qt aus venv, Logfile: $LOG_FILE"
+echo "Starte FreeCAD Dev mit Qt aus venv, eigenes Profil: ${ISOLATED_PROFILE}, Logfile: $LOG_FILE"
 
 exec /home/maxx/freecad/install/bin/FreeCAD -l --log-file "$LOG_FILE" "$@"

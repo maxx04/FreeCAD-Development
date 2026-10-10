@@ -14,8 +14,7 @@ PYBIND11_MODULE(FCProjectCore, m) {
        .def(py::init<>())
        .def(py::init<const std::string&>(), py::arg("root_name"))
        .def("generate_structural_bom", &BOMManager::generateStructuralBom)
-       .def("export_to_csv", &BOMManager::exportToCsv)
-       .def("export_to_spreadsheet", &BOMManager::exportToSpreadsheet); 
+       .def("export_to_csv", &BOMManager::exportToCsv);
 
     py::class_<Utils_HW>(m, "Utils_HW")
        .def(py::init<>())

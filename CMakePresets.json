@@ -7,8 +7,8 @@
     },
     "configurePresets": [
         {
-            "name": "FC-26.3dev",
-            "displayName": "FreeCAD 26.3 (Python 3.12, selbst gebaut)",
+            "name": "FCProject-Dev",
+            "displayName": "FreeCAD Dev (Python 3.12, selbst gebaut, isoliertes Profil)",
             "generator": "Unix Makefiles",
             "binaryDir": "${sourceDir}/build-fc263",
             "cacheVariables": {
@@ -20,7 +20,7 @@
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "FC_SOURCE_DIR": "/home/maxx/freecad/freecad-source",
                 "FC_LIB_DIR": "/home/maxx/freecad/install/lib",
-                "FC_MOD_DIR": "/home/maxx/.local/share/FreeCAD/v26-3/Mod/FCProject"
+                "FC_MOD_DIR": "/home/maxx/freecad/freecad-dev-profile/Mod/FCProject"
             }
         }
     ]

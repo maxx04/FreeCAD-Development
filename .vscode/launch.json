@@ -2,11 +2,11 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "(gdb) Launch FreeCAD 26.3dev",
+            "name": "(gdb) Launch FreeCAD Dev",
             "type": "cppdbg",
             "request": "launch",
             "program": "/bin/bash",
-            "args": ["/home/maxx/freecad/run-freecad-26.3.sh"],
+            "args": ["/home/maxx/freecad/run-freecad-dev.sh"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "externalConsole": false,
@@ -69,8 +69,8 @@
     ],
     "compounds": [
         {
-            "name": "FreeCAD 26.3 Komplett-Debug (C++ & Python)",
-            "configurations": ["(gdb) Launch FreeCAD 26.3dev", "Python: FreeCAD Attach"]
+            "name": "FreeCAD Dev Komplett-Debug (C++ & Python)",
+            "configurations": ["(gdb) Launch FreeCAD Dev", "Python: FreeCAD Attach"]
         }
     ]
 }

@@ -87,7 +87,6 @@ target_compile_features(FCProjectCore PUBLIC cxx_std_23)
 target_link_libraries(FCProjectCore
     PRIVATE
     fmt::fmt    # Bindet die fmt-Bibliothek direkt an dein Addon
-    "${FC_LIB_DIR}/Spreadsheet.so" # Für Spreadsheet::Sheet (BOM-Export als Tabelle)
     PUBLIC
     ${FreeCAD_LIBRARIES}
     Qt6::Core Qt6::Gui Qt6::Widgets
@@ -107,9 +106,16 @@ set_target_properties(FCProjectCore PROPERTIES PREFIX "")
 # Ohne Preset-Vorgabe wird dieser Fallback benutzt.
 set(FC_MOD_DIR "" CACHE PATH "FreeCAD Mod-Verzeichnis, in das installiert wird")
 
+# FCPROJECT-FIX (2026-10-10, "warum in freecad Dev immer noch arrays drin?"): der alte
+# Fallback zeigte fest auf v26-3/Mod/FCProject - FreeCADs eigener Profilpfad haengt aber an
+# der von Upstream selbst gemeldeten Versionsnummer und ist bei jedem Versionssprung (hier
+# v26-3 -> v27-1) ploetzlich ein ANDERER Ordner, den dieser Fallback nicht mehr trifft (Dev
+# lief danach unbemerkt mit einer veralteten, verwaisten Installation weiter). Jetzt zeigt
+# der Fallback auf das eigene, von der FreeCAD-Versionsnummer komplett unabhaengige
+# Dev-Profil (FREECAD_USER_HOME in run-freecad-dev.sh), exakt wie bei Weekly/Sandbox.
 if(NOT FC_MOD_DIR)
-    set(FC_MOD_DIR "/home/maxx/.local/share/FreeCAD/v26-3/Mod/FCProject")
-    message(STATUS "Post-Build: Target für FreeCAD 26.3dev.")
+    set(FC_MOD_DIR "/home/maxx/freecad/freecad-dev-profile/Mod/FCProject")
+    message(STATUS "Post-Build: Target für FreeCAD Dev (isoliertes Profil).")
 else()
     message(STATUS "Post-Build: Target ${FC_MOD_DIR} (aus Preset).")
 endif()
@@ -139,13 +145,13 @@ install(DIRECTORY python/
 )
 
 # Startskript nach ~/freecad/ installieren (PROGRAMS setzt automatisch +x)
-install(PROGRAMS python/resources/run-freecad-26.3.sh
+install(PROGRAMS python/resources/run-freecad-dev.sh
     DESTINATION "/home/maxx/freecad"
 )
 
 # Desktop-Eintrag nach ~/.local/share/applications/ installieren
 install(FILES python/resources/freecaad.desktop
     DESTINATION "/home/maxx/.local/share/applications"
-    RENAME "freecad-26-3.desktop"
+    RENAME "freecad-dev.desktop"
 )
 

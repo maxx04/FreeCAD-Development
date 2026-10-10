@@ -22,8 +22,6 @@ public:
 
     auto exportToCsv(const std::string& targetDir) -> std::string;
 
-    auto exportToSpreadsheet(const std::string& targetDir) -> bool;
-
 };
 
 } // namespace FCProject
