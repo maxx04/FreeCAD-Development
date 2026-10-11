@@ -47,6 +47,7 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         import InterfacePlacementFeature as InterfacePlacementFeature
         import PartPlayerCommand as PartPlayerCommand
         import ResetPlacementCommand as ResetPlacementCommand
+        import RenamePartCommand as RenamePartCommand
         import DocObserver
         DocObserver.register()
 
@@ -60,7 +61,8 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
             "FCProject_ImportComponent",
             "FCProject_PositionByInterface",
             "FCProject_PartPlayer",
-            "FCProject_ResetPlacement"
+            "FCProject_ResetPlacement",
+            "FCProject_RenamePart"
         ])
 
 

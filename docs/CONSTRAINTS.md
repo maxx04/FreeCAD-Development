@@ -40,3 +40,12 @@ Geschwister-Referenz (z.B. eine neue Bohrung "Pocket") trotzdem als gültig erka
 EINMAL den direkt umschließenden `getParentGeoFeatureGroup()` (Body/Part) als Ersatz-Root -
 kein Schleifen-Aufstieg über mehrere Ebenen. Findet sich das Element auch dort nicht, gilt
 die Referenz als ungültig ("gehört nicht zu").
+1. **Beim Umbenennen eines Part/Assembly-Objekts (RenamePartCommand) wird nur INNERHALB des
+eigenen PROJ_-Ordners automatisch repariert.** `rename_pdm_object()` findet projektweite
+Referenzen zwar über denselben Mechanismus wie PartExchange
+(`PartExchangeAnalyzer.find_external_project_references()`), passt davon aber NUR die
+Kandidaten an, deren Pfad innerhalb des per `find_project_root()` ermittelten PROJ_-Ordners
+liegt. Wird dasselbe Teil auch in einem ANDEREN Projekt verwendet, bleibt diese Verlinkung
+bewusst unangetastet (siehe TODO.md, 2. Prio: dafür soll stattdessen Hilfe zur manuellen
+Reparatur angeboten werden) - ein automatischer Eingriff über Projektgrenzen hinweg ist
+ausdrücklich nicht gewünscht.
