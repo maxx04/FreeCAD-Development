@@ -12,9 +12,10 @@ class ProjectManagerCommand:
 
     def GetResources(self):
         import os
-        icon_path = os.path.join(os.path.dirname(__file__), 'resources', 'icons', 'project_manager.svg')
+        import IconUtils
+        icon_dir = os.path.join(os.path.dirname(__file__), 'resources', 'icons')
         return {
-            'Pixmap': icon_path,
+            'Pixmap': IconUtils.icon_path(icon_dir, 'project_manager.svg'),
             'MenuText': 'FCProject: Projekt initialisieren',
             'ToolTip': 'Erstellt eine strukturierte PDM-Umgebung und setzt das Arbeitsverzeichnis'
         }

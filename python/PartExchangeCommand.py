@@ -136,9 +136,10 @@ class PartExchangeCommand:
     """Befehl zum Ersetzen eines Original-Teils/Assembly durch ein Ersatzteil."""
 
     def GetResources(self):
-        icon_path = os.path.join(os.path.dirname(__file__), 'resources', 'icons', 'part_exchange.svg')
+        import IconUtils
+        icon_dir = os.path.join(os.path.dirname(__file__), 'resources', 'icons')
         return {
-            'Pixmap': icon_path,
+            'Pixmap': IconUtils.icon_path(icon_dir, 'part_exchange.svg'),
             'MenuText': 'FCProject: Part/Assembly ersetzen',
             'ToolTip': 'Ersetzt ein ausgewähltes Teil/Assembly durch ein Ersatzteil und ordnet dabei Joints/Referenzen neu zu'
         }

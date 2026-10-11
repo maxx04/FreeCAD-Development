@@ -26,6 +26,8 @@ try:
 except ImportError:
     _GUI_AVAILABLE = False
 
+import IconUtils
+
 ICON_DIR = os.path.join(os.path.dirname(__file__), 'resources', 'icons')
 
 
@@ -435,7 +437,7 @@ if _GUI_AVAILABLE:
 
         def GetResources(self):
             return {
-                'Pixmap': os.path.join(ICON_DIR, 'section_sketch.svg'),
+                'Pixmap': IconUtils.icon_path(ICON_DIR, 'section_sketch.svg'),
                 'MenuText': 'FCProject: Schnitt-Sketch erstellen',
                 'ToolTip': (
                     'Erstellt einen Sketch mit den Schnittkonturen aller sichtbaren Koerper an '

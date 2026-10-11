@@ -28,9 +28,10 @@ class SelectableRepairCommand:
 
     def GetResources(self):
         import os
-        icon_path = os.path.join(os.path.dirname(__file__), 'resources', 'icons', 'selectable_repair.svg')
+        import IconUtils
+        icon_dir = os.path.join(os.path.dirname(__file__), 'resources', 'icons')
         return {
-            'Pixmap': icon_path,
+            'Pixmap': IconUtils.icon_path(icon_dir, 'selectable_repair.svg'),
             'MenuText': 'FCProject: Auswählbarkeit reparieren',
             'ToolTip': 'Macht Bauteile, die durch den Joint-Isolate-Bug unauswählbar hängen geblieben sind, wieder auswählbar'
         }

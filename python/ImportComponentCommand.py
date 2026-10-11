@@ -30,6 +30,8 @@ try:
 except ImportError:
     _GUI_AVAILABLE = False
 
+import IconUtils
+
 ICON_DIR = os.path.join(os.path.dirname(__file__), 'resources', 'icons')
 
 MARKER_PROPERTY = "FCProjectImport"
@@ -142,7 +144,7 @@ if _GUI_AVAILABLE:
 
         def GetResources(self):
             return {
-                'Pixmap': os.path.join(ICON_DIR, 'import_component.svg'),
+                'Pixmap': IconUtils.icon_path(ICON_DIR, 'import_component.svg'),
                 'MenuText': 'FCProject: Import-Komponente',
                 'ToolTip': (
                     'Bindet eine fertige Unterbaugruppe als normales App::Link ein (statt einer '

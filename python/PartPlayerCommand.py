@@ -28,6 +28,8 @@ from PySide6 import QtCore, QtWidgets
 # Nutzer sie schliesst.
 _open_players = []
 
+import IconUtils
+
 ICON_DIR = os.path.join(os.path.dirname(__file__), 'resources', 'icons')
 
 # Objekte, die der Body beim Anlegen automatisch selbst mitbringt (eigener Ursprung/Datum-
@@ -492,7 +494,7 @@ class PartPlayerCommand:
 
     def GetResources(self):
         return {
-            'Pixmap': os.path.join(ICON_DIR, 'part_player.svg'),
+            'Pixmap': IconUtils.icon_path(ICON_DIR, 'part_player.svg'),
             'MenuText': 'FCProject: Part Player',
             'ToolTip': (
                 'Baut den ausgewaehlten PartDesign-Body Feature fuer Feature in einem neuen, '

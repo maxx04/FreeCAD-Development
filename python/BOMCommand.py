@@ -12,9 +12,10 @@ from BOMManager import BOMManager
 class BOMExportCommand:
     def GetResources(self):
         import os
-        icon_path = os.path.join(os.path.dirname(__file__), 'resources', 'icons', 'bom_export.svg')
+        import IconUtils
+        icon_dir = os.path.join(os.path.dirname(__file__), 'resources', 'icons')
         return {
-            'Pixmap': icon_path,
+            'Pixmap': IconUtils.icon_path(icon_dir, 'bom_export.svg'),
             'MenuText': 'FCProject: Stückliste (BOM) exportieren',
             'ToolTip': 'Generiert eine Excel-konforme CSV-Stückliste aus dem aktiven Dokument'
         }

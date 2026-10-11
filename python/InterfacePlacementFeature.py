@@ -30,6 +30,8 @@ try:
 except ImportError:
     _GUI_AVAILABLE = False
 
+import IconUtils
+
 ICON_DIR = os.path.join(os.path.dirname(__file__), 'resources', 'icons')
 
 LCS_TYPE = "Part::LocalCoordinateSystem"
@@ -371,7 +373,7 @@ if _GUI_AVAILABLE:
     class CommandPositionByInterface:
         def GetResources(self):
             return {
-                'Pixmap': os.path.join(ICON_DIR, 'interface_position.svg'),
+                'Pixmap': IconUtils.icon_path(ICON_DIR, 'interface_position.svg'),
                 'MenuText': 'FCProject: Interface anlegen/bearbeiten',
                 'ToolTip': (
                     'Erstellt (oder bearbeitet) ein InterfacePlacement-Feature in der '
