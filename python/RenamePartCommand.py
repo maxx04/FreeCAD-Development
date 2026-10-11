@@ -256,9 +256,10 @@ class RenamePartTaskPanel:
 
 class RenamePartCommand:
     def GetResources(self):
+        import IconUtils
+        icon_dir = os.path.join(os.path.dirname(__file__), 'resources', 'icons')
         return {
-            # Wiederverwendetes FreeCAD-Kern-Icon - kein eigenes Asset noetig.
-            'Pixmap': 'Std_Placement',
+            'Pixmap': IconUtils.icon_path(icon_dir, 'rename_part.svg'),
             'MenuText': 'FCProject: Part/Baugruppe umbenennen',
             'ToolTip': 'Ändert Bezeichnung und Article-ID eines PDM-Teils/einer Baugruppe und passt alle Verlinkungen innerhalb des Projekts an'
         }
