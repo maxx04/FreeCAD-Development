@@ -100,22 +100,27 @@ def _get_assembly_modules():
 
 
 def is_valid_exchange_candidate(element):
-    """Validiert, ob ein Element als Original oder Ersatzteil taugt."""
+    """Validiert, ob ein Element als Original oder Ersatzteil taugt - nur echte PDM-Koerper/
+    Baugruppen (oder Links darauf), keine internen Feature-/Referenzobjekte.
+
+    FCPROJECT-FIX (2026-10-13, Nutzerwunsch "in Liste brauchen wir nur Parts (Koerper) und
+    Assemblies", passend zu CONSTRAINTS.md Regel 1 "ein Datei = ein Objekt
+    Part/Assembly/Halbzeug"): vorher ein generischer hasattr(element, 'Shape')-Check, der
+    JEDES Objekt mit irgendeiner Shape durchliess - darunter interne PartDesign-
+    Zwischenfeatures (z.B. das rohe "BaseFeature" eines Bodys, siehe
+    PurchasedPartCreator._build_single_body) und Datum-/Referenzelemente (Achsen, Ebenen,
+    LCS/Origin - haben ebenfalls eine Dummy-Shape zur Visualisierung, Nutzer-Report
+    2026-08-30). Jetzt eine echte Typ-Whitelist statt "hat irgendeine Shape" - deckt beide
+    Faelle in einem Schritt ab, statt einzelne Ausnahmen nachzupflegen."""
     if element is None:
         return False
 
-    is_valid = False
-    if hasattr(element, 'Shape') and element.Shape is not None:
-        is_valid = True
-    elif element.isDerivedFrom('Assembly::AssemblyObject'):
-        is_valid = True
-    elif element.isDerivedFrom('App::Part'):
-        is_valid = True
-    elif element.isDerivedFrom('PartDesign::Body'):
-        is_valid = True
-    elif element.isDerivedFrom('App::Link'):
-        is_valid = True
-
+    is_valid = (
+        element.isDerivedFrom('PartDesign::Body')
+        or element.isDerivedFrom('App::Part')
+        or element.isDerivedFrom('Assembly::AssemblyObject')
+        or element.isDerivedFrom('App::Link')
+    )
     if not is_valid:
         return False
 
@@ -128,32 +133,6 @@ def is_valid_exchange_candidate(element):
     # Link"), der beim Solve nicht sauber durchrechnet (Nutzer-Report 2026-08-30).
     if hasattr(element, "FCProjectExchangeLink"):
         return False
-
-    # Datum-/Referenzelemente (Achsen, Ebenen, Punkte, LCS/Origin) haben ALLE eine eigene
-    # (Dummy-)Shape zur Visualisierung - der obige hasattr(element, 'Shape')-Check erwischt sie
-    # deshalb faelschlich als "echte Geometrie" mit. App::Line/Plane/Point erben von
-    # App::DatumElement, LCS und der automatische Origin-Container von
-    # App::LocalCoordinateSystem (siehe FreeCAD-Kern App/Datums.h) - explizit ausschliessen,
-    # das sind keine tauschbaren Teile (Nutzer-Report 2026-08-30: "Koordinaten/Achsen im
-    # Ersatzteil-Dropdown").
-    if element.isDerivedFrom('App::DatumElement'):
-        return False
-    if element.isDerivedFrom('App::LocalCoordinateSystem'):
-        return False
-
-    # Rohe Import-Geometrie (siehe PurchasedPartCreator._build_single_body): wird beim Anlegen
-    # eines Kaufteils als BaseFeature in den eigentlichen PartDesign::Body gehaengt und bewusst
-    # unsichtbar gehalten (import_feat.Visibility = False) - reine interne Vorstufe der
-    # tatsaechlichen Kaufteil-Geometrie, kein eigenstaendig tauschbares "Teil". Nutzer-Report
-    # 2026-10-13: Ersatzteil-Dropdown zeigte "M5x8-Screw_Geometrie" (genau so ein
-    # "..._ImportGeo"-Part::Feature) statt des richtigen PDM-Kaufteils - die 3D-Vorschau blieb
-    # leer, weil das Objekt absichtlich unsichtbar ist, nicht wegen eines Anzeigefehlers.
-    # Erkennung ueber die echte BaseFeature-Referenz (InList), nicht ueber die
-    # Namenskonvention "_ImportGeo" - robust unabhaengig vom genauen Suffix (siehe
-    # PurchasedPartCreator.py fuer den Mehrteil-Fall mit zusaetzlichem Index-Suffix).
-    for parent in element.InList:
-        if parent.isDerivedFrom('PartDesign::Body') and getattr(parent, 'BaseFeature', None) is element:
-            return False
 
     return True
 
