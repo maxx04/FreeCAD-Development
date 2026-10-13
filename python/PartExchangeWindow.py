@@ -1430,8 +1430,18 @@ class PartExchangeWindow(QtWidgets.QDialog):
     def _confirm_save_doc(self, doc):
         """Fragt nach dem Bearbeiten EINER Datei explizit, ob/wie gespeichert werden soll
         (Nutzerwunsch 2026-09-02) - statt wie bisher automatisch zu speichern, bevor es mit
-        der nächsten angehakten Datei weitergeht."""
-        box = QtWidgets.QMessageBox(self)
+        der nächsten angehakten Datei weitergeht.
+
+        FCPROJECT-FIX (2026-10-13, Nutzer-Report "Liste geoeffnet, ausserhalb geklickt,
+        komplett blockiert - nur Power-Knopf half"): `self` (dieses Fenster) ist zu diesem
+        Zeitpunkt bereits per self.hide() versteckt (siehe _on_apply(), Zeile ~1537) - als
+        Parent eines MODALEN Dialogs fuehrte das zu einem unsichtbaren, aber trotzdem Maus/
+        Tastatur global blockierenden Dialog (X11-Grab haengt fest, bis der Prozess beendet
+        wird - betraf dadurch die GANZE Sitzung, nicht nur FreeCAD). Exakt dasselbe Problem
+        wurde fuer den Nachbar-Dialog weiter unten (QFileDialog "Speichern unter") bereits
+        2026-09-07 so gefixt (siehe Kommentar dort) - hier bisher uebersehen. Fix: wie dort
+        Gui.getMainWindow() statt self als Parent."""
+        box = QtWidgets.QMessageBox(Gui.getMainWindow())
         box.setWindowTitle("FCProject: Datei speichern?")
         doc_label = os.path.basename(doc.FileName) if doc.FileName else doc.Name
         box.setText(f"'{doc_label}' wurde geändert. Jetzt speichern?")
@@ -1445,7 +1455,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
             try:
                 doc.save()
             except Exception as e:
-                QtWidgets.QMessageBox.warning(self, "FCProject", f"Speichern fehlgeschlagen: {str(e)}")
+                QtWidgets.QMessageBox.warning(Gui.getMainWindow(), "FCProject", f"Speichern fehlgeschlagen: {str(e)}")
         elif clicked is saveas_btn:
             # FCPROJECT-PATCH (2026-09-07, Nutzer-Report "Speichern unter Fenster kommt nicht
             # und blockiert FreeCAD" - lange bekannter, bisher nicht untersuchter Bug, siehe
@@ -1485,7 +1495,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
                     doc.saveAs(path)
                 except Exception as e:
                     QtWidgets.QMessageBox.warning(
-                        self, "FCProject", f"Speichern unter fehlgeschlagen: {str(e)}"
+                        Gui.getMainWindow(), "FCProject", f"Speichern unter fehlgeschlagen: {str(e)}"
                     )
         # "Nein" -> bewusst ungespeichert lassen, weiter zur nächsten Datei.
 
