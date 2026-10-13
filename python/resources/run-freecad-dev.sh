@@ -17,6 +17,18 @@ ISOLATED_PROFILE="/home/maxx/freecad/freecad-dev-profile"
 mkdir -p "$ISOLATED_PROFILE"
 export FREECAD_USER_HOME="$ISOLATED_PROFILE"
 
+# FCPROJECT-FIX (2026-10-13, Nutzer-Report "freecad dev startet nicht"/"ich sehe kein
+# fenster"): Log brach bei jedem Fehlschlag identisch direkt nach "Creating Gui::Application
+# and QApplication" ab, stdout zeigte zusaetzlich "ICE default IO error handler doing an
+# exit(), pid = ..., errno = 0" - Qt versucht beim Start eine XSMP-Session-Management-
+# Verbindung zum Desktop-Session-Manager (libSM/libICE, ueber $SESSION_MANAGER) aufzubauen;
+# schlaegt der Handshake fehl, ruft libICEs Default-Error-Handler intern exit() auf, BEVOR
+# ueberhaupt ein Fenster entsteht - kein Crash, kein Python-Traceback, nur ein stiller
+# Prozess-Exit. Live reproduziert UND den Fix verifiziert: derselbe Start lief mit
+# `env -u SESSION_MANAGER` fehlerfrei bis "Init: Entering event loop" durch. FreeCAD nutzt
+# keine XSMP-Sitzungswiederherstellung, daher hier bedenkenlos abgeschaltet.
+unset SESSION_MANAGER
+
 # Gleiches venv-Setup wie in ~/.bashrc, damit FreeCAD
 # exakt dieselbe Umgebung sieht wie ein Terminal mit aktiviertem venv.
 # Pfad relativ zum Skript-Ort ermittelt (FCProject/resources/../../.venv),
