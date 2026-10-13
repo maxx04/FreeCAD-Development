@@ -141,6 +141,20 @@ def is_valid_exchange_candidate(element):
     if element.isDerivedFrom('App::LocalCoordinateSystem'):
         return False
 
+    # Rohe Import-Geometrie (siehe PurchasedPartCreator._build_single_body): wird beim Anlegen
+    # eines Kaufteils als BaseFeature in den eigentlichen PartDesign::Body gehaengt und bewusst
+    # unsichtbar gehalten (import_feat.Visibility = False) - reine interne Vorstufe der
+    # tatsaechlichen Kaufteil-Geometrie, kein eigenstaendig tauschbares "Teil". Nutzer-Report
+    # 2026-10-13: Ersatzteil-Dropdown zeigte "M5x8-Screw_Geometrie" (genau so ein
+    # "..._ImportGeo"-Part::Feature) statt des richtigen PDM-Kaufteils - die 3D-Vorschau blieb
+    # leer, weil das Objekt absichtlich unsichtbar ist, nicht wegen eines Anzeigefehlers.
+    # Erkennung ueber die echte BaseFeature-Referenz (InList), nicht ueber die
+    # Namenskonvention "_ImportGeo" - robust unabhaengig vom genauen Suffix (siehe
+    # PurchasedPartCreator.py fuer den Mehrteil-Fall mit zusaetzlichem Index-Suffix).
+    for parent in element.InList:
+        if parent.isDerivedFrom('PartDesign::Body') and getattr(parent, 'BaseFeature', None) is element:
+            return False
+
     return True
 
 
