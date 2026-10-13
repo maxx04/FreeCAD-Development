@@ -812,6 +812,7 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._color_overrides.clear()
         self._clear_highlight_selection()
         self._restore_3d_views()
+        self._cleanup_empty_mdi_subwindows()
         super().closeEvent(event)
 
     # ----------------------------------------------------------- Mapping
@@ -1246,6 +1247,31 @@ class PartExchangeWindow(QtWidgets.QDialog):
         self._embedded_views.clear()
 
     @staticmethod
+    def _cleanup_empty_mdi_subwindows():
+        """Schliesst alle MDI-Unterfenster OHNE jeglichen Inhalt (`.widget() is None`).
+
+        FCPROJECT-FIX (2026-10-13, Nutzer-Report "2 Fenster Unbenannt offen" - live per
+        FreeCAD-Python-Konsole bestaetigt: zwei QMdiSubWindow-Eintraege mit leerem Titel UND
+        widget()==None): `mdi_area.removeSubWindow(widget)` in _embed_one() loest nur den
+        INHALT (widget) aus seinem Container - die leere QMdiSubWindow-HUELLE selbst bleibt
+        in mdi_area.subWindowList() registriert und taucht als "(Unbenannt)"-Tab auf. Dieser
+        Aufräum-Schritt existierte bereits in _on_apply() (seit 2026-09-07), lief aber NUR auf
+        dem "Übernehmen"-Pfad - schloss man das Fenster stattdessen per Abbrechen/X
+        (closeEvent()), blieben die leeren Huellen fuer immer haengen. Jetzt als gemeinsame
+        Methode, von BEIDEN Stellen aufgerufen. Kann per Definition nichts Inhaltliches
+        zerstoeren, weil in den betroffenen Unterfenstern nichts mehr drin ist."""
+        try:
+            mdi_area = Gui.getMainWindow().findChild(QtWidgets.QMdiArea)
+            if mdi_area is not None:
+                for sub_window in list(mdi_area.subWindowList()):
+                    if sub_window.widget() is None:
+                        sub_window.close()
+        except Exception as e:
+            App.Console.PrintWarning(
+                f"FCProject PartExchange: Leere Zusatzfenster konnten nicht bereinigt werden: {str(e)}\n"
+            )
+
+    @staticmethod
     def _ensure_view(doc):
         """Erstellt ein 3D-Fenster für `doc`, falls noch keins offen ist (z.B. bei
         Dokumenten, die nur als Link-Abhängigkeit nachgeladen wurden)."""
@@ -1557,20 +1583,10 @@ class PartExchangeWindow(QtWidgets.QDialog):
         # (das funktioniert - siehe dortige Begruendung), aber das dabei entstehende LEERE
         # QMdiSubWindow (dessen Inhalt per setParent(None) schon vorher entfernt wurde) blieb
         # bisher trotz mehrerer Versuche (close()/hide()/removeSubWindow()) als sichtbarer
-        # "(Unbenannt)"-Tab zurueck. Neuer, sichererer Ansatz: HIER, NACHDEM alles Uebrige schon
-        # geschlossen ist, alle MDI-Unterfenster OHNE jeglichen Inhalt (`.widget() is None`)
-        # explizit schliessen - das kann per Definition nichts Inhaltliches zerstoeren, weil dort
-        # nichts mehr drin ist.
-        try:
-            mdi_area = Gui.getMainWindow().findChild(QtWidgets.QMdiArea)
-            if mdi_area is not None:
-                for sub_window in list(mdi_area.subWindowList()):
-                    if sub_window.widget() is None:
-                        sub_window.close()
-        except Exception as e:
-            App.Console.PrintWarning(
-                f"FCProject PartExchange: Leere Zusatzfenster konnten nicht bereinigt werden: {str(e)}\n"
-            )
+        # "(Unbenannt)"-Tab zurueck - siehe _cleanup_empty_mdi_subwindows() (2026-10-13: jetzt
+        # auch von closeEvent() aufgerufen, damit das Verlassen ueber Abbrechen/X denselben
+        # Aufraeumschritt bekommt).
+        self._cleanup_empty_mdi_subwindows()
         self._clear_highlight_selection()
 
         entries_by_doc = {}
