@@ -6,6 +6,7 @@ from PySide6 import QtWidgets, QtCore
 
 from PartExchangeAnalyzer import is_valid_exchange_candidate, find_assembly
 from PartExchangeWindow import PartExchangeWindow
+from ObjectUtils import resolve_linked_object
 
 
 def _get_selected_original():
@@ -83,14 +84,30 @@ class PartExchangeSelectDialog(QtWidgets.QDialog):
         # FreeCAD zuverlaessig abstuerzen laesst. Deshalb hier ausschliessen.
         own_assembly = find_assembly(doc)
         self.candidate_combo.clear()
+        # FCPROJECT-FIX (2026-10-13, Nutzerwunsch "Siblings nicht nach Namen, nach Link
+        # erkennen und nur EIN Teil statt mehreren auflisten"): mehrere App::Link-Instanzen
+        # desselben Kaufteils (z.B. 6 Schrauben-Links in derselben Baugruppe) zeigten bisher
+        # jede einzeln in der Liste - unnoetig, da als Ersatzteil ohnehin nur EINE Quelle
+        # gemeint sein kann. Dedupliziert jetzt ueber die AUFGELOESTE Quelle
+        # (ObjectUtils.resolve_linked_object(), folgt der kompletten App::Link-Kette bis zum
+        # echten Zielobjekt) statt ueber Label/Name - robust auch bei Kopien mit
+        # unterschiedlichem Namen/Label, siehe [[feedback_fcproject_need_unified_search_utils]].
+        seen_sources = set()
         for obj in doc.Objects:
             if obj is self.original_obj or obj is own_assembly:
                 continue
-            if is_valid_exchange_candidate(obj):
-                display = obj.Label if obj.Label == obj.Name else f"{obj.Label} ({obj.Name})"
-                item = QtWidgets.QListWidgetItem(f"{display}  [{doc.Name}]")
-                item.setData(QtCore.Qt.UserRole, (doc.Name, obj.Name))
-                self.candidate_combo.addItem(item)
+            if not is_valid_exchange_candidate(obj):
+                continue
+            source = resolve_linked_object(obj)
+            source_doc = getattr(source, "Document", None)
+            source_key = (source_doc.Name, source.Name) if source_doc is not None else id(source)
+            if source_key in seen_sources:
+                continue
+            seen_sources.add(source_key)
+            display = obj.Label if obj.Label == obj.Name else f"{obj.Label} ({obj.Name})"
+            item = QtWidgets.QListWidgetItem(f"{display}  [{doc.Name}]")
+            item.setData(QtCore.Qt.UserRole, (doc.Name, obj.Name))
+            self.candidate_combo.addItem(item)
         if self.candidate_combo.count() > 0:
             self.candidate_combo.setCurrentRow(0)
 
