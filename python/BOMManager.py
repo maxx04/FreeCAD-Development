@@ -139,15 +139,27 @@ def _extract_pdm_data(obj):
         bezeichnung = _resolve_pdm_value(obj, "ProfilTyp")
     result["Bezeichnung"] = bezeichnung
 
-    material = _resolve_pdm_value(obj, "MaterialName")
-    if not material:
-        material = _resolve_pdm_value(obj, "ShapeMaterial")
-    result["Material"] = material or "-"
+    pdm_obj = _get_original_object(obj) or obj
+
+    # FCPROJECT-FIX (2026-10-27, Nutzer-Report "Baugruppen haben einen Material in Werkstoff-
+    # Spalte. BG hat eigentlich kein Werkstoff"): _resolve_pdm_value() faellt bei fehlender
+    # eigener Property auf das ERSTE Kind in der Group zurueck (siehe dortige Schleife ueber
+    # _get_objects_from_link_list(target, "Group")) - bei einer Baugruppe (App::Part-Container
+    # mit Teile-Links als Group-Mitglieder) griff das faelschlich das MaterialName/ShapeMaterial
+    # des ersten verlinkten Teils ab und zeigte es als vermeintlich eigenes Material der
+    # Baugruppe an. Baugruppen selbst haben kein Material - genau wie beim schon vorhandenen
+    # Rohling-Guard (siehe unten) ueber den TypeId-Check ausgeschlossen.
+    material = "-"
+    if pdm_obj.TypeId != "Assembly::AssemblyObject":
+        material = _resolve_pdm_value(obj, "MaterialName")
+        if not material:
+            material = _resolve_pdm_value(obj, "ShapeMaterial")
+        material = material or "-"
+    result["Material"] = material
 
     preis = _resolve_pdm_value(obj, "Preis")
     result["Preis"] = preis if preis else "0.0"
 
-    pdm_obj = _get_original_object(obj) or obj
     rohling = "-"
     if pdm_obj.TypeId != "Assembly::AssemblyObject":
         halbzeug = _resolve_pdm_value(obj, "BasiertAufHalbzeug")
