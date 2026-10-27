@@ -207,6 +207,15 @@ class PartExchangeCommand:
             return
 
         select_dialog = PartExchangeSelectDialog(original_obj, main_win)
+        # FCPROJECT-FIX (2026-10-13, Nutzer-Report "Fenster ist modal, kann nicht klicken" -
+        # live per wmctrl/xdotool bestaetigt: Fenster war korrekt positioniert und reagierte
+        # normal, bekam aber beim Oeffnen keinen Fokus/wurde nicht nach vorne geholt - GNOME/
+        # Mutter-Verhalten bei Mehrbildschirm-Setups, kein X11-Grab-Hang wie die vorherigen
+        # Faelle). show()/exec() allein verlassen sich auf den Window-Manager, der das auf
+        # diesem Setup nicht zuverlaessig macht - explizit erzwingen.
+        select_dialog.show()
+        select_dialog.raise_()
+        select_dialog.activateWindow()
         if select_dialog.exec() != QtWidgets.QDialog.Accepted:
             return
 
@@ -216,6 +225,8 @@ class PartExchangeCommand:
 
         self.window = PartExchangeWindow(original_obj, replacement_obj)
         self.window.show()
+        self.window.raise_()
+        self.window.activateWindow()
 
     @staticmethod
     def _close_active_task_dialog():
