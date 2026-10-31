@@ -108,8 +108,11 @@ ihre Tests direkt nutzbar ist.
 - **DocObserver/Verweis-Umbiegen (2026-10-27, BG22 hing):** Der FCProject-Datei-Beobachter hatte
   in BG75 die Verweise vom aktuellen Motor `CNC3018_067_A_NEMA17x33.FCStd` auf die alte Kopie
   `CNC3018_067_A_SchrittMotor NEMA17x33 III.FCStd` umgebogen. Der Motor stand danach als zwei
-  verschiedene Dokumente in BG22, der Solver hing in der Redundanzsuche. Beim Umbiegen von
-  Verweisen immer prüfen, ob die Zieldatei die von den anderen BGs benutzte ist.
+  verschiedene Dokumente in BG22, der Solver hing in der Redundanzsuche. Ursache: Das
+  Umbenennen per `saveAs` ließ die alte Datei liegen, nicht geöffnete Dateien verwiesen weiter
+  darauf. **Seit 2026-10-31 behoben:** `DocObserver.rename_document_with_references()` stellt
+  alle Verweise im Projektordner um (XLink-Einträge in `Document.xml`, absolute Pfade in
+  Tabellenzellen) und macht die alte Datei zur `.FCBak`; Test `tests/fc_docobserver_rename_check.py`.
 - **„Link broken“/„Exception opening file … [stoi]“/„Material not found“:** eine von FreeCAD
   selbst geschriebene Materialdatei im Profil (`Material/PET-Generic.FCMat`) hatte
   `UseObjectColor: ""` (leerer Bool). Wert `0` behebt es. Relevant für `MaterialUtils`/BOM.
