@@ -8,7 +8,7 @@
     "configurePresets": [
         {
             "name": "FCProject-Dev",
-            "displayName": "FreeCAD Dev (Python 3.12, selbst gebaut, isoliertes Profil)",
+            "displayName": "Build gegen die FreeCAD-Sandbox (Header/Bibliotheken)",
             "generator": "Unix Makefiles",
             "binaryDir": "${sourceDir}/build-fc263",
             "cacheVariables": {
@@ -18,9 +18,8 @@
                 "CMAKE_CURRENT_SOURCE_DIR": "${sourceDir}/FCProject",
                 "CMAKE_CXX_STANDARD": "20",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "FC_SOURCE_DIR": "/home/maxx/freecad/freecad-source",
-                "FC_LIB_DIR": "/home/maxx/freecad/install/lib",
-                "FC_MOD_DIR": "/home/maxx/freecad/freecad-dev-profile/Mod/FCProject"
+                "FC_SOURCE_DIR": "/home/maxx/freecad-sandbox/freecad-source",
+                "FC_LIB_DIR": "/home/maxx/freecad-sandbox/install/lib"
             }
         }
     ]

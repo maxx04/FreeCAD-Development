@@ -21,9 +21,11 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 
 # --- FreeCAD Include Pfade manuell (da wir keine Config-Datei haben) ---
 # --- Pfade für FreeCAD (überschreibbar per CMakePresets.json je Rechner) ---
-set(FC_SOURCE_DIR "/home/maxx/freecad/freecad-source" CACHE PATH "FreeCAD source checkout (headers)")
+# 2026-10-31: FreeCAD Dev (/home/maxx/freecad/...) ist geloescht - Header und Bibliotheken kommen
+# jetzt aus der Assembly-Solver-Sandbox.
+set(FC_SOURCE_DIR "/home/maxx/freecad-sandbox/freecad-source" CACHE PATH "FreeCAD source checkout (headers)")
 set(FC_BUILD_DIR "${FC_SOURCE_DIR}/build" CACHE PATH "FreeCAD build directory (generated headers, z.B. QtCore.h)")
-set(FC_LIB_DIR "/home/maxx/freecad/install/lib" CACHE PATH "Directory containing FreeCAD's shared libraries (Spreadsheet.so, libFreeCADApp.so, ...)")
+set(FC_LIB_DIR "/home/maxx/freecad-sandbox/install/lib" CACHE PATH "Directory containing FreeCAD's shared libraries (Spreadsheet.so, libFreeCADApp.so, ...)")
 
 include_directories(
     "${FC_BUILD_DIR}/src"                 # Generierte Header, z.B. QtCore.h (siehe SetGlobalCompilerAndLinkerSettings.cmake)
@@ -106,21 +108,19 @@ set_target_properties(FCProjectCore PROPERTIES PREFIX "")
 # Ohne Preset-Vorgabe wird dieser Fallback benutzt.
 set(FC_MOD_DIR "" CACHE PATH "FreeCAD Mod-Verzeichnis, in das installiert wird")
 
-# FCPROJECT-FIX (2026-10-10, "warum in freecad Dev immer noch arrays drin?"): der alte
-# Fallback zeigte fest auf v26-3/Mod/FCProject - FreeCADs eigener Profilpfad haengt aber an
-# der von Upstream selbst gemeldeten Versionsnummer und ist bei jedem Versionssprung (hier
-# v26-3 -> v27-1) ploetzlich ein ANDERER Ordner, den dieser Fallback nicht mehr trifft (Dev
-# lief danach unbemerkt mit einer veralteten, verwaisten Installation weiter). Jetzt zeigt
-# der Fallback auf das eigene, von der FreeCAD-Versionsnummer komplett unabhaengige
-# Dev-Profil (FREECAD_USER_HOME in run-freecad-dev.sh), exakt wie bei Weekly/Sandbox.
-if(NOT FC_MOD_DIR)
-    set(FC_MOD_DIR "/home/maxx/freecad/freecad-dev-profile/Mod/FCProject")
-    message(STATUS "Post-Build: Target für FreeCAD Dev (isoliertes Profil).")
+# 2026-10-31: kein Fallback mehr. Frueher zeigte er auf das Dev-Profil (geloescht). Sandbox und
+# Vanilla laden FCProject direkt aus diesem Repo (Sandbox: Symlink
+# freecad-sandbox-profile/Mod/FreeCAD-Development -> Repo; package.xml <subdirectory>python),
+# FCProjectCore.so wird vom Python-Code nicht mehr benutzt. Installiert wird nur noch, wenn
+# FC_MOD_DIR ausdruecklich gesetzt ist.
+if(FC_MOD_DIR)
+    message(STATUS "Post-Build: Target ${FC_MOD_DIR}.")
 else()
-    message(STATUS "Post-Build: Target ${FC_MOD_DIR} (aus Preset).")
+    message(STATUS "Post-Build: kein FC_MOD_DIR gesetzt - 'install' installiert nichts.")
 endif()
 
-# 6. Installation
+# 6. Installation (nur mit FC_MOD_DIR)
+if(FC_MOD_DIR)
 # Installiere die kompilierte Bibliothek (.so)
 install(TARGETS FCProjectCore
     LIBRARY DESTINATION "${FC_MOD_DIR}"
@@ -144,14 +144,6 @@ install(DIRECTORY python/
         PATTERN "__pycache__" EXCLUDE
 )
 
-# Startskript nach ~/freecad/ installieren (PROGRAMS setzt automatisch +x)
-install(PROGRAMS python/resources/run-freecad-dev.sh
-    DESTINATION "/home/maxx/freecad"
-)
-
-# Desktop-Eintrag nach ~/.local/share/applications/ installieren
-install(FILES python/resources/freecaad.desktop
-    DESTINATION "/home/maxx/.local/share/applications"
-    RENAME "freecad-dev.desktop"
-)
+endif()
+# Startskript und Desktop-Eintrag fuer FreeCAD Dev entfallen (Dev am 2026-10-31 geloescht).
 

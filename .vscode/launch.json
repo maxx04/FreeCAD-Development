@@ -2,11 +2,11 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "(gdb) Launch FreeCAD Dev",
+            "name": "(gdb) Launch FreeCAD Sandbox",
             "type": "cppdbg",
             "request": "launch",
             "program": "/bin/bash",
-            "args": ["/home/maxx/freecad/run-freecad-dev.sh"],
+            "args": ["/home/maxx/freecad-sandbox/run-freecad-sandbox.sh"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "externalConsole": false,
@@ -49,7 +49,7 @@
             "name": "(gdb) Attach to FreeCAD",
             "type": "cppdbg",
             "request": "attach",
-            "program": "/home/maxx/freecad/install/bin/FreeCAD",
+            "program": "/home/maxx/freecad-sandbox/install/bin/FreeCAD",
             "processId": "${command:pickProcess}",
             "MIMode": "gdb",
             "setupCommands": [
@@ -69,8 +69,8 @@
     ],
     "compounds": [
         {
-            "name": "FreeCAD Dev Komplett-Debug (C++ & Python)",
-            "configurations": ["(gdb) Launch FreeCAD Dev", "Python: FreeCAD Attach"]
+            "name": "FreeCAD Sandbox Komplett-Debug (C++ & Python)",
+            "configurations": ["(gdb) Launch FreeCAD Sandbox", "Python: FreeCAD Attach"]
         }
     ]
 }

@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# 2026-10-31: STILLGELEGT - FreeCAD Dev (/home/maxx/freecad/freecad-source, install) ist
+# geloescht. Gebaut und aktualisiert wird nur noch die Sandbox:
+#   /home/maxx/Dokumente/FreeCAD-Development/assembly-solver-sandbox/update-sandbox.sh
+echo "update-and-rebuild-freecad.sh ist stillgelegt (FreeCAD Dev geloescht, 2026-10-31)." >&2
+echo "Stattdessen: assembly-solver-sandbox/update-sandbox.sh" >&2
+exit 1
 #
 # update-and-rebuild-freecad.sh
 #

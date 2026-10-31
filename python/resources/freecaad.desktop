@@ -1,8 +1,0 @@
-[Desktop Entry]
-Name=FreeCAD Dev
-Type=Application
-Exec=/home/maxx/freecad/run-freecad-dev.sh %f
-Icon=/home/maxx/freecad/logo-freecad.svg
-Terminal=false
-Categories=Graphics;Engineering;
-MimeType=application/x-extension-fcstd;
