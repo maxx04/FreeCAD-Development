@@ -49,3 +49,14 @@ liegt. Wird dasselbe Teil auch in einem ANDEREN Projekt verwendet, bleibt diese 
 bewusst unangetastet (siehe TODO.md, 2. Prio: dafür soll stattdessen Hilfe zur manuellen
 Reparatur angeboten werden) - ein automatischer Eingriff über Projektgrenzen hinweg ist
 ausdrücklich nicht gewünscht.
+1. **Jeder direkte STEP-Datei-Import im PDM-Creator (Typ P "Halbzeug" per Datei, Typ B
+Kaufteil) folgt der GLOBALEN FreeCAD-Einstellung "Zusammensetzung von Objekten"
+(`Edit → Einstellungen → Import-Export → STEP`, intern `UseLinkGroup`) - es wird KEINE eigene
+Import-Option erzwungen.** `PartCreator.py`/`PurchasedPartCreator.py` rufen `Import.insert()`
+ohne zusätzliche Parameter auf; ob der Importer dabei eine flache Objektliste oder eine
+Link-Gruppen-/Baugruppenstruktur mit eigenen Origins erzeugt, hängt also vom jeweils aktiven
+FreeCAD-Profil ab und kann sich zwischen Maschinen/Profilen unterscheiden. Funktional
+unkritisch: `PurchasedPartCreator._collect_solids_from_refs()`/`_solids_from_shape()` holen
+sich die Volumenkörper unabhängig von der Struktur (live mit UseLinkGroup aktiv UND inaktiv
+getestet, Typ P 2026-11-06) - nur das Aussehen des (danach wieder verworfenen bzw. zu einem
+einzelnen Body reduzierten) Zwischenergebnisses variiert.

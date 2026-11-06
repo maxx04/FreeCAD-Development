@@ -38,10 +38,13 @@ class FCProjectTaskPanel:
     (getStandardButtons() liefert deshalb bewusst keine Standard-Buttons)."""
 
     # Welche Geometrie-Basis-Radios pro Komponenten-Typ angeboten werden, in dieser Reihenfolge.
-    # "Profil" (Katalog+Länge) bleibt exklusiv bei R, "Halbzeug" (auf einem R-Teil basieren)
-    # exklusiv bei P, "STEP" gibt es bei R und B - siehe Absprache mit dem User 2026-08-14.
+    # "Profil" (Katalog+Länge) bleibt exklusiv bei R, "Halbzeug" (auf einem R-Teil/einer
+    # Vorlagendatei basieren) exklusiv bei P, "STEP" gibt es bei P, R und B - siehe Absprache
+    # mit dem User 2026-08-14, STEP bei P ergänzt 2026-11-06 (Nutzerwunsch: Halbzeug soll wie
+    # beim Kaufteil B auch direkt aus einer STEP-Datei übernommen werden können, nicht nur aus
+    # einer bestehenden .FCStd-Vorlage).
     _SOURCE_OPTIONS_BY_TYPE = {
-        "P": ("halbzeug", "empty"),
+        "P": ("halbzeug", "step", "empty"),
         "R": ("profile", "step", "empty"),
         "B": ("step", "empty"),
     }
@@ -602,6 +605,12 @@ class FCProjectTaskPanel:
                     QtWidgets.QMessageBox.warning(self.form, "FCProject", "Bitte zuerst eine Halbzeug-Datei wählen.")
                     return
                 payload_properties["__LinkedRawProfilePath__"] = selected_path
+            elif self.source_step_radio.isChecked():
+                if not self._step_source_refs:
+                    QtWidgets.QMessageBox.warning(self.form, "FCProject", "Bitte zuerst ein STEP-Objekt im Baum auswählen.")
+                    return
+                payload_properties["__StepSourceRefs__"] = list(self._step_source_refs)
+                payload_properties["__CenterOrigin__"] = self.center_origin_checkbox.isChecked()
             # source_empty_radio -> kein Zusatz, leerer Body zum freien Konstruieren
 
         elif comp_type == "R":
@@ -659,7 +668,7 @@ class FCProjectTaskPanel:
                 if label is not None:
                     label.setVisible(show_profile_fields)
 
-        is_step_active = comp_type in ("R", "B") and self.source_step_radio.isChecked()
+        is_step_active = comp_type in ("P", "R", "B") and self.source_step_radio.isChecked()
         if is_step_active:
             main_win = Gui.getMainWindow()
             if main_win:
@@ -681,13 +690,20 @@ class FCProjectTaskPanel:
         self.step_object_display.setText(", ".join(obj.Label for obj in candidates))
 
     def _on_browse_profile_file(self):
-        """Öffnet den Dateidialog für die 'Halbzeug'-Geometrie-Basis eines Einzelteils (Typ P)."""
+        """Öffnet den Dateidialog für die 'Halbzeug'-Geometrie-Basis eines Einzelteils (Typ P).
+
+        FCPROJECT-FIX (2026-11-06, Nutzerwunsch "beim Halbzeugauswahl (Datei) gibt es nur
+        .FCStd Filter"): STEP-Dateien (*.step/*.stp) zusätzlich zum Filter ergänzt - direkt
+        eine rohe STEP-Datei als Halbzeug wählen, ohne sie vorher manuell importieren und im
+        Baum auswählen zu müssen (das deckt die separate "STEP"-Radio-Option bereits ab,
+        diese Datei-Variante ist der bequemere Direktweg). PartCreator.create() erkennt die
+        Dateiendung und importiert STEP-Dateien automatisch."""
         start_dir = self.proj_dir if self.proj_dir and os.path.exists(self.proj_dir) else os.getcwd()
         selected_file, _ = QtWidgets.QFileDialog.getOpenFileName(
             self.form,
             "Halbzeug für Einzelteil auswählen...",
             start_dir,
-            "FreeCAD Dokumente (*.FCStd)"
+            "Halbzeug-Dateien (*.FCStd *.step *.stp);;FreeCAD-Dokumente (*.FCStd);;STEP-Dateien (*.step *.stp)"
         )
         if selected_file:
             self.profile_path_display.setText(selected_file)
