@@ -1,6 +1,7 @@
 import os
 import FreeCAD as App
 import Utils as Utils
+from PartCreator import _open_or_reuse  # FCPROJECT-FIX 2026-11-07, siehe dort
 
 class RAWCreator:
     """Zentrale PDM-Logik für Halbzeuge (Typ R): Norm-Rohmaterial/-halbzeuge unterschiedlichster
@@ -86,13 +87,15 @@ class RAWCreator:
             core_obj.Label = f"{trailing_name} | L={length_val}mm"
 
             # TEMPLATE-SKIZZE KLONEN (Mit striktem RAM-Schutz)
-            template_doc = App.openDocument(template_file_path)
+            template_doc, opened_here = _open_or_reuse(template_file_path)
             copied_sketch = None
             for obj in template_doc.Objects:
                 if obj.isDerivedFrom("Sketcher::SketchObject"):
                     copied_sketch = new_doc.copyObject(obj, False)
                     break
-            App.closeDocument(template_doc.Name)
+            if opened_here:
+                App.closeDocument(template_doc.Name)
+                App.setActiveDocument(new_doc.Name)
 
             if not copied_sketch:
                 raise ValueError(f"Die Vorlage '{profile_template}' enthält keine gültige Skizze!")

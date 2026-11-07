@@ -49,6 +49,21 @@ class FCProjectTaskPanel:
         "B": ("step", "empty"),
     }
 
+    # FCPROJECT-FIX (2026-11-07, SIGSEGV in ControlPy::closeDialog -> Gui::Document::getDocument):
+    # nur den NAMEN des Dokuments merken und bei Bedarf neu aufloesen. Ein gemerktes
+    # Gui.Document-Objekt zeigt nach dem Schliessen des Dokuments ins Leere (die Halbzeug-Vorlage
+    # war das angehaengte Dokument und wurde von PartCreator geschlossen); jeder spaetere
+    # closeDialog() damit stuerzte ab. None = Dokument ist weg (der Dialog damit auch).
+    @property
+    def _attached_doc(self):
+        name = getattr(self, "_attached_doc_name", None)
+        if not name or name not in App.listDocuments():
+            return None
+        try:
+            return Gui.getDocument(name)
+        except Exception:
+            return None
+
     def __init__(self):
         # Dokument, an das dieses Panel im Aufgabenbereich angehängt wird (Commands.py hängt es
         # gleich danach per Gui.Control.showDialog() genau hier an). WICHTIG: alle
@@ -63,7 +78,7 @@ class FCProjectTaskPanel:
         # Dokument-Zeiger exakt), statt unser Panel wirklich zu entfernen. Sichtbare Folge: das
         # Panel blieb nach dem Erstellen eines Kaufteils beim nächsten Werkbench-Wechsel (z.B. in
         # die Assembly-Werkbench für "Teil hinzufügen") weiterhin im Aufgabenbereich hängen.
-        self._attached_doc = Gui.ActiveDocument
+        self._attached_doc_name = Gui.ActiveDocument.Document.Name if Gui.ActiveDocument else None
 
         self.form = QtWidgets.QWidget()
         self.form.setWindowTitle("FCProject: PDM-Creator")
@@ -261,8 +276,9 @@ class FCProjectTaskPanel:
         except Exception as e:
             App.Console.PrintWarning(f"FCProject: Schließen-Button konnte Panel nicht schließen: {str(e)}\n")
         try:
-            if Gui.Control.activeDialog(self._attached_doc):
-                Gui.Control.closeDialog(self._attached_doc)
+            attached = self._attached_doc
+            if attached is not None and Gui.Control.activeDialog(attached):
+                Gui.Control.closeDialog(attached)
         except Exception as e:
             App.Console.PrintWarning(f"FCProject: Panel am ursprünglichen Dokument konnte nicht geschlossen werden: {str(e)}\n")
 
@@ -454,7 +470,8 @@ class FCProjectTaskPanel:
             # FCProjectWorkbench.Deactivated() verlassen - der Slot muss schon vor
             # activateWorkbench() frei sein, sonst bleibt Std_SetMaterial weiter inaktiv).
             self.reject()
-            Gui.Control.closeDialog(self._attached_doc)
+            if self._attached_doc is not None:
+                Gui.Control.closeDialog(self._attached_doc)
 
             Gui.activateWorkbench("MaterialWorkbench")
             Gui.runCommand('Std_SetMaterial', 0)
@@ -788,7 +805,8 @@ def close_panel_on_foreign_document(doc):
 
     panel.reject()
     try:
-        Gui.Control.closeDialog(panel._attached_doc)
+        if panel._attached_doc is not None:
+            Gui.Control.closeDialog(panel._attached_doc)
     except Exception as e:
         App.Console.PrintWarning(f"FCProject: Panel beim Dokument-Wechsel nicht schließbar: {str(e)}\n")
 

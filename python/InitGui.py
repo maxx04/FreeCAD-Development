@@ -148,7 +148,8 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
                 # activeDialog/activeTaskDialog/closeDialog) - eigenes Aufräumen deshalb selbst
                 # anstoßen, dann erst das Panel tatsächlich entfernen.
                 panel.reject()
-                FreeCADGui.Control.closeDialog(panel._attached_doc)
+                if panel._attached_doc is not None:  # None: Dokument samt Dialog schon weg
+                    FreeCADGui.Control.closeDialog(panel._attached_doc)
         except Exception as e:
             App.Console.PrintWarning(f"FCProject: Panel konnte beim Werkbench-Wechsel nicht geschlossen werden: {str(e)}\n")
 

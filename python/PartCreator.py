@@ -4,6 +4,20 @@ import Utils as Utils
 import FreeCAD as App
 
 
+def _open_or_reuse(path):
+    """FCPROJECT-FIX (2026-11-07): Vorlage oeffnen - oder das bereits offene Dokument dieser Datei
+    nehmen. Gibt (doc, selbst_geoeffnet) zurueck; schliessen darf der Aufrufer nur, was er selbst
+    geoeffnet hat. Vorher wurde eine schon offene Halbzeug-Vorlage (z.B. ein Teil der gerade
+    bearbeiteten Baugruppe, ggf. mit ungespeicherten Aenderungen) nach dem Klonen einfach
+    geschlossen - samt daran haengendem FCProject-Aufgabenfenster (danach "QLineEdit already
+    deleted" und SIGSEGV beim naechsten Werkbankwechsel)."""
+    target = os.path.abspath(path)
+    for name, doc in App.listDocuments().items():
+        if doc.FileName and os.path.abspath(doc.FileName) == target:
+            return doc, False
+    return App.openDocument(path), True
+
+
 class PartCreator:
     """PDM-Logik für Einzelteile (Typ P). Unterstützt Klonierung und leere Standard-Erstellung."""
 
@@ -38,7 +52,7 @@ class PartCreator:
         # 2. STRATEGIE-WEICHE: Nur klonen, wenn wir WIRKLICH einen gültigen .FCStd-Pfad vom Dateidialog haben!
         if is_fcstd_profile:
             try:
-                template_doc = App.openDocument(profile_path)
+                template_doc, opened_here = _open_or_reuse(profile_path)
                 source_body = None
 
                 for obj in template_doc.Objects:
@@ -56,7 +70,9 @@ class PartCreator:
 
                     App.Console.PrintMessage(f"FCProject: Klon für Halbzeug erfolgreich durchgeführt.\n")
 
-                App.closeDocument(template_doc.Name)
+                if opened_here:
+                    App.closeDocument(template_doc.Name)
+                    App.setActiveDocument(new_doc.Name)
             except Exception as e:
                 App.Console.PrintWarning(f"FCProject: Fehler beim Profil-Klonen: {str(e)}\n")
 

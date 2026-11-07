@@ -164,9 +164,24 @@ class RenamePartTaskPanel:
     gleiches Protokoll wie FCProjectTaskPanel (TaskPanel.py): eigene Buttons statt Standard-
     OK/Abbrechen, _attached_doc fuer korrektes Schliessen beim Werkbench-/Dokument-Wechsel."""
 
+    # FCPROJECT-FIX (2026-11-07, SIGSEGV in ControlPy::closeDialog -> Gui::Document::getDocument):
+    # nur den NAMEN des Dokuments merken und bei Bedarf neu aufloesen. Ein gemerktes
+    # Gui.Document-Objekt zeigt nach dem Schliessen des Dokuments ins Leere (die Halbzeug-Vorlage
+    # war das angehaengte Dokument und wurde von PartCreator geschlossen); jeder spaetere
+    # closeDialog() damit stuerzte ab. None = Dokument ist weg (der Dialog damit auch).
+    @property
+    def _attached_doc(self):
+        name = getattr(self, "_attached_doc_name", None)
+        if not name or name not in App.listDocuments():
+            return None
+        try:
+            return Gui.getDocument(name)
+        except Exception:
+            return None
+
     def __init__(self, root_obj):
         self.root_obj = root_obj
-        self._attached_doc = Gui.ActiveDocument
+        self._attached_doc_name = Gui.ActiveDocument.Document.Name if Gui.ActiveDocument else None
 
         self.form = QtWidgets.QWidget()
         self.form.setWindowTitle("FCProject: Part/Baugruppe umbenennen")
@@ -298,7 +313,8 @@ class RenamePartCommand:
         if panel is not None:
             try:
                 panel.reject()
-                Gui.Control.closeDialog(panel._attached_doc)
+                if panel._attached_doc is not None:
+                    Gui.Control.closeDialog(panel._attached_doc)
             except Exception as e:
                 App.Console.PrintWarning(f"FCProject: Vorhandenes Umbenennen-Panel konnte nicht geschlossen werden: {str(e)}\n")
 

@@ -207,7 +207,10 @@ class _ReplaceInstanceTaskPanel:
     selbst auf die zuletzt hinzugefuegte Seite setzen."""
 
     def __init__(self, entry_label, attached_doc, on_decision):
-        self._attached_doc = attached_doc
+        # FCPROJECT-FIX (2026-11-07): Namen statt Gui.Document-Zeiger merken, siehe
+        # FCProjectTaskPanel._attached_doc (TaskPanel.py) - Zeiger auf ein inzwischen
+        # geschlossenes Dokument liess closeDialog() abstuerzen.
+        self._attached_doc_name = attached_doc.Document.Name if attached_doc is not None else None
         self._on_decision = on_decision
         self.form = QtWidgets.QWidget()
         self.form.setWindowTitle("FCProject: Vorkommen ersetzen?")
@@ -235,7 +238,9 @@ class _ReplaceInstanceTaskPanel:
         # (ControlSingleton::docOrDefault()), das kann sich zwischen mehreren Dateien laengst
         # geaendert haben (siehe Begruendung in TaskPanel.py/FCProjectTaskPanel._attached_doc).
         try:
-            Gui.Control.closeDialog(self._attached_doc)
+            name = self._attached_doc_name
+            if name and name in App.listDocuments():
+                Gui.Control.closeDialog(Gui.getDocument(name))
         except Exception:
             pass
         self._on_decision(decision)

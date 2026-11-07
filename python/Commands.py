@@ -56,7 +56,8 @@ class PartCreatorCommand:
                 # Erst reject() selbst aufrufen (stoppt z.B. den STEP-Beobachtungs-Timer) - Gui.Control
                 # kennt in Python kein reject(), closeDialog() allein würde das Aufräumen überspringen.
                 panel.reject()
-                Gui.Control.closeDialog(panel._attached_doc)
+                if panel._attached_doc is not None:  # None: Dokument samt Dialog schon weg
+                    Gui.Control.closeDialog(panel._attached_doc)
         except Exception as e:
             App.Console.PrintWarning(f"FCProject: Vorhandenes Task-Panel konnte nicht geschlossen werden: {str(e)}\n")
 
