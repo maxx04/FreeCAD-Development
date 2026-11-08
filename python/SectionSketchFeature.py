@@ -18,6 +18,7 @@ import os
 
 import FreeCAD as App
 import Part
+import Sketcher
 
 try:
     import FreeCADGui as Gui
@@ -29,6 +30,37 @@ except ImportError:
 import IconUtils
 
 ICON_DIR = os.path.join(os.path.dirname(__file__), 'resources', 'icons')
+
+# FCPROJECT-FEATURE (2026-11-08, Nutzerwunsch "in Baugruppe verschiedene Teile zuerst durch
+# Farben zu unterscheiden"): FreeCADs Sketcher kennt KEINE Farbe pro einzelnem Geometrie-
+# Element innerhalb eines Sketches (geprueft: weder SketchObject.h noch ViewProviderSketch.cpp
+# bieten eine per-Element-Farb-API) - Farbe ist nur eine Eigenschaft des GANZEN Sketch-Objekts
+# (ViewObject.LineColor, geerbt von Gui::ViewProviderGeometryObject). Deshalb erzeugt execute()
+# jetzt einen EIGENEN Sketch PRO geschnittenem Quell-Teil statt einen gemeinsamen fuer alle -
+# jeder bekommt automatisch eine eigene Farbe aus dieser festen Palette. Farbwahl ueber einen
+# Hash des (nie veraendernden) internen .Name des Quell-Teils statt Listen-Reihenfolge, damit
+# dieselbe Farbe bei jedem Recompute beim selben Teil bleibt, auch wenn sich z.B. durch
+# Sichtbarkeits-Toggles die Reihenfolge der gefundenen Koerper aendert.
+_PART_COLOR_PALETTE = [
+    (0.85, 0.20, 0.20),  # Rot
+    (0.20, 0.45, 0.85),  # Blau
+    (0.20, 0.75, 0.30),  # Gruen
+    (0.95, 0.60, 0.10),  # Orange
+    (0.60, 0.25, 0.80),  # Violett
+    (0.10, 0.70, 0.70),  # Tuerkis
+    (0.90, 0.85, 0.15),  # Gelb
+    (0.85, 0.35, 0.60),  # Pink
+    (0.45, 0.45, 0.45),  # Grau
+    (0.55, 0.35, 0.15),  # Braun
+]
+
+
+def _color_for_part(part_name):
+    """Deterministische, stabile Farbzuordnung per Hash des internen .Name (NIE .Label, siehe
+    [[feedback_fcproject_never_use_label_for_addressing]]) - dieselbe Farbe fuer dasselbe Teil
+    bei jedem Recompute, unabhaengig von der Fundreihenfolge."""
+    index = hash(part_name) % len(_PART_COLOR_PALETTE)
+    return _PART_COLOR_PALETTE[index]
 
 
 def _find_assembly(doc):
@@ -67,25 +99,76 @@ def _find_top_level_link_for(doc, target_obj):
     return None
 
 
+def _ancestor_placement(obj):
+    """Liefert NUR den Beitrag der umschliessenden GeoFeatureGroups (z.B. Assembly::
+    AssemblyObject) zur globalen Platzierung von obj - OHNE obj's eigene Placement (die steckt
+    schon in obj.Shape/obj.Placement selbst drin).
+
+    FCPROJECT-FIX (2026-11-08, Nutzer-Report "einzelne Schnitte liegen in anderer Ebene" +
+    isoliert reproduziert mit absichtlich nicht-trivialer Baugruppen-Placement): obj.Shape UND
+    obj.Placement sind NUR lokal zur direkt umschliessenden GeoFeatureGroup - die Placement
+    der Baugruppe SELBST (z.B. weil sie Teil einer groesseren Baugruppe ist) wird darin NICHT
+    automatisch mitgerechnet. obj.getGlobalPlacement() liefert dagegen die volle, durch ALLE
+    Eltern-Gruppen hindurch zusammengesetzte Placement (global = ancestor * obj.Placement) -
+    durch Abziehen von obj.Placement bleibt genau der Eltern-Anteil uebrig, den man auf einen
+    bereits obj-lokalen Punkt/Vektor (wie er aus obj.Shape.getElement() kommt) noch zusaetzlich
+    anwenden muss, um die ECHTE globale/zusammengebaute Position zu bekommen.
+
+    FCPROJECT-FIX (2026-11-08, Live-Fehler "App.DocumentObject object has no attribute
+    'getGlobalPlacement'"): getGlobalPlacement() existiert nur auf App::GeoFeature (siehe
+    src/App/GeoFeaturePyImp.cpp) - App::Link (das in diesem Projekt staendig als "Mirror-Link"
+    fuer Teile aus eigenen Unter-Dokumenten verwendet wird, siehe _find_top_level_link_for())
+    erbt NICHT davon und hat die Methode schlicht nicht. Fuer Links ist das aber kein Problem:
+    ihre .Shape/.Placement sind (anders als bei einer reinen GeoFeatureGroup-Verschachtelung
+    OHNE Link) bereits vollstaendig ueber den Link hinweg zusammengesetzt - hier also KEINE
+    zusaetzliche Korrektur noetig (Identity zurueckgeben)."""
+    if not hasattr(obj, "getGlobalPlacement"):
+        return App.Placement()
+    try:
+        return obj.getGlobalPlacement() * obj.Placement.inverse()
+    except Exception:
+        # Defensiv: lieber keine Korrektur (altes, bisher funktionierendes Verhalten) als
+        # execute() wegen eines einzelnen unerwarteten Objekttyps komplett abzubrechen.
+        return App.Placement()
+
+
 def _resolve_plane(ref_obj, subname):
     """Liefert (Basispunkt, Normalenvektor) der Schnittebene, frisch aus der AKTUELLEN
     Position von ref_obj berechnet - das ist der Grund, warum das bei jeder Baugruppen-
     Bewegung mitzieht, statt einmalig eingefroren zu sein."""
+    ancestor = _ancestor_placement(ref_obj)
     if subname and subname.startswith("Face"):
         if not hasattr(ref_obj, "Shape") or ref_obj.Shape is None or ref_obj.Shape.isNull():
             raise ValueError(f"'{ref_obj.Label}' hat keine gueltige Form mehr.")
         face = ref_obj.Shape.getElement(subname)
         if not isinstance(face.Surface, Part.Plane):
             raise ValueError(f"Flaeche '{subname}' von '{ref_obj.Label}' ist nicht eben.")
-        base = face.CenterOfMass
-        normal = face.Surface.Axis
+        base = ancestor.multVec(face.CenterOfMass)
+        normal = ancestor.Rotation.multVec(face.Surface.Axis)
         if face.Orientation == "Reversed":
             normal = normal.negative()
         return base, normal.normalize()
 
-    if ref_obj.TypeId in ("PartDesign::Plane", "Part::Plane", "App::Plane"):
-        base = ref_obj.Placement.Base
-        normal = ref_obj.Placement.Rotation.multVec(App.Vector(0, 0, 1))
+    # FCPROJECT-FIX (2026-11-08, bekannter offener Bug seit 2026-08-22, siehe
+    # [[project_fcproject_sectionsketch_open_issues]]): "selbsterstellte Bezugsebenen
+    # funktionieren nicht als ReferencePlane" - Root Cause gefunden per freecad-source-
+    # Recherche: der generische "Bezugsebene erstellen"-Befehl AUSSERHALB von PartDesign
+    # (Part_DatumPlane, src/Mod/Part/Gui/Command.cpp) legt ein Part::DatumPlane an - genau
+    # der TypeId, den eine Baugruppe (kein PartDesign-Body-Kontext) normalerweise nutzt.
+    # Der bisherige exakte TypeId-String-Vergleich kannte nur "PartDesign::Plane"/
+    # "Part::Plane"/"App::Plane", NICHT "Part::DatumPlane" - fiel also bisher immer durch,
+    # obwohl Part::DatumPlane (Datums.h) direkt von App::Plane erbt. Jetzt per
+    # isDerivedFrom() statt exaktem String - robust auch gegen diese (und kuenftige)
+    # Unterklassen. "Part::Plane" (reine Flaechen-Primitive, andere Vererbung) bleibt
+    # separat per exaktem TypeId, PartDesign::Plane analog per isDerivedFrom (erbt von
+    # Part::Datum, NICHT von App::Plane - eigener Zweig).
+    if (
+        ref_obj.TypeId == "Part::Plane"
+        or ref_obj.isDerivedFrom("App::Plane")
+        or ref_obj.isDerivedFrom("PartDesign::Plane")
+    ):
+        base = ancestor.multVec(ref_obj.Placement.Base)
+        normal = ancestor.Rotation.multVec(ref_obj.Placement.Rotation.multVec(App.Vector(0, 0, 1)))
         return base, normal.normalize()
 
     raise ValueError(
@@ -96,14 +179,69 @@ def _resolve_plane(ref_obj, subname):
 def _make_half_space_box(base, normal, size):
     """Grosser Kasten, dessen eine Seite genau auf der Ebene liegt und der von dort in
     Richtung der Normale wegragt - identische Technik wie in SectionCutSolidsOnly.FCMacro
-    (dort live getestet und verifiziert)."""
+    (dort live getestet und verifiziert). Wird fuer JEDE einzelne Wand verwendet - beim
+    flachen Fall genau einmal, beim gestuften Schnitt einmal PRO Stufen-Segment (siehe
+    _wall_segments_from_step_sketch())."""
     box = Part.makeBox(size, size, size, App.Vector(-size / 2, -size / 2, 0))
     box.Placement = App.Placement(base, App.Rotation(App.Vector(0, 0, 1), normal))
     return box
 
 
+def _wall_segments_from_step_sketch(local_wire):
+    """Liest aus einem offenen, bereits ins lokale Ebenen-Koordinatensystem transformierten
+    Linienzug (nur Geradensegmente - siehe Pruefung unten) die einzelnen Wand-SEGMENTE aus -
+    jedes Segment wird spaeter wie ein GANZ NORMALER flacher Schnitt behandelt (eigene,
+    lokale (Basispunkt, Normale), exakt die gleiche Technik wie beim einfachen Fall, siehe
+    _make_half_space_box()/_section_faces_of_solid()), nur mehrfach hintereinander statt
+    einmal - ein gestufter Schnitt ist technisch nichts anderes als mehrere unabhaengige
+    flache Schnitte, einer pro Stufen-Segment.
+
+    FCPROJECT-FIX (2026-11-08, live gefunden): ein erster Versuch baute stattdessen EINEN
+    gemeinsamen, gestuften Werkzeug-Solid (Linienzug an den offenen Enden verlaengert, zu
+    einem 2D-Profil geschlossen, senkrecht zur Ebene extrudiert) und versuchte, die daraus
+    entstehenden Schnittflaechen anschliessend wieder in die EINE gemeinsame 2D-Ebenen-
+    Projektion der Referenzebene zu packen. Das war konzeptionell falsch: die Schnittflaeche
+    einer gestuften Wand liegt NICHT in der Referenzebene selbst, sondern in IHRER EIGENEN,
+    seitlich versetzten Wandebene - die (lokaleX, lokaleY)-Projektion der Referenzebene
+    kollabierte deren eigentliche Ausdehnung (die in Wahrheit entlang der Wandrichtung UND
+    der Tiefe/lokalen Z verlaeuft) auf quasi einen Punkt ("Both points are equal" bzw. nur
+    2 statt 4 Kanten pro Rechteck). Jedes Wand-Segment braucht deshalb seine EIGENE lokale
+    Projektion (siehe execute()), nicht die der Referenzebene.
+
+    Gibt eine Liste aus (lokaler Basispunkt, lokale Normale) zurueck, EIN Eintrag pro
+    Segment, in Linienzug-Reihenfolge."""
+    for edge in local_wire.Edges:
+        if not isinstance(edge.Curve, (Part.Line, Part.LineSegment)):
+            raise ValueError(
+                "Gestufter Schnitt: der Linienzug im StepSketch enthaelt ein Element, das "
+                "keine gerade Linie ist (z.B. Bogen/Spline) - aktuell nur Geradensegmente "
+                "unterstuetzt."
+            )
+
+    ordered_points = [v.Point for v in local_wire.OrderedVertexes]
+    if len(ordered_points) < 2:
+        raise ValueError("Gestufter Schnitt: der Linienzug im StepSketch braucht mindestens 2 Punkte.")
+
+    segments = []
+    for i in range(len(ordered_points) - 1):
+        p1, p2 = ordered_points[i], ordered_points[i + 1]
+        seg_dir = p2 - p1
+        if seg_dir.Length < 1e-9:
+            continue
+        seg_dir.normalize()
+        # Senkrecht zum Segment, innerhalb der lokalen XY-Ebene (90 Grad gedreht) - das
+        # Vorzeichen spielt fuer den Halbraum-Schnitt keine Rolle (Invert deckt beide
+        # Richtungen gleichermassen ab, genau wie beim flachen Fall).
+        wall_normal = App.Vector(-seg_dir.y, seg_dir.x, 0)
+        segments.append((p1, wall_normal))
+
+    if not segments:
+        raise ValueError("Gestufter Schnitt: der Linienzug im StepSketch ergibt keine gueltigen Segmente.")
+    return segments
+
+
 def _section_faces_of_solid(solid, base, normal, size):
-    """Schneidet EINEN Solid an der Ebene und gibt die dabei neu entstandene(n)
+    """Schneidet EINEN Solid an der Ebene (base, normal) und gibt die dabei neu entstandene(n)
     Schnittflaeche(n) zurueck (die Flaechen, deren ebene Traegerflaeche exakt mit der
     Schnittebene zusammenfaellt) - das ist robuster als ein direktes Solid/Face-'common()',
     weil 'cut()' schon in SectionCutSolidsOnly.FCMacro live gegen die echte Baugruppe
@@ -114,7 +252,10 @@ def _section_faces_of_solid(solid, base, normal, size):
     Groesse reicht bei einer grossen Baugruppe nicht bis zu weit von 'base' entfernten
     Teilen (z.B. Motoren/Schienen am anderen Ende der Baugruppe), die Box trifft solche
     Koerper dann unabhaengig von der Normalenrichtung gar nicht erst - genau das hat
-    beim ersten Live-Test ALLE 68 Koerper faelschlich als 'no-intersection' gemeldet."""
+    beim ersten Live-Test ALLE 68 Koerper faelschlich als 'no-intersection' gemeldet.
+
+    Wird jetzt sowohl fuer den flachen ALS AUCH (einmal PRO WAND-SEGMENT) fuer den
+    gestuften Schnitt verwendet - siehe _wall_segments_from_step_sketch()."""
     tool = _make_half_space_box(base, normal, size)
 
     try:
@@ -151,6 +292,19 @@ def _edge_to_sketch_geometry(edge):
     p1 = edge.Vertexes[0].Point
     p2 = edge.Vertexes[-1].Point
 
+    # FCPROJECT-FIX (2026-11-08, live beim ersten Test des gestuften Schnitts aufgetreten):
+    # an einer Stufen-Kante (Uebergang zwischen zwei Wandebenen) kann ein winziges, praktisch
+    # entartetes Kantenstueck entstehen - Part.LineSegment() lehnt das mit "Both points are
+    # equal" hart ab. Betrifft NUR den gestuften Fall (beim flachen Schnitt nie beobachtet,
+    # da dort alle Kanten auf einer einzigen Ebene liegen). WICHTIG: der Vergleich muss auf
+    # den 2D-PROJIZIERTEN Punkten laufen (genau die, die unten tatsaechlich in die
+    # LineSegment-Konstruktion eingehen) - der volle 3D-Abstand allein reichte nicht: bei
+    # Restrauschen in Z (aus der Mehrfach-Ebenen-Transformation des gestuften Schnitts)
+    # konnten X/Y bereits identisch sein, obwohl der 3D-Abstand wegen der Z-Differenz noch
+    # > Toleranz war - der erste Fix-Versuch mit (p1-p2).Length griff deshalb live NICHT.
+    if math.hypot(p1.x - p2.x, p1.y - p2.y) < 1e-7:
+        return []
+
     if isinstance(curve, (Part.Line, Part.LineSegment)):
         return [Part.LineSegment(App.Vector(p1.x, p1.y, 0), App.Vector(p2.x, p2.y, 0))]
 
@@ -158,8 +312,27 @@ def _edge_to_sketch_geometry(edge):
         center = App.Vector(curve.Center.x, curve.Center.y, 0)
         if edge.Closed:
             return [Part.Circle(center, App.Vector(0, 0, 1), curve.Radius)]
-        circle = Part.Circle(center, App.Vector(0, 0, 1), curve.Radius)
-        return [Part.ArcOfCircle(circle, curve.parameter(p1), curve.parameter(p2))]
+        # FCPROJECT-FIX (2026-11-08, Nutzer-Report "offene Kontur/Artefakte im Sketch beim
+        # Deckel" - live reproduziert: eine Kontur mit Boegen wurde durch diese Funktion
+        # kaputt gemacht, obwohl die Rohkontur aus dem booleschen Schnitt nachweislich bereits
+        # perfekt geschlossen war). Ein erster Versuch (Winkel per atan2 aus den lokalen
+        # 2D-Punkten gegen einen neu aufgebauten Kreis) behob die Richtung des urspruenglichen
+        # Fehlers (falsches Winkel-Bezugssystem zwischen 3D-Original und neuem 2D-Kreis),
+        # erzeugte aber teils den FALSCHEN (grossen statt kleinen) Bogen - sichtbar als kleine
+        # Schlaufe/Kringel an der Ecke im Screenshot des Nutzers. Grund: Part.ArcOfCircle(
+        # circle, a1, a2) zeichnet IMMER im Gegenuhrzeigersinn von a1 nach a2 - ob das der
+        # kurze oder der lange Weg ist, haengt von der (unbekannten) tatsaechlichen
+        # Umlaufrichtung der Original-Kante ab, die atan2 allein nicht kennt.
+        #
+        # Robuste Loesung: 3-Punkt-Bogenkonstruktion (Part.Arc(start, mittlerer_Punkt, ende))
+        # statt Winkel+Kreis-Konstruktion - dabei gibt es GAR KEINE Richtungs-Mehrdeutigkeit,
+        # der Bogen ist durch 3 Punkte eindeutig bestimmt. Der mittlere Punkt kommt direkt von
+        # der ORIGINAL-Kante (deren Parameterbereich ist nach dem Transform ins lokale
+        # Koordinatensystem bereits korrekt), nicht ueber Winkel-Umrechnung.
+        mid_param = (edge.FirstParameter + edge.LastParameter) / 2.0
+        mid_3d = curve.value(mid_param)
+        mid_point = App.Vector(mid_3d.x, mid_3d.y, 0)
+        return [Part.Arc(App.Vector(p1.x, p1.y, 0), mid_point, App.Vector(p2.x, p2.y, 0))]
 
     try:
         bspline = curve.toBSpline(edge.FirstParameter, edge.LastParameter)
@@ -172,13 +345,139 @@ def _edge_to_sketch_geometry(edge):
         return []
 
 
-def _rebuild_sketch_geometry(sketch, local_edges):
+def _get_or_create_part_sketch(doc, obj, existing_part_sketches, key, part_label):
+    """Findet unter den zuletzt erzeugten Teil-Sketches (per SourcePartName, NICHT Label -
+    siehe [[feedback_fcproject_never_use_label_for_addressing]]) den zu 'key' gehoerenden
+    wieder, oder legt bei Bedarf einen neuen an. Reuse haelt Name/Farbe stabil ueber mehrere
+    Recomputes, statt bei jedem Durchlauf alles neu zu erzeugen.
+
+    'key' ist beim flachen Schnitt einfach der interne .Name des Quell-Teils; ueberspannt ein
+    Teil beim gestuften Schnitt MEHRERE Wand-Segmente, enthaelt key zusaetzlich einen Wand-
+    Index-Suffix (siehe execute()), damit jedes Segment seinen eigenen Sketch bekommt."""
+    for sketch in existing_part_sketches:
+        if getattr(sketch, "SourcePartName", None) == key:
+            return sketch
+
+    # "#" (im key bei mehreren Waenden) ist kein gueltiges Zeichen in FreeCADs internem
+    # Objekt-.Name - durch "_w" ersetzen statt auf FreeCADs automatische Sanitisierung zu
+    # vertrauen.
+    safe_name = key.replace("#w", "_w")
+    sketch = doc.addObject("Sketcher::SketchObject", f"{obj.Name}_{safe_name}")
+    sketch.Label = f"Schnitt: {part_label}"
+    sketch.addProperty(
+        "App::PropertyString", "SourcePartName", "Section",
+        "Reuse-Schluessel (Quell-Teil, ggf. + Wand-Segment) - fuer Wiederverwendung bei Recompute",
+        locked=True
+    )
+    sketch.SourcePartName = key
+    # Gleiches Driver-Muster wie zuvor bei der einen gemeinsamen Sketch-Property: normaler
+    # PropertyLink AUF obj, nicht umgekehrt - sorgt dafuer, dass obj IMMER vor diesem Sketch
+    # berechnet wird (obj.execute() schreibt erst hinein), ohne eine zirkulaere Abhaengigkeit
+    # zu erzeugen (siehe Erklaerung bei PartSketches-Property weiter oben).
+    sketch.addProperty(
+        "App::PropertyLink", "Driver", "Section",
+        "Erzeugendes SectionSketch-Feature (nur fuer die Berechnungsreihenfolge)"
+    )
+    sketch.Driver = obj
+
+    # FCPROJECT-FIX (2026-11-08, zurueckgerollt): ein frueherer Versuch, diesen Sketch per
+    # Absicht NICHT in assembly.Group aufzunehmen (um Assemblys Klick-/Leertaste-Abfangen fuer
+    # die Sichtbarkeit zu umgehen), erzeugte live einen SCHLIMMEREN Folgefehler ("Sketcher::
+    # SketchObject: ... links are out of scope", FreeCADs GeoFeatureGroupExtension::
+    # areLinksValid() ueber das 'Driver'-PropertyLink zurueck auf obj, DAS weiterhin Mitglied
+    # der Baugruppen-Gruppe ist) UND vermutlich den gemeldeten Platzierungs-Versatz ("liegen in
+    # anderer Ebene") - GeoFeatureGroups wie Assembly::AssemblyObject wenden ihre eigene
+    # Placement kumulativ auf ALLE Gruppen-Mitglieder an; ein Sketch ausserhalb der Gruppe
+    # verliert diesen Beitrag und landet dadurch an der FALSCHEN Stelle, sobald die Baugruppe
+    # selbst eine Placement != Identity hat. Deshalb bewusst wieder MIT assembly.addObject() -
+    # fuer das Sichtbarkeits-Problem gibt es einen einfacheren Umweg: die "Sichtbarkeit"-Zeile
+    # im Eigenschaften-Fenster (Daten/Ansicht-Tab) umgehen Assemblys Baum-Klick-Abfangen, weil
+    # sie ueber einen anderen UI-Pfad dieselbe ViewObject.Visibility-Eigenschaft setzt.
+    assembly = _find_assembly(doc)
+    if assembly is not None and hasattr(assembly, "addObject"):
+        assembly.addObject(sketch)
+
+    return sketch
+
+
+def _stitch_wire_geometry(wire_geoms, tol=1e-4):
+    """Schweisst die Enden aufeinanderfolgender Sketcher-Geometrie-Elemente EINER Kontur
+    zusammen, die eigentlich denselben Punkt teilen sollten, aber durch Rundungsfehler aus
+    dem booleschen Schnitt nur FAST identisch sind (typischerweise < 1e-6mm daneben).
+
+    FCPROJECT-FIX (2026-11-08, Nutzer-Report "Artefakte/offene Enden im Sketch, an Ecken
+    erscheint ein kleines Kreissymbol"): jede Kante wurde bisher UNABHAENGIG von ihren
+    Nachbarn in Sketcher-Geometrie umgewandelt (_edge_to_sketch_geometry() liest fuer jede
+    Kante ihre EIGENEN Vertexes - bei einer geteilten Ecke zwischen zwei Kanten liefert OCC
+    dafuer nicht immer bit-identische Punkte). Sketcher markiert daraufhin diese winzigen
+    Luecken als offene Konturenden - genau das kleine Kreissymbol im Bild des Nutzers. Fix:
+    NACHDEM alle Elemente EINER Kontur (Wire) erzeugt sind, das Ende jedes Elements an den
+    Anfang des naechsten (inkl. Rueckschluss vom letzten zum ersten, da jede Kontur ein
+    geschlossener Kreislauf ist) anpassen, WENN sie nah genug beieinander liegen, um
+    eindeutig derselbe Punkt zu sein."""
+    def get_endpoints(geom):
+        try:
+            return geom.StartPoint, geom.EndPoint
+        except (AttributeError, Exception):
+            return None, None
+
+    count = len(wire_geoms)
+    for i in range(count):
+        current = wire_geoms[i]
+        nxt = wire_geoms[(i + 1) % count]
+        _, end_point = get_endpoints(current)
+        start_point, _ = get_endpoints(nxt)
+        if end_point is None or start_point is None:
+            continue
+        gap = (end_point - start_point).Length
+        if 0 < gap < tol:
+            # FCPROJECT-FIX (2026-11-08, Live-Absturz "Attribute 'StartPoint' of object
+            # 'GeomBoundedCurve' is read-only"): nur Part.LineSegment erlaubt das direkte
+            # Setzen von StartPoint - bei Part.ArcOfCircle/BSpline ist es nur lesbar (der
+            # Punkt ergibt sich dort aus Kreis+Winkel bzw. Kontrollpunkten). Fuer diese Typen
+            # bleibt die (durch den atan2-Fix oben ohnehin schon sehr kleine) Restluecke
+            # unangetastet, statt abzustuerzen.
+            try:
+                nxt.StartPoint = end_point
+            except Exception:
+                pass
+
+
+def _rebuild_sketch_geometry(sketch, local_wires):
     sketch.deleteAllGeometry()
     geoms = []
-    for edge in local_edges:
-        geoms.extend(_edge_to_sketch_geometry(edge))
+    for wire_edges in local_wires:
+        wire_geoms = []
+        for edge in wire_edges:
+            wire_geoms.extend(_edge_to_sketch_geometry(edge))
+        if len(wire_geoms) > 1:
+            _stitch_wire_geometry(wire_geoms)
+        geoms.extend(wire_geoms)
     if geoms:
         sketch.addGeometry(geoms, False)
+        # FCPROJECT-FIX (2026-11-08, Nutzer-Report "pinkes Warn-Symbol stoert"): ohne jede
+        # Constraint zeigt FreeCAD auf dem Sketch-Icon im Baum automatisch das Standard-
+        # Warnsymbol "Sketcher_NotFullyConstrained" (ViewProviderSketch::
+        # mergeColorfulOverlayIcons() in src/Mod/Sketcher/Gui/ViewProviderSketch.cpp) - obwohl
+        # das hier gar kein Problem ist, diese Sketches werden nie von Hand editiert, sondern
+        # bei jedem Recompute komplett neu aus der Schnittgeometrie erzeugt. Jedes Element per
+        # Block-Constraint fixieren ist die FreeCAD-ueblicherweise empfohlene Vorgehensweise
+        # fuer reine Referenz-/Anzeige-Geometrie und macht den Sketch "richtig" voll
+        # bestimmt, statt das Warnsymbol nur optisch zu unterdruecken.
+        sketch.addConstraint([
+            Sketcher.Constraint('Block', i) for i in range(len(geoms))
+        ])
+        # FCPROJECT-FIX (2026-11-08, Nutzer-Report "pinkes Symbol trotz FullyConstrained=True,
+        # Teil-Sketches unsichtbar bis ein UNABHAENGIGER Recompute (HideBodies-Toggle)
+        # stattfindet"): sketch wird hier WAEHREND obj.execute() veraendert (Geometrie, dann
+        # separat Constraints) - die GUI (Baum-Icon-Overlay UND 3D-Darstellung) aktualisiert
+        # sich dabei offenbar anhand eines Zwischenzustands (Geometrie gesetzt, Constraints
+        # noch nicht), noch BEVOR addConstraint() oben durchgelaufen ist, und wird danach
+        # nicht mehr von selbst neu gezeichnet (bis irgendein VOELLIG ANDERER Recompute das
+        # erzwingt). sketch.recompute() erzwingt Sketchers eigenen internen Durchlauf (inkl.
+        # Loesen + UI-Benachrichtigung) JETZT, mit dem fertigen Endzustand, statt auf den
+        # naechsten ohnehin stattfindenden Dokument-Recompute zu warten.
+        sketch.recompute()
 
 
 class SectionSketchProxy:
@@ -210,20 +509,44 @@ class SectionSketchProxy:
                 "Bei Bedarf abschalten, um die Neuberechnung bei jeder Baugruppen-Aktualisierung zu sparen"
             )
             obj.Active = True
-        if not hasattr(obj, 'Sketch'):
-            # PropertyLinkHidden statt PropertyLink: dieser Link ist rein informativ
-            # ("welcher Sketch gehoert zu mir") und darf NICHT in FreeCADs
-            # Abhaengigkeitsgraph auftauchen - sonst wuerde er bedeuten "obj haengt vom
-            # Sketch ab", also Sketch VOR obj berechnen. Tatsaechlich ist es umgekehrt:
-            # obj.execute() SCHREIBT in den Sketch, der Sketch muss also NACH obj
-            # berechnet werden. Die richtige Abhaengigkeitsrichtung stellt stattdessen
-            # sketch.Driver her (siehe make_section_sketch()) - ein normaler PropertyLink
-            # auf dem Sketch selbst, der obj referenziert. Beide Links gleichzeitig als
-            # normale PropertyLink waeren ein Ring (obj->Sketch->obj) und wuerden von
-            # FreeCAD als zirkulaere Abhaengigkeit abgelehnt.
+        # FCPROJECT-FEATURE (2026-11-08, Nutzerwunsch "gestufter Schnitt, der in einem Sketch
+        # definiert ist"): optional - ein vom Nutzer auf der ReferencePlane angelegter Sketch
+        # mit einem OFFENEN Linienzug (nur Geradensegmente, siehe _wall_segments_from_step_sketch()), der
+        # statt der flachen Ebene einen gestuften/gejogten Schnitt vorgibt. Leer/None ->
+        # normaler flacher Schnitt wie bisher (volle Abwaertskompatibilitaet).
+        if not hasattr(obj, 'StepSketch'):
+            # Bewusst normaler (nicht versteckter) PropertyLink, anders als die Ausgabe-Links
+            # (PartSketches/CombinedShape, siehe unten): StepSketch ist eine EINGABE des
+            # Nutzers, nicht eine von execute() erzeugte Ausgabe - die Abhaengigkeitsrichtung
+            # soll hier normal sein ("obj haengt vom StepSketch ab"), damit FreeCAD obj
+            # automatisch neu rechnet, wenn der Nutzer den Linienzug aendert.
             obj.addProperty(
-                "App::PropertyLinkHidden", "Sketch", "Section",
-                "Sketch-Objekt mit den berechneten Schnittkonturen", locked=True
+                "App::PropertyLink", "StepSketch", "Section",
+                "Optional: Sketch mit gestuftem Linienzug auf der ReferencePlane, ersetzt den flachen Schnitt"
+            )
+        # FCPROJECT-FEATURE (2026-11-08, Nutzerwunsch "Teile durch Farben unterscheiden"):
+        # ersetzt die fruehere EINZELNE 'Sketch'-Property. FreeCADs Sketcher kennt keine
+        # Farbe pro Geometrie-Element (nur pro ganzem Sketch-Objekt, ViewObject.LineColor) -
+        # deshalb jetzt EIN Sketch PRO geschnittenem Quell-Teil (eigene Farbe je Teil,
+        # siehe _color_for_part()), PLUS ein zusammengesetztes, nicht editierbares
+        # Part::Feature (CombinedShape) mit allen Kanten in einem Stueck - fuer TechDraw/
+        # Weiterverwendung, wie vorher der eine gemeinsame Sketch (auf Nutzerwunsch
+        # bewusst zusaetzlich erhalten, nicht ersetzt).
+        if not hasattr(obj, 'PartSketches'):
+            # PropertyLinkListHidden aus demselben Grund wie zuvor 'Sketch' (siehe Git-
+            # Historie dieser Zeile): rein informativ, NICHT Teil des Abhaengigkeitsgraphen -
+            # execute() SCHREIBT in diese Sketches, die Abhaengigkeitsrichtung kommt
+            # stattdessen von jedem Sketch' eigenem 'Driver'-Link auf obj (siehe
+            # _get_or_create_part_sketch()).
+            obj.addProperty(
+                "App::PropertyLinkListHidden", "PartSketches", "Section",
+                "Ein Sketch pro geschnittenem Quell-Teil, je in eigener Farbe", locked=True
+            )
+        if not hasattr(obj, 'CombinedShape'):
+            obj.addProperty(
+                "App::PropertyLinkHidden", "CombinedShape", "Section",
+                "Alle Schnittkonturen zusammen als EIN nicht editierbares Objekt (fuer TechDraw/Weiterverwendung)",
+                locked=True
             )
         if not hasattr(obj, 'Dependencies'):
             # Hidden, rein fuer den Abhaengigkeitsgraph: registriert die beim letzten
@@ -232,6 +555,25 @@ class SectionSketchProxy:
             obj.addProperty(
                 "App::PropertyLinkListHidden", "Dependencies", "Section",
                 "Zuletzt geschnittene Koerper (rein informativ/fuer den Abhaengigkeitsgraph)",
+                locked=True
+            )
+        # FCPROJECT-FEATURE (2026-11-08, Nutzerwunsch "bei 50 Teilen alle Koerper einzeln
+        # auszublenden ist aufwendig"): wenn aktiv, blendet execute() die gerade
+        # geschnittenen Koerper automatisch aus (und beim Abschalten/Entfernen wieder ein),
+        # statt das dem Nutzer von Hand zu ueberlassen.
+        if not hasattr(obj, 'HideBodies'):
+            obj.addProperty(
+                "App::PropertyBool", "HideBodies", "Section",
+                "Blendet die geschnittenen Koerper automatisch aus, damit nur noch der Schnitt sichtbar ist"
+            )
+            obj.HideBodies = False
+        if not hasattr(obj, 'AutoHiddenBodies'):
+            # Hidden Buchhaltung: NUR die Koerper, die WIR wegen HideBodies ausgeblendet
+            # haben - damit beim Abschalten/Loeschen genau die richtigen wieder sichtbar
+            # werden (nicht Koerper, die der Nutzer selbst schon vorher ausgeblendet hatte).
+            obj.addProperty(
+                "App::PropertyLinkListHidden", "AutoHiddenBodies", "Section",
+                "Von HideBodies aktuell ausgeblendete Koerper (rein interne Buchhaltung)",
                 locked=True
             )
 
@@ -261,21 +603,29 @@ class SectionSketchProxy:
         plane_placement = App.Placement(base, App.Rotation(App.Vector(0, 0, 1), normal))
         inv_matrix = plane_placement.inverse().toMatrix()
 
-        sketch = obj.Sketch
-        if sketch is None:
-            App.Console.PrintWarning(f"FCProject: SectionSketch '{obj.Label}' hat kein Sketch-Kindobjekt.\n")
-            return
-
         doc = obj.Document
+        existing_part_sketches = list(obj.PartSketches)
+        existing_combined = obj.CombinedShape
 
         # 1. Durchlauf: sichtbare Koerper einsammeln UND eine gemeinsame Box-Groesse
         # bestimmen, die von 'base' aus in jede Richtung weit genug reicht, um auch weit
         # entfernte Teile der Baugruppe noch zu erfassen (siehe Docstring von
         # _section_faces_of_solid - eine rein lokale Groesse pro Solid reicht dafuer nicht).
+        # Koerper, die WIR (HideBodies) beim letzten Durchlauf ausgeblendet haben, muessen
+        # trotz Visibility=False weiterhin als Kandidat gelten - sonst wuerden sie durch
+        # das eigene Ausblenden beim naechsten Recompute aus dem Schnitt herausfallen.
+        auto_hidden_before = set(obj.AutoHiddenBodies)
+
         candidates = []
+        candidate_global_shapes = {}
         combined_bbox = App.BoundBox(base, base)
+        skip_objs = set(existing_part_sketches)
+        if existing_combined is not None:
+            skip_objs.add(existing_combined)
+        if obj.StepSketch is not None:
+            skip_objs.add(obj.StepSketch)
         for candidate in doc.Objects:
-            if candidate is obj or candidate is sketch:
+            if candidate is obj or candidate in skip_objs:
                 continue
             # Assembly-Container ueberspringen: ihre .Shape ist ohnehin nur die
             # Vereinigung ihrer eigenen (hier separat als eigene Objekte gezaehlten)
@@ -286,42 +636,202 @@ class SectionSketchProxy:
             if candidate.TypeId in ("Assembly::AssemblyObject", "Assembly::AssemblyLink"):
                 continue
             vis = getattr(candidate, "ViewObject", None)
-            if vis is None or not vis.Visibility:
+            if vis is None:
+                continue
+            if not vis.Visibility and candidate not in auto_hidden_before:
                 continue
             if not hasattr(candidate, "Shape") or candidate.Shape is None or candidate.Shape.isNull():
                 continue
             if not candidate.Shape.Solids:
                 continue
+            # FCPROJECT-FIX (2026-11-08, siehe _ancestor_placement()): candidate.Shape ist nur
+            # lokal zur umschliessenden Baugruppe - einmal pro Kandidat in ECHTE globale
+            # Koordinaten umrechnen und das Ergebnis fuer den Rest von execute() (BoundBox UND
+            # der eigentliche Schnitt weiter unten) wiederverwenden, statt mehrfach neu zu
+            # transformieren.
+            global_shape = candidate.Shape.copy()
+            global_shape.transformShape(_ancestor_placement(candidate).toMatrix(), True)
+            candidate_global_shapes[candidate] = global_shape
             candidates.append(candidate)
-            combined_bbox.add(candidate.Shape.BoundBox)
+            combined_bbox.add(global_shape.BoundBox)
 
         diagonal = combined_bbox.DiagonalLength
         if not math.isfinite(diagonal) or diagonal <= 0.0:
             diagonal = 0.0
         size = max(diagonal * 2, 100.0)
 
-        # 2. Durchlauf: mit der so bestimmten, garantiert ausreichenden Groesse schneiden.
+        # Wand-Liste bestimmen: im flachen Standardfall genau EINE Wand (die ReferencePlane
+        # selbst, mit dem bereits berechneten plane_placement/inv_matrix) - bei gesetztem
+        # StepSketch eine WAND PRO STUFEN-SEGMENT, jede mit ihrer EIGENEN, lokal berechneten
+        # Placement/inv_matrix (siehe _wall_segments_from_step_sketch() fuer die Begruendung,
+        # warum das NICHT alles in EINER gemeinsamen Projektion gehen kann). Jede Wand wird
+        # danach komplett unabhaengig wie ein ganz normaler flacher Schnitt behandelt - ein
+        # gestufter Schnitt ist technisch nichts anderes als mehrere unabhaengige flache
+        # Schnitte hintereinander.
+        step_sketch = obj.StepSketch
+        walls = None
+        if step_sketch is not None and hasattr(step_sketch, "Shape") and step_sketch.Shape and step_sketch.Shape.Wires:
+            try:
+                local_wire = step_sketch.Shape.Wires[0].copy()
+                local_wire.transformShape(inv_matrix, True)
+                local_segments = _wall_segments_from_step_sketch(local_wire)
+                walls = []
+                for seg_base_local, seg_normal_local in local_segments:
+                    wall_base = plane_placement.multVec(seg_base_local)
+                    wall_normal = plane_placement.Rotation.multVec(seg_normal_local)
+                    wall_placement = App.Placement(wall_base, App.Rotation(App.Vector(0, 0, 1), wall_normal))
+                    walls.append((wall_base, wall_normal, wall_placement, wall_placement.inverse().toMatrix()))
+            except Exception as exc:
+                App.Console.PrintWarning(
+                    f"FCProject: SectionSketch '{obj.Label}': gestufter Schnitt fehlgeschlagen "
+                    f"({exc}) - falle auf flachen Schnitt zurueck.\n"
+                )
+                walls = None
+        if walls is None:
+            walls = [(base, normal, plane_placement, inv_matrix)]
+        multi_wall = len(walls) > 1
+
+        # 2. Durchlauf: pro Wand UND pro Teil schneiden - Kanten PRO (TEIL, WAND) gesammelt
+        # (nicht mehr in einer flachen Liste), damit jedes Teil seinen eigenen, eingefaerbten
+        # Sketch bekommt (siehe Modul-Kopf). Beim flachen Standardfall (EINE Wand) verhaelt
+        # sich das exakt wie vorher: ein Sketch pro Teil.
         solids_found = []
-        local_edges = []
+        edges_by_key = {}  # (candidate.Name, wall_idx) -> (candidate, wall_placement, [[local_edge, ...], ...])
+        # (die dritte Komponente ist eine Liste von KONTUREN, jede ihrerseits eine Liste von
+        # Kanten - die Kontur-Gruppierung braucht _stitch_wire_geometry() in
+        # _rebuild_sketch_geometry(), um Kanten-Enden nur INNERHALB derselben Kontur
+        # zusammenzuschweissen, nicht ueber mehrere unabhaengige Konturen hinweg.)
         status_labels = {}  # status -> [Label, ...], nur fuer status != "ok"
 
-        for candidate in candidates:
-            solids_found.append(candidate)
-            for solid in candidate.Shape.Solids:
-                faces, status = _section_faces_of_solid(solid, base, normal, size)
-                if status != "ok":
-                    status_labels.setdefault(status, []).append(candidate.Label)
-                    continue
-                for face in faces:
-                    for wire in face.Wires:
-                        for edge in wire.Edges:
-                            local_edge = edge.copy()
-                            local_edge.transformShape(inv_matrix, True)
-                            local_edges.append(local_edge)
+        # CombinedShape (siehe Schritt 4 unten) braucht alle Kanten in EINEM gemeinsamen
+        # Koordinatensystem - genommen wird dafuer WELTKOORDINATEN (combined_obj.Placement
+        # bleibt Identity), weil die einzelnen Wand-Placements bei einem gestuften Schnitt
+        # NICHT alle gleich sind (anders als im flachen Fall) und es deshalb keine einzelne
+        # gemeinsame lokale Ebene gibt, in die man stattdessen transformieren koennte.
+        world_edges = []
 
+        for wall_idx, (wall_base, wall_normal, wall_placement, wall_inv_matrix) in enumerate(walls):
+            for candidate in candidates:
+                if candidate not in solids_found:
+                    solids_found.append(candidate)
+                part_wires = []  # Liste von Kanten-Listen, EINE pro Kontur (siehe _rebuild_sketch_geometry)
+                for solid in candidate_global_shapes[candidate].Solids:
+                    faces, status = _section_faces_of_solid(solid, wall_base, wall_normal, size)
+                    if status != "ok":
+                        status_labels.setdefault(status, []).append(candidate.Label)
+                        continue
+                    for face in faces:
+                        for wire in face.Wires:
+                            local_wire_edges = []
+                            # FCPROJECT-FIX (2026-11-08, Nutzer-Report "offene Kontur trotz
+                            # _stitch_wire_geometry()"): wire.Edges liefert KEINE garantiert
+                            # fortlaufende Reihenfolge (OCC-Topologie-Rohdaten) - fuer manche
+                            # Konturen kamen Kanten in einer Reihenfolge zurueck, in der
+                            # aufeinanderfolgende Listenelemente gar nicht die echten Nachbarn
+                            # in der Kontur waren, wodurch _stitch_wire_geometry() die falschen
+                            # (Nicht-)Punktepaare verglich. wire.OrderedEdges liefert dagegen
+                            # garantiert die tatsaechliche Lauf-Reihenfolge entlang der Kontur.
+                            for edge in wire.OrderedEdges:
+                                world_edges.append(edge.copy())
+                                local_edge = edge.copy()
+                                local_edge.transformShape(wall_inv_matrix, True)
+                                local_wire_edges.append(local_edge)
+                            if local_wire_edges:
+                                part_wires.append(local_wire_edges)
+                if part_wires:
+                    key = candidate.Name if not multi_wall else f"{candidate.Name}#w{wall_idx}"
+                    edges_by_key[key] = (candidate, wall_placement, part_wires)
+
+        all_local_edges = world_edges
         obj.Dependencies = solids_found
-        sketch.Placement = plane_placement
-        _rebuild_sketch_geometry(sketch, local_edges)
+
+        # HideBodies-Abgleich: nur die Koerper ein-/ausblenden, die WIR selbst verwalten
+        # (auto_hidden_before) - Koerper, die der Nutzer unabhaengig davon schon selbst
+        # ausgeblendet hatte, bleiben unberuehrt (die erscheinen hier gar nicht erst in
+        # solids_found/candidates, siehe Visibility-Filter oben).
+        if _GUI_AVAILABLE:
+            if obj.HideBodies:
+                new_auto_hidden = []
+                for body in solids_found:
+                    vis = getattr(body, "ViewObject", None)
+                    if vis is None:
+                        continue
+                    vis.Visibility = False
+                    new_auto_hidden.append(body)
+                for old_body in auto_hidden_before:
+                    if old_body not in solids_found:
+                        vis = getattr(old_body, "ViewObject", None)
+                        if vis is not None:
+                            vis.Visibility = True
+                obj.AutoHiddenBodies = new_auto_hidden
+            elif auto_hidden_before:
+                for old_body in auto_hidden_before:
+                    vis = getattr(old_body, "ViewObject", None)
+                    if vis is not None:
+                        vis.Visibility = True
+                obj.AutoHiddenBodies = []
+
+        # 3. Pro (Teil, Wand) einen Sketch finden/anlegen (reuse per SourcePartName statt
+        # jedes Mal neu zu erzeugen - haelt Namen stabil ueber mehrere Recomputes) und die
+        # alten, jetzt nicht mehr gebrauchten Sketches entfernen (Teil ausgeblendet/geloescht,
+        # oder Wand-Anzahl hat sich geaendert). Farbe kommt bewusst vom ECHTEN Teil-Namen
+        # (candidate.Name), nicht vom (ggf. Wand-Suffix enthaltenden) Reuse-Key - mehrere
+        # Sketches desselben Teils (weil es mehrere Stufen-Waende ueberspannt) bekommen so
+        # trotzdem dieselbe Farbe.
+        reused_keys = set(edges_by_key.keys())
+        new_part_sketches = []
+        for key, (candidate, wall_placement, part_wires) in edges_by_key.items():
+            sketch = _get_or_create_part_sketch(doc, obj, existing_part_sketches, key, candidate.Label)
+            sketch.Placement = wall_placement
+            _rebuild_sketch_geometry(sketch, part_wires)
+            if _GUI_AVAILABLE and sketch.ViewObject:
+                color = _color_for_part(candidate.Name)
+                sketch.ViewObject.LineColor = color
+                sketch.ViewObject.PointColor = color
+            new_part_sketches.append(sketch)
+
+        for old_sketch in existing_part_sketches:
+            if getattr(old_sketch, "SourcePartName", None) not in reused_keys:
+                try:
+                    doc.removeObject(old_sketch.Name)
+                except Exception as exc:
+                    App.Console.PrintWarning(
+                        f"FCProject: SectionSketch '{obj.Label}': verwaister Teil-Sketch "
+                        f"'{old_sketch.Name}' konnte nicht entfernt werden: {exc}\n"
+                    )
+        obj.PartSketches = new_part_sketches
+
+        # 4. Zusaetzlich ALLE Kanten zusammen als EIN nicht editierbares Objekt (fuer
+        # TechDraw/Weiterverwendung "der ganze Schnitt als ein Stueck", wie vorher der eine
+        # gemeinsame Sketch - auf Nutzerwunsch bewusst zusaetzlich erhalten).
+        combined_obj = existing_combined
+        if combined_obj is None:
+            combined_obj = doc.addObject("Part::Feature", f"{obj.Name}_Combined")
+            combined_obj.Label = f"{obj.Label} (Gesamt)"
+            if not hasattr(combined_obj, "Driver"):
+                combined_obj.addProperty(
+                    "App::PropertyLink", "Driver", "Section",
+                    "Erzeugendes SectionSketch-Feature (nur fuer die Berechnungsreihenfolge)"
+                )
+            combined_obj.Driver = obj
+            # FCPROJECT-FIX (2026-11-08, zurueckgerollt - siehe ausfuehrlicher Kommentar in
+            # _get_or_create_part_sketch()): ein Versuch, combined_obj NICHT in assembly.Group
+            # aufzunehmen (wegen Assemblys Klick-/Leertaste-Abfangen fuer die Sichtbarkeit),
+            # erzeugte live einen schlimmeren Folgefehler (GeoFeatureGroup-Scope-Warnung ueber
+            # das 'Driver'-PropertyLink zurueck auf obj) und vermutlich den gemeldeten
+            # Platzierungs-Versatz - deshalb wieder MIT assembly.addObject(). Sichtbarkeit laesst
+            # sich stattdessen zuverlaessig ueber die "Sichtbarkeit"-Zeile im Eigenschaften-
+            # Fenster (Daten/Ansicht-Tab) umschalten, nicht nur per Baum-Klick/Leertaste.
+            assembly = _find_assembly(doc)
+            if assembly is not None and hasattr(assembly, "addObject"):
+                assembly.addObject(combined_obj)
+        # Placement bewusst Identity (NICHT plane_placement): all_local_edges enthaelt
+        # bereits WELTKOORDINATEN (siehe oben) - bei mehreren Waenden (gestufter Schnitt)
+        # gibt es keine einzelne gemeinsame lokale Ebene mehr, in die man stattdessen
+        # transformieren koennte.
+        combined_obj.Placement = App.Placement()
+        combined_obj.Shape = Part.makeCompound([e.copy() for e in all_local_edges]) if all_local_edges else Part.Shape()
+        obj.CombinedShape = combined_obj
 
         if not solids_found:
             App.Console.PrintWarning(
@@ -337,12 +847,20 @@ class SectionSketchProxy:
             "cut-failed": "Boolescher Schnitt ist fehlgeschlagen (OCC-Fehler)",
             "invalid-boundbox": "Koerper hat eine ungueltige/unplausible BoundBox",
         }
+        # "Koerper verfehlt die Schnittebene" ist beim gestuften Schnitt (mehrere Waende,
+        # typischerweise trifft jede Wand nur einen Teil der Baugruppe) der NORMALFALL, kein
+        # Fehler - deshalb bewusst nur ins Report-View/Log (PrintMessage), NICHT als Warnung
+        # (PrintWarning liefe sonst bei jedem Recompute als Popup/Toast in der Notification-
+        # Area auf, Nutzerwunsch war genau das zu vermeiden). "cut-failed"/"invalid-boundbox"
+        # sind echte Probleme und bleiben deshalb Warnungen.
+        _ROUTINE_STATUSES = {"no-intersection", "fully-removed", "no-matching-face"}
         for status, labels in status_labels.items():
-            App.Console.PrintWarning(
+            printer = App.Console.PrintMessage if status in _ROUTINE_STATUSES else App.Console.PrintWarning
+            printer(
                 f"FCProject: SectionSketch '{obj.Label}': {_STATUS_MESSAGES.get(status, status)} - "
                 f"betrifft {len(labels)} Koerper: {', '.join(labels)}.\n"
             )
-        if not local_edges and solids_found and not status_labels:
+        if not all_local_edges and solids_found and not status_labels:
             App.Console.PrintWarning(
                 f"FCProject: SectionSketch '{obj.Label}': {len(solids_found)} Koerper gefunden, "
                 "aber keine Schnittkanten erzeugt - unklare Ursache, bitte melden.\n"
@@ -368,7 +886,10 @@ if _GUI_AVAILABLE:
             self.Object = vobj.Object
 
         def claimChildren(self):
-            return [self.Object.Sketch] if self.Object.Sketch else []
+            children = list(self.Object.PartSketches)
+            if self.Object.CombinedShape is not None:
+                children.append(self.Object.CombinedShape)
+            return children
 
         def getIcon(self):
             return os.path.join(ICON_DIR, 'section_sketch.svg')
@@ -382,6 +903,18 @@ if _GUI_AVAILABLE:
                 Gui.Selection.addSelection(ref[0])
             return True
 
+        def onDelete(self, vobj, subelements):
+            # Von HideBodies ausgeblendete Koerper sollen nicht fuer immer unsichtbar
+            # bleiben, nur weil dieses SectionSketch-Objekt geloescht wird. Wichtig: dieser
+            # Hook sitzt bewusst auf dem VIEW PROVIDER (nicht dem DocumentObject-Proxy) -
+            # Gui::CommandDoc.cpp ruft beim Loeschen "vp->onDelete(...)" auf, nicht die
+            # Proxy-Methode des eigentlichen Objekts.
+            for body in getattr(vobj.Object, "AutoHiddenBodies", []):
+                vis = getattr(body, "ViewObject", None)
+                if vis is not None:
+                    vis.Visibility = True
+            return True
+
         def __getstate__(self):
             return None
 
@@ -390,34 +923,31 @@ if _GUI_AVAILABLE:
 
 
 def make_section_sketch(doc, assembly, ref_obj, subname):
-    """Erstellt das SectionSketch-Feature plus sein Sketch-Kindobjekt und haengt beides
-    in die Baugruppe ein (analog zu make_linear_pattern/make_circular_pattern)."""
+    """Erstellt das SectionSketch-Feature (analog zu make_linear_pattern/
+    make_circular_pattern) und haengt es in die Baugruppe ein. Die Teil-Sketches + das
+    zusammengesetzte CombinedShape-Objekt werden NICHT hier vorab angelegt - deren Anzahl
+    steht erst beim ersten execute()-Lauf fest (ein Sketch pro tatsaechlich geschnittenem
+    Teil, siehe _get_or_create_part_sketch())."""
     doc.openTransaction("FCProject Section Sketch")
     try:
-        sketch = doc.addObject("Sketcher::SketchObject", "SectionProfile")
-
         obj = doc.addObject("App::FeaturePython", "SectionSketch")
         obj.Label = f"Schnitt-Sketch: {ref_obj.Label}"
         SectionSketchProxy(obj)
         obj.ReferencePlane = (ref_obj, [subname] if subname else [])
-        obj.Sketch = sketch
+        # Neu angelegte Schnitte blenden die geschnittenen Koerper standardmaessig gleich
+        # mit aus (Nutzerwunsch, siehe HideBodies) - bereits BESTEHENDE SectionSketch-
+        # Objekte in alten Dokumenten behalten beim Laden bewusst ihren bisherigen
+        # Default (False, siehe _add_properties), damit sich fuer die nicht unangekuendigt
+        # etwas aendert.
+        obj.HideBodies = True
 
-        # Normaler (nicht versteckter) Link auf dem SKETCH, der auf obj zeigt - das ist
-        # die einzige echte Abhaengigkeitskante im Graph: "Sketch haengt von obj ab",
-        # sorgt also dafuer, dass obj.execute() IMMER vor der Sketch-Neuberechnung laeuft.
-        # Ohne das kann FreeCADs Recompute-Reihenfolge den Sketch vor obj einsortieren -
-        # das Ergebnis bleibt dann "still touched after recompute" haengen, weil obj erst
-        # danach in den Sketch hineinschreibt.
-        if not hasattr(sketch, "Driver"):
-            sketch.addProperty(
-                "App::PropertyLink", "Driver", "Section",
-                "Erzeugendes SectionSketch-Feature (nur fuer die Berechnungsreihenfolge)"
-            )
-        sketch.Driver = obj
-
+        # FCPROJECT-FIX (2026-11-08, zurueckgerollt - siehe ausfuehrlicher Kommentar in
+        # _get_or_create_part_sketch()): obj (und seine Kinder) bleiben MIT assembly.addObject()
+        # - ein Versuch ohne fuehrte live zu einer GeoFeatureGroup-Scope-Warnung und vermutlich
+        # zum gemeldeten Platzierungs-Versatz. Sichtbarkeit laesst sich stattdessen ueber die
+        # "Sichtbarkeit"-Zeile im Eigenschaften-Fenster umschalten.
         if assembly is not None and hasattr(assembly, 'addObject'):
             assembly.addObject(obj)
-            assembly.addObject(sketch)
 
         if _GUI_AVAILABLE and obj.ViewObject:
             ViewProviderSectionSketch(obj.ViewObject)

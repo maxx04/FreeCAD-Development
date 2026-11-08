@@ -10,11 +10,11 @@
             "name": "FCProject-Dev",
             "displayName": "Build gegen die FreeCAD-Sandbox (Header/Bibliotheken)",
             "generator": "Unix Makefiles",
-            "binaryDir": "${sourceDir}/build-fc263",
+            "binaryDir": "${sourceDir}/build",
             "cacheVariables": {
                 "CMAKE_PRES_DEV": "TRUE",
                 "CMAKE_BUILD_TYPE": "Debug",
-                "PYTHON_EXECUTABLE": "${sourceDir}/../.venv/bin/python",
+                "PYTHON_EXECUTABLE": "/home/maxx/freecad-sandbox/freecad-source/.pixi/envs/default/bin/python3",
                 "CMAKE_CURRENT_SOURCE_DIR": "${sourceDir}/FCProject",
                 "CMAKE_CXX_STANDARD": "20",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",

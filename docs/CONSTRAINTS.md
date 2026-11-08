@@ -49,6 +49,24 @@ liegt. Wird dasselbe Teil auch in einem ANDEREN Projekt verwendet, bleibt diese 
 bewusst unangetastet (siehe TODO.md, 2. Prio: dafür soll stattdessen Hilfe zur manuellen
 Reparatur angeboten werden) - ein automatischer Eingriff über Projektgrenzen hinweg ist
 ausdrücklich nicht gewünscht.
+1. **Alle eigenen Feature-/Command-Module werden in `InitGui.py` SOFORT beim Programmstart
+importiert (`_import_feature_modules()`, direkt nach `FreeCADGui.addWorkbench(...)`), nicht
+mehr erst beim ersten Aktivieren der FCProject-Werkbench.** Grund (2026-11-08): eine neue
+FreeCAD-Kernpruefung (`App::PropertyPythonObject::isAllowedModule()`) blockiert beim Laden
+eines Dokuments den automatischen Import eines Proxy-Moduls (z.B. `SectionSketchFeature` fuer
+ein `App::FeaturePython`-Objekt), wenn dieses Modul noch nicht in `sys.modules` steht UND sein
+Dateipfad nicht auf FreeCADs eigener Positivliste (`FreeCAD.__ModDirs__`) steht - was im Sandbox-
+Profil (`Mod/FreeCAD-Development` ist ein SYMLINK auf dieses Repo) wegen des dadurch aufgeloesten
+realen Pfads der Fall ist. `Workbench.Initialize()` laeuft aber erst beim ERSTEN Aktivieren der
+Werkbench - wurde vorher ein Dokument mit eigenen FCProject-Objekten geladen (z.B. direkt beim
+Programmstart via Kommandozeile/Datei-Historie, ohne die Werkbench zu wechseln), schlug das
+Laden dieser Objekte fehl ("blocked import of module ... Only modules from FreeCAD or installed
+addons are permitted"). Da `InitGui.py` laut FreeCAD-Log fuer JEDES installierte Addon ohnehin
+schon beim Programmstart per `exec()` ausgefuehrt wird, reicht es, den Import dort direkt
+(ausserhalb der Klasse) aufzurufen - das Modul steht dann schon vor jedem Dokument-Laden in
+`sys.modules`, was laut `isAllowedModule()` IMMER erlaubt ist, unabhaengig vom Pfad-Check.
+`Initialize()` ruft dieselbe Funktion zusaetzlich weiterhin auf (billiges No-Op dank Python-
+Modul-Cache), falls der Start-Import aus irgendeinem Grund nicht geklappt haben sollte.
 1. **Jeder direkte STEP-Datei-Import im PDM-Creator (Typ P "Halbzeug" per Datei, Typ B
 Kaufteil) folgt der GLOBALEN FreeCAD-Einstellung "Zusammensetzung von Objekten"
 (`Edit → Einstellungen → Import-Export → STEP`, intern `UseLinkGroup`) - es wird KEINE eigene

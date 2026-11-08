@@ -120,11 +120,22 @@ else()
 endif()
 
 # 6. Installation (nur mit FC_MOD_DIR)
+# FCPROJECT-FIX (2026-11-08, Nutzerwunsch "eigenen install-Ordner, Sandbox darauf
+# verweisen"): FC_MOD_DIR zeigt jetzt auf die WURZEL des Addon-Ordners (z.B.
+# install/FreeCAD-Development), NICHT direkt auf das python/-Verzeichnis - package.xml
+# erwartet <subdirectory>python</subdirectory>, muss also am Addon-Root liegen, mit den
+# eigentlichen Python-Dateien eine Ebene darunter in python/ - exakt dieselbe Struktur wie
+# dieses Repo selbst (auf das Sandbox/Vanilla sonst per Symlink/Git-Clone zeigen).
 if(FC_MOD_DIR)
-# Installiere die kompilierte Bibliothek (.so)
+# Installiere die kompilierte Bibliothek (.so) - landet neben den Python-Dateien in python/
 install(TARGETS FCProjectCore
-    LIBRARY DESTINATION "${FC_MOD_DIR}"
-    RUNTIME DESTINATION "${FC_MOD_DIR}"
+    LIBRARY DESTINATION "${FC_MOD_DIR}/python"
+    RUNTIME DESTINATION "${FC_MOD_DIR}/python"
+)
+
+# package.xml (und README) werden am Addon-Root erwartet, genau wie in diesem Repo
+install(FILES package.xml README.md
+    DESTINATION "${FC_MOD_DIR}"
 )
 
 # Kopiere die Python-Dateien mit in das Installationsverzeichnis
@@ -140,7 +151,7 @@ install(TARGETS FCProjectCore
 # python/resources/icons schon automatisch mit, da resources/ jetzt EIN Unterordner von
 # python/ ist - komplett entfernt statt nur den Pfad zu flicken.
 install(DIRECTORY python/
-        DESTINATION "${FC_MOD_DIR}"
+        DESTINATION "${FC_MOD_DIR}/python"
         PATTERN "__pycache__" EXCLUDE
 )
 

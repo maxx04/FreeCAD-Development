@@ -12,6 +12,7 @@ __pycache__/
 #.vscode/
 .venv/
 build*/**
+install/
 
 TODO.md
 LEARNINGS.md

@@ -12,6 +12,7 @@ import os
 import FreeCAD as App
 import FreeCADGui
 
+
 class FCProjectWorkbench(FreeCADGui.Workbench):
     MenuText = "FCProject"
 
@@ -37,6 +38,17 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         self.Icon = IconUtils.icon_path(icon_dir, 'fcproject.svg')
 
     def Initialize(self):
+        # Diese Imports laufen schon GANZ AM PROGRAMMSTART (siehe Block nach addWorkbench()
+        # unten, _early_import_feature_modules() dort) - der erneute LOKALE Import hier ist
+        # nur ein billiges No-Op (Python cached bereits importierte Module ueber sys.modules),
+        # falls der Start-Import aus irgendeinem Grund nicht geklappt haben sollte. Bewusst
+        # NICHT als Aufruf einer gemeinsamen Hilfsfunktion per blossem Namen: FreeCAD fuehrt
+        # InitGui.py per exec() aus, nicht per import - ein nur am Dateianfang gebundener
+        # Funktionsname ist aus einer spaeter (bei Werkbench-Aktivierung) aufgerufenen
+        # Methode heraus NICHT sicher auflösbar (siehe gleiches Problem+Erklaerung in
+        # __init__() oben zu icon_dir - live beobachtet: "name '_import_feature_modules' is
+        # not defined" beim Werkbench-Wechsel). Jeder Aufrufort bekommt deshalb seine EIGENEN,
+        # lokalen Imports.
         import ProjectManager as ProjectManager
         import Commands as Commands
         import BOMCommand as BOMCommand
@@ -157,3 +169,31 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         return "Gui::PythonWorkbench"
 
 FreeCADGui.addWorkbench(FCProjectWorkbench())
+
+# FCPROJECT-FIX (2026-11-08, siehe docs/CONSTRAINTS.md fuer den vollen Hintergrund): diese
+# Imports laufen bewusst HIER, ganz am Programmstart (InitGui.py wird fuer JEDES installierte
+# Addon schon beim Start per exec() ausgefuehrt, siehe Log-Zeile "Initializing .../FreeCAD-
+# Development/python... done") - nicht erst in FCProjectWorkbench.Initialize(), das FreeCAD
+# erst beim ERSTEN Aktivieren dieser Werkbench aufruft. Grund: wird ein Dokument mit eigenen
+# FCProject-Objekten (z.B. SectionSketch) geladen, BEVOR die Werkbench je aktiviert wurde,
+# versucht FreeCADs PropertyPythonObject::Restore das jeweilige Modul (z.B.
+# "SectionSketchFeature") selbst zu importieren - und blockiert das seit einer brandneuen
+# Kernaenderung (Sicherheitscheck gegen das Nachladen beliebigen Codes aus einer FCStd-Datei
+# heraus), weil unser Sandbox-Profil FCProject nur per SYMLINK einbindet und der dadurch
+# aufgeloeste reale Dateipfad nicht auf FreeCADs eigener Positivliste (FreeCAD.__ModDirs__)
+# steht. Die einzige Regel in PropertyPythonObject::isAllowedModule(), die davon UNABHAENGIG
+# ist: ein bereits in sys.modules geladenes Modul gilt immer als erlaubt - deshalb reicht es,
+# alles schon hier zu importieren, bevor irgendein Dokument geladen wird.
+import ProjectManager as ProjectManager
+import Commands as Commands
+import BOMCommand as BOMCommand
+import PartExchangeCommand as PartExchangeCommand
+import SelectableRepairCommand as SelectableRepairCommand
+import SectionSketchFeature as SectionSketchFeature
+import ImportComponentCommand as ImportComponentCommand
+import InterfacePlacementFeature as InterfacePlacementFeature
+import PartPlayerCommand as PartPlayerCommand
+import ResetPlacementCommand as ResetPlacementCommand
+import RenamePartCommand as RenamePartCommand
+import DocObserver
+DocObserver.register()
