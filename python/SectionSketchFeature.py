@@ -400,6 +400,46 @@ def _get_or_create_part_sketch(doc, obj, existing_part_sketches, key, part_label
     return sketch
 
 
+def _place_sketch_via_attachment(sketch, ref_obj, subname, desired_placement):
+    """Setzt sketch.Placement auf desired_placement, aber NICHT direkt - stattdessen ueber
+    FreeCADs eingebaute Attachment-Mechanik (AttachmentSupport/MapMode/AttachmentOffset), mit
+    dem Offset so berechnet, dass am Ende exakt dieselbe Placement herauskommt.
+
+    FCPROJECT-FIX (2026-11-08, Nutzer-Report "Attachment Support ist leer" - live bestaetigt
+    als Ursache des pinken 'nicht angeheftet'-Symbols im Baum, siehe AttachEngine3D::
+    _calculateAttachedPlacement() in freecad-source: wirft bei MapMode=Deactivated IMMER eine
+    Exception, wodurch AttachExtension::isAttacherActive() dauerhaft False bleibt - genau die
+    Bedingung fuer PartGui::ViewProviderAttachExtension::extensionMergeColorfullOverlayIcons(),
+    das dann das Part_Detached-Icon zeigt. Einfach "irgendeine" Attachment-Referenz setzen
+    wuerde aber sketch.Placement SOFORT ueberschreiben (live getestet) - deshalb wird hier
+    zuerst mit AttachmentOffset=Identity angeheftet, die DADURCH entstehende Placement
+    ausgelesen, und der noetige Offset bis zur gewuenschten Zielposition nachtraeglich
+    draufgerechnet. Faellt auf direktes Placement-Setzen zurueck, falls die Referenz aus
+    irgendeinem Grund nicht anheftbar ist (z.B. unbekannter Objekttyp) - dann bleibt zwar das
+    kosmetische Symbol, aber die Platzierung ist trotzdem korrekt."""
+    try:
+        if subname and subname.startswith("Face"):
+            sketch.AttachmentSupport = [(ref_obj, [subname])]
+            sketch.MapMode = "FlatFace"
+        else:
+            sketch.AttachmentSupport = [(ref_obj, [""])]
+            sketch.MapMode = "ObjectXY"
+        sketch.AttachmentOffset = App.Placement()
+        sketch.positionBySupport()
+        base_placement = App.Placement(sketch.Placement)
+        offset = base_placement.inverse().multiply(desired_placement)
+        sketch.AttachmentOffset = offset
+        sketch.positionBySupport()
+    except Exception as exc:
+        App.Console.PrintWarning(
+            f"FCProject: SectionSketch: Sketch '{sketch.Label}' konnte nicht per Attachment "
+            f"platziert werden ({exc}) - verwende direkte Placement-Zuweisung.\n"
+        )
+        sketch.MapMode = "Deactivated"
+        sketch.AttachmentSupport = []
+        sketch.Placement = desired_placement
+
+
 def _stitch_wire_geometry(wire_geoms, tol=1e-4):
     """Schweisst die Enden aufeinanderfolgender Sketcher-Geometrie-Elemente EINER Kontur
     zusammen, die eigentlich denselben Punkt teilen sollten, aber durch Rundungsfehler aus
@@ -478,6 +518,17 @@ def _rebuild_sketch_geometry(sketch, local_wires):
         # Loesen + UI-Benachrichtigung) JETZT, mit dem fertigen Endzustand, statt auf den
         # naechsten ohnehin stattfindenden Dokument-Recompute zu warten.
         sketch.recompute()
+        # FCPROJECT-FIX (2026-11-08, Nutzer-Report "pinkes Symbol trotzdem noch da, Sichtbarkeit
+        # erst nach Berechnung"): sketch.recompute() allein reicht nicht - der Baum-Icon-Cache
+        # (das zusammengesetzte Icon inkl. Warnsymbol-Overlay) wird offenbar nur bei bestimmten
+        # Signalen neu gezeichnet, nicht automatisch bei jeder Shape-/Constraint-Aenderung.
+        # signalChangeIcon() ist genau der von FreeCADs ViewProvider dafuer vorgesehene,
+        # explizite Trigger (Gui::ViewProviderPy::signalChangeIcon(), src/Gui/
+        # ViewProviderPyImp.cpp) - zwingt den Baum, das Icon (und damit auch den fuer die
+        # 3D-Darstellung erforderlichen Redraw) jetzt neu abzufragen, statt erst beim naechsten,
+        # VOELLIG unabhaengigen Recompute.
+        if _GUI_AVAILABLE and sketch.ViewObject:
+            sketch.ViewObject.signalChangeIcon()
 
 
 class SectionSketchProxy:
@@ -782,7 +833,7 @@ class SectionSketchProxy:
         new_part_sketches = []
         for key, (candidate, wall_placement, part_wires) in edges_by_key.items():
             sketch = _get_or_create_part_sketch(doc, obj, existing_part_sketches, key, candidate.Label)
-            sketch.Placement = wall_placement
+            _place_sketch_via_attachment(sketch, ref_obj, subname, wall_placement)
             _rebuild_sketch_geometry(sketch, part_wires)
             if _GUI_AVAILABLE and sketch.ViewObject:
                 color = _color_for_part(candidate.Name)
