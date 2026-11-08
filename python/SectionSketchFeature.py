@@ -22,7 +22,7 @@ import Sketcher
 
 try:
     import FreeCADGui as Gui
-    from PySide6 import QtWidgets
+    from PySide6 import QtWidgets, QtCore
     _GUI_AVAILABLE = True
 except ImportError:
     _GUI_AVAILABLE = False
@@ -430,6 +430,21 @@ def _place_sketch_via_attachment(sketch, ref_obj, subname, desired_placement):
         offset = base_placement.inverse().multiply(desired_placement)
         sketch.AttachmentOffset = offset
         sketch.positionBySupport()
+        # FCPROJECT-FIX (2026-11-08, Folgefund beim GroundedJoint-Ausblenden): eine echte
+        # Attachment-Anheftung (MapMode != Deactivated/Translate) setzt die Placement-Property
+        # automatisch ReadOnly (Part::AttachExtension::updateAttacherVals(), freecad-source
+        # AttachExtension.cpp: "getPlacement().setReadOnly(bAttached && mmode != mmTranslate)").
+        # AssemblyObject::syncGroundedJoints() haelt GENAU dieses ReadOnly-Flag fuer das Zeichen
+        # "dies ist ein unbewegliches Baugruppen-Teil, das einen Erdungs-Anker braucht" - legt
+        # dadurch pro Schnitt-Sketch einen EIGENEN, voellig unnoetigen GroundedJoint an (live
+        # bestaetigt: GroundedJoint001..006 erdeten nicht Bauteile, sondern unsere eigenen
+        # SectionSketch-Objekte). Das Flag zurueckzusetzen aendert nichts an der Anheftung selbst
+        # (AttachmentSupport/MapMode bleiben, isAttacherActive() bleibt True, Pink-Icon bleibt
+        # weg) - es nimmt dem Solver nur den (falschen) Anlass, hierfuer einen Anker anzulegen.
+        try:
+            sketch.setPropertyStatus("Placement", "-ReadOnly")
+        except Exception:
+            pass
     except Exception as exc:
         App.Console.PrintWarning(
             f"FCProject: SectionSketch: Sketch '{sketch.Label}' konnte nicht per Attachment "
@@ -800,20 +815,68 @@ class SectionSketchProxy:
         # (auto_hidden_before) - Koerper, die der Nutzer unabhaengig davon schon selbst
         # ausgeblendet hatte, bleiben unberuehrt (die erscheinen hier gar nicht erst in
         # solids_found/candidates, siehe Visibility-Filter oben).
+        #
+        # FCPROJECT-FEATURE (2026-11-08, Nutzerwunsch "GroundedJoint Symbole ausblenden" -
+        # "die sollen ab Anfang an nach der Schnitterstellung ausgeblendet sein"): neben den
+        # Koerpern selbst werden jetzt auch die Anker-/Erdungs-Symbole der GroundedJoint-
+        # Objekte mit HideBodies ausgeblendet. GroundedJoint ist in FreeCADs Assembly-
+        # Werkbench kein eigener TypeId, sondern ein normales Joint-Objekt mit dem festen
+        # internen Namen "GroundedJoint" (ggf. "GroundedJoint001" usw. bei mehreren geerdeten
+        # Teilen) - deshalb per Namenspraefix gesucht, nicht per Typ. Landen in DERSELBEN
+        # AutoHiddenBodies-Buchhaltung wie die Koerper (unschaedlich: sie haben keine Solids,
+        # tauchen also nie als Schnitt-Kandidaten auf, siehe Kandidaten-Filter oben).
+        # Live-Fund: bei einer Baugruppe mit Unterbaugruppen (jede als eigenes, per App::Link
+        # eingebundenes PDM-Dokument - siehe Projekt-Konvention) liegt JEDE Unterbaugruppe mit
+        # ihrem EIGENEN GroundedJoint-Objekt in einem EIGENEN Dokument, nicht in 'doc' selbst -
+        # eine Suche nur in doc.Objects fand deshalb nur 1 von 7 GroundedJoint-Objekten. Alle
+        # aktuell offenen Dokumente durchsuchen statt nur 'doc'.
+        grounded_joints = [
+            o
+            for d in App.listDocuments().values()
+            for o in d.Objects
+            if o.Name.startswith("GroundedJoint")
+        ]
         if _GUI_AVAILABLE:
             if obj.HideBodies:
                 new_auto_hidden = []
-                for body in solids_found:
+                for body in solids_found + grounded_joints:
                     vis = getattr(body, "ViewObject", None)
                     if vis is None:
                         continue
                     vis.Visibility = False
                     new_auto_hidden.append(body)
+                still_hidden = set(solids_found) | set(grounded_joints)
                 for old_body in auto_hidden_before:
-                    if old_body not in solids_found:
+                    if old_body not in still_hidden:
                         vis = getattr(old_body, "ViewObject", None)
                         if vis is not None:
                             vis.Visibility = True
+                # FCPROJECT-FIX (2026-11-08, live beobachtet: von den 7 gefundenen
+                # GroundedJoint-Objekten blieb nur eins tatsaechlich ausgeblendet, die
+                # restlichen 6 waren danach wieder sichtbar): die Assembly-Loesung (MbD-
+                # Solver) laeuft fuer verschachtelte Unterbaugruppen teils NACH unserem
+                # execute() innerhalb DESSELBEN doc.recompute()-Durchlaufs und setzt dabei
+                # ihre eigenen Joint-Objekte sichtbar zurueck - unser direktes Setzen wird
+                # fuer die meisten GroundedJoints also schlicht ueberschrieben, bevor der
+                # Nutzer es ueberhaupt zu sehen bekommt. Ein zweiter, per QTimer auf NACH dem
+                # kompletten Event-Loop-Durchlauf verschobener Versuch gewinnt zuverlaessig
+                # gegen diesen spaeteren Solver-Reset.
+                # FCPROJECT-FIX (2026-11-08, Fortsetzung): ein EINZIGER QTimer, der alle
+                # GroundedJoints in einer Schleife ausblendet, half nicht (identisches
+                # Ergebnis wie ohne Timer - weiterhin nur 1 von 7 blieb versteckt). Jetzt
+                # pro GroundedJoint ein EIGENER, einzeln geplanter QTimer.singleShot(0, ...) -
+                grounded_names = [g.Name for g in grounded_joints]
+                # falls der Solver die Objekte nacheinander auf separaten Event-Loop-Durchlaeufen
+                # zuruecksetzt, gewinnt so jeder einzelne Hide-Versuch gegen seinen eigenen
+                # Reset, statt dass ein gemeinsamer Timer nur gegen den ERSTEN Reset ankommt.
+                for name in grounded_names:
+                    def _hide_one_grounded_joint_deferred(name=name):
+                        for d in App.listDocuments().values():
+                            g = d.getObject(name)
+                            if g is not None and getattr(g, "ViewObject", None) is not None:
+                                g.ViewObject.Visibility = False
+
+                    QtCore.QTimer.singleShot(0, _hide_one_grounded_joint_deferred)
                 obj.AutoHiddenBodies = new_auto_hidden
             elif auto_hidden_before:
                 for old_body in auto_hidden_before:
