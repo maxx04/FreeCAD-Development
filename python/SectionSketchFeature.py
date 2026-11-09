@@ -1008,6 +1008,29 @@ if _GUI_AVAILABLE:
         def getIcon(self):
             return os.path.join(ICON_DIR, 'section_sketch.svg')
 
+        def onChanged(self, vobj, prop):
+            # FCPROJECT-FEATURE (2026-11-10, Nutzerwunsch): der Container selbst hat keine
+            # eigene Shape (reine Verwaltung von PartSketches/CombinedShape, siehe
+            # SectionSketchProxy._add_properties) - Sichtbarkeit umschalten (Baum-Leertaste/
+            # Kontextmenue/Augen-Icon) hatte deshalb bisher KEINE sichtbare Wirkung in der
+            # 3D-Ansicht. Kaskadiert die Container-Sichtbarkeit jetzt auf alle Kinder, damit
+            # Ein-/Ausblenden des Ordners tatsaechlich den angezeigten Inhalt umschaltet.
+            if prop != "Visibility":
+                return
+            obj = getattr(vobj, "Object", None)
+            if obj is None:
+                return
+            visible = vobj.Visibility
+            for sketch in getattr(obj, "PartSketches", []):
+                sketch_vis = getattr(sketch, "ViewObject", None)
+                if sketch_vis is not None:
+                    sketch_vis.Visibility = visible
+            combined = getattr(obj, "CombinedShape", None)
+            if combined is not None:
+                combined_vis = getattr(combined, "ViewObject", None)
+                if combined_vis is not None:
+                    combined_vis.Visibility = visible
+
         def doubleClicked(self, vobj):
             # Kein eigenes TaskPanel bisher - Doppelklick markiert zumindest die aktuell
             # verwendete Referenzebene, damit man sie im Modellbaum wiederfindet.
