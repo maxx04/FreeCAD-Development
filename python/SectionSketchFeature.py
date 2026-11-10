@@ -817,19 +817,26 @@ class SectionSketchProxy:
         # solids_found/candidates, siehe Visibility-Filter oben).
         #
         # FCPROJECT-FEATURE (2026-11-08, Nutzerwunsch "GroundedJoint Symbole ausblenden" -
-        # "die sollen ab Anfang an nach der Schnitterstellung ausgeblendet sein"): neben den
-        # Koerpern selbst werden jetzt auch die Anker-/Erdungs-Symbole der GroundedJoint-
-        # Objekte mit HideBodies ausgeblendet. GroundedJoint ist in FreeCADs Assembly-
-        # Werkbench kein eigener TypeId, sondern ein normales Joint-Objekt mit dem festen
-        # internen Namen "GroundedJoint" (ggf. "GroundedJoint001" usw. bei mehreren geerdeten
-        # Teilen) - deshalb per Namenspraefix gesucht, nicht per Typ. Landen in DERSELBEN
-        # AutoHiddenBodies-Buchhaltung wie die Koerper (unschaedlich: sie haben keine Solids,
-        # tauchen also nie als Schnitt-Kandidaten auf, siehe Kandidaten-Filter oben).
-        # Live-Fund: bei einer Baugruppe mit Unterbaugruppen (jede als eigenes, per App::Link
-        # eingebundenes PDM-Dokument - siehe Projekt-Konvention) liegt JEDE Unterbaugruppe mit
-        # ihrem EIGENEN GroundedJoint-Objekt in einem EIGENEN Dokument, nicht in 'doc' selbst -
-        # eine Suche nur in doc.Objects fand deshalb nur 1 von 7 GroundedJoint-Objekten. Alle
-        # aktuell offenen Dokumente durchsuchen statt nur 'doc'.
+        # "die sollen ab Anfang an nach der Schnitterstellung ausgeblendet sein"): die
+        # Anker-/Erdungs-Symbole der GroundedJoint-Objekte werden ausgeblendet. GroundedJoint
+        # ist in FreeCADs Assembly-Werkbench kein eigener TypeId, sondern ein normales
+        # Joint-Objekt mit dem festen internen Namen "GroundedJoint" (ggf. "GroundedJoint001"
+        # usw. bei mehreren geerdeten Teilen) - deshalb per Namenspraefix gesucht, nicht per
+        # Typ. Live-Fund: bei einer Baugruppe mit Unterbaugruppen (jede als eigenes, per
+        # App::Link eingebundenes PDM-Dokument - siehe Projekt-Konvention) liegt JEDE
+        # Unterbaugruppe mit ihrem EIGENEN GroundedJoint-Objekt in einem EIGENEN Dokument,
+        # nicht in 'doc' selbst - eine Suche nur in doc.Objects fand deshalb nur 1 von 7
+        # GroundedJoint-Objekten. Alle aktuell offenen Dokumente durchsuchen statt nur 'doc'.
+        #
+        # FCPROJECT-FIX (2026-11-10, Nutzer-Report "das ist nicht korrekt ich sollen bodies
+        # gezeigt werden und nicht joints"): bis hierhin war GroundedJoint an dieselbe
+        # AutoHiddenBodies-Buchhaltung wie die Koerper gekoppelt - beim Ausschalten von
+        # HideBodies (Koerper absichtlich wieder einblenden, um sie zu inspizieren) wurde
+        # dadurch FAELSCHLICH auch das GroundedJoint-Symbol wieder sichtbar. Die urspruengliche
+        # Nutzeranforderung war aber "von Anfang an ausgeblendet", UNABHAENGIG vom
+        # HideBodies-Umschalter - deshalb jetzt komplett entkoppelt: GroundedJoints werden bei
+        # jedem execute() unconditional ausgeblendet und NIE durch die
+        # HideBodies=False-Wiederherstellung erfasst.
         grounded_joints = [
             o
             for d in App.listDocuments().values()
@@ -837,31 +844,25 @@ class SectionSketchProxy:
             if o.Name.startswith("GroundedJoint")
         ]
         if _GUI_AVAILABLE:
+            for g in grounded_joints:
+                vis = getattr(g, "ViewObject", None)
+                if vis is not None:
+                    vis.Visibility = False
+
             if obj.HideBodies:
                 new_auto_hidden = []
-                for body in solids_found + grounded_joints:
+                for body in solids_found:
                     vis = getattr(body, "ViewObject", None)
                     if vis is None:
                         continue
                     vis.Visibility = False
                     new_auto_hidden.append(body)
-                still_hidden = set(solids_found) | set(grounded_joints)
+                still_hidden = set(solids_found)
                 for old_body in auto_hidden_before:
                     if old_body not in still_hidden:
                         vis = getattr(old_body, "ViewObject", None)
                         if vis is not None:
                             vis.Visibility = True
-                # FCPROJECT-FIX (2026-11-10, zurueckgebaut): der QTimer-Workaround von
-                # 2026-11-08 (siehe Git-Historie) war ein Pflaster fuer PHANTOM-GroundedJoints,
-                # die der Assembly-Solver durch das damals noch offene ReadOnly-Flag-Problem
-                # erzeugte (siehe [[project_fcproject_groundedjoint_proliferation_bug]],
-                # behoben in _place_sketch_via_attachment() am selben Tag, Commit 60d8630).
-                # Seitdem existiert pro Teil nur noch EIN echtes GroundedJoint, direktes
-                # synchrones Ausblenden oben (vis.Visibility = False) reicht dafuer aus - der
-                # QTimer fasste stattdessen in einem spaeteren Event-Loop-Durchlauf erneut alle
-                # GroundedJoints an und wurde selbst zur Ursache gelegentlich wieder
-                # auftauchender Icons (Nutzer-Report 2026-11-10: "wenn ich umschalte hide
-                # bodies erscheint grounded joint").
                 obj.AutoHiddenBodies = new_auto_hidden
             elif auto_hidden_before:
                 for old_body in auto_hidden_before:
