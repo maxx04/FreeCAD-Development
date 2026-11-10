@@ -851,32 +851,17 @@ class SectionSketchProxy:
                         vis = getattr(old_body, "ViewObject", None)
                         if vis is not None:
                             vis.Visibility = True
-                # FCPROJECT-FIX (2026-11-08, live beobachtet: von den 7 gefundenen
-                # GroundedJoint-Objekten blieb nur eins tatsaechlich ausgeblendet, die
-                # restlichen 6 waren danach wieder sichtbar): die Assembly-Loesung (MbD-
-                # Solver) laeuft fuer verschachtelte Unterbaugruppen teils NACH unserem
-                # execute() innerhalb DESSELBEN doc.recompute()-Durchlaufs und setzt dabei
-                # ihre eigenen Joint-Objekte sichtbar zurueck - unser direktes Setzen wird
-                # fuer die meisten GroundedJoints also schlicht ueberschrieben, bevor der
-                # Nutzer es ueberhaupt zu sehen bekommt. Ein zweiter, per QTimer auf NACH dem
-                # kompletten Event-Loop-Durchlauf verschobener Versuch gewinnt zuverlaessig
-                # gegen diesen spaeteren Solver-Reset.
-                # FCPROJECT-FIX (2026-11-08, Fortsetzung): ein EINZIGER QTimer, der alle
-                # GroundedJoints in einer Schleife ausblendet, half nicht (identisches
-                # Ergebnis wie ohne Timer - weiterhin nur 1 von 7 blieb versteckt). Jetzt
-                # pro GroundedJoint ein EIGENER, einzeln geplanter QTimer.singleShot(0, ...) -
-                grounded_names = [g.Name for g in grounded_joints]
-                # falls der Solver die Objekte nacheinander auf separaten Event-Loop-Durchlaeufen
-                # zuruecksetzt, gewinnt so jeder einzelne Hide-Versuch gegen seinen eigenen
-                # Reset, statt dass ein gemeinsamer Timer nur gegen den ERSTEN Reset ankommt.
-                for name in grounded_names:
-                    def _hide_one_grounded_joint_deferred(name=name):
-                        for d in App.listDocuments().values():
-                            g = d.getObject(name)
-                            if g is not None and getattr(g, "ViewObject", None) is not None:
-                                g.ViewObject.Visibility = False
-
-                    QtCore.QTimer.singleShot(0, _hide_one_grounded_joint_deferred)
+                # FCPROJECT-FIX (2026-11-10, zurueckgebaut): der QTimer-Workaround von
+                # 2026-11-08 (siehe Git-Historie) war ein Pflaster fuer PHANTOM-GroundedJoints,
+                # die der Assembly-Solver durch das damals noch offene ReadOnly-Flag-Problem
+                # erzeugte (siehe [[project_fcproject_groundedjoint_proliferation_bug]],
+                # behoben in _place_sketch_via_attachment() am selben Tag, Commit 60d8630).
+                # Seitdem existiert pro Teil nur noch EIN echtes GroundedJoint, direktes
+                # synchrones Ausblenden oben (vis.Visibility = False) reicht dafuer aus - der
+                # QTimer fasste stattdessen in einem spaeteren Event-Loop-Durchlauf erneut alle
+                # GroundedJoints an und wurde selbst zur Ursache gelegentlich wieder
+                # auftauchender Icons (Nutzer-Report 2026-11-10: "wenn ich umschalte hide
+                # bodies erscheint grounded joint").
                 obj.AutoHiddenBodies = new_auto_hidden
             elif auto_hidden_before:
                 for old_body in auto_hidden_before:
@@ -1050,6 +1035,21 @@ if _GUI_AVAILABLE:
                 vis = getattr(body, "ViewObject", None)
                 if vis is not None:
                     vis.Visibility = True
+
+            # FCPROJECT-FIX (2026-11-10, Nutzerwunsch): Loeschen des Ordners (Containers)
+            # liess bisher PartSketches und CombinedShape als Karteileichen im Dokument
+            # zurueck - claimChildren() zeigte sie zwar NICHT mehr im Baum (ihr einziger
+            # Elternknoten war weg), aber sie blieben als echte, ungenutzte Objekte im
+            # Dokument bestehen. Kopie der Liste, bevor geloescht wird (Live-Mutation der
+            # PropertyLinkListHidden waehrend der Schleife waere sonst fehleranfaellig).
+            doc = vobj.Object.Document
+            children = list(getattr(vobj.Object, "PartSketches", []))
+            combined = getattr(vobj.Object, "CombinedShape", None)
+            if combined is not None:
+                children.append(combined)
+            for child in children:
+                if child is not None and doc.getObject(child.Name) is not None:
+                    doc.removeObject(child.Name)
             return True
 
         def __getstate__(self):
