@@ -499,6 +499,20 @@ def _stitch_wire_geometry(wire_geoms, tol=1e-4):
 
 
 def _rebuild_sketch_geometry(sketch, local_wires):
+    # FCPROJECT-FIX (2026-11-10, Nutzer-Report "Icon schaltet um, Geometrie bleibt sichtbar":
+    # live per echter Maus/Kontextmenue reproduziert, siehe
+    # [[project_fcproject_sectionsketch_next_checks]]): dieser komplette Geometrie-Rebuild
+    # laeuft UNCONDITIONAL bei JEDEM execute() von obj - und obj.Active=True heisst, execute()
+    # laeuft bei JEDEM Dokument-Recompute neu, nicht nur bei tatsaechlichen Geometrie-
+    # Aenderungen. sketch.recompute() + signalChangeIcon() weiter unten (noetig fuer den
+    # pinkes-Icon-Fix vom 2026-11-08) erzwingen dabei einen kompletten Coin3D-Redraw des
+    # Sketches - der scheint den sichtbaren Zustand dabei IMMER auf sichtbar zurueckzusetzen,
+    # unabhaengig vom tatsaechlichen Wert der Visibility-Eigenschaft (die selbst korrekt
+    # bestehen bleibt - nur der tatsaechliche Redraw ignoriert sie). Sichtbarkeit davor merken
+    # und danach per echter Property-Zuweisung erzwungen neu anwenden, damit der Redraw sie
+    # wieder respektiert (siehe ViewProviderDocumentObject::onChanged() in freecad-source,
+    # ruft bei Visibility-Aenderung zuverlaessig show()/hide() auf).
+    was_visible = sketch.ViewObject.Visibility if _GUI_AVAILABLE and sketch.ViewObject else None
     sketch.deleteAllGeometry()
     geoms = []
     for wire_edges in local_wires:
@@ -544,6 +558,8 @@ def _rebuild_sketch_geometry(sketch, local_wires):
         # VOELLIG unabhaengigen Recompute.
         if _GUI_AVAILABLE and sketch.ViewObject:
             sketch.ViewObject.signalChangeIcon()
+            if was_visible is not None:
+                sketch.ViewObject.Visibility = was_visible
 
 
 class SectionSketchProxy:
@@ -907,7 +923,7 @@ class SectionSketchProxy:
         combined_obj = existing_combined
         if combined_obj is None:
             combined_obj = doc.addObject("Part::Feature", f"{obj.Name}_Combined")
-            combined_obj.Label = f"{obj.Label} (Gesamt)"
+            combined_obj.Label = f"Gesamtschnitt: {ref_obj.Label}"
             if not hasattr(combined_obj, "Driver"):
                 combined_obj.addProperty(
                     "App::PropertyLink", "Driver", "Section",
@@ -925,13 +941,61 @@ class SectionSketchProxy:
             assembly = _find_assembly(doc)
             if assembly is not None and hasattr(assembly, "addObject"):
                 assembly.addObject(combined_obj)
+        elif combined_obj.Label.startswith("Schnitt-Sketch: ") and combined_obj.Label.endswith(" (Gesamt)"):
+            # FCPROJECT-FIX (2026-11-10, Nutzerwunsch "Label vom Gesamtschnitt aendern,
+            # alt Schnitt-Sketch: auf Gesamtschnitt:"): die alte Label-Konvention wiederholte
+            # praktisch den Ordner-Namen ("Schnitt-Sketch: X" Ordner + "Schnitt-Sketch: X
+            # (Gesamt)" Kind) - sah im Baum wie ein verdoppelter Eintrag aus. Migriert nur das
+            # Label bestehender, noch nicht manuell umbenannter Objekte (Driver/assembly-
+            # Zugehoerigkeit bestehen bei diesen schon seit ihrer urspruenglichen Erstellung) -
+            # echte Nutzer-Umbenennungen matchen dieses Muster nicht und bleiben unangetastet.
+            combined_obj.Label = f"Gesamtschnitt: {ref_obj.Label}"
         # Placement bewusst Identity (NICHT plane_placement): all_local_edges enthaelt
         # bereits WELTKOORDINATEN (siehe oben) - bei mehreren Waenden (gestufter Schnitt)
         # gibt es keine einzelne gemeinsame lokale Ebene mehr, in die man stattdessen
         # transformieren koennte.
+        # FCPROJECT-FIX (2026-11-10, gleicher Grund wie in _rebuild_sketch_geometry() -
+        # Shape-Zuweisung laeuft unconditional bei jedem execute() und scheint die
+        # tatsaechliche 3D-Sichtbarkeit zurueckzusetzen, unabhaengig vom Visibility-Wert):
+        # Sichtbarkeit merken, danach per echter Property-Zuweisung erneut anwenden.
+        combined_was_visible = (
+            combined_obj.ViewObject.Visibility if _GUI_AVAILABLE and combined_obj.ViewObject else None
+        )
         combined_obj.Placement = App.Placement()
         combined_obj.Shape = Part.makeCompound([e.copy() for e in all_local_edges]) if all_local_edges else Part.Shape()
         obj.CombinedShape = combined_obj
+        if combined_was_visible is not None and combined_obj.ViewObject.Visibility != combined_was_visible:
+            combined_obj.ViewObject.Visibility = combined_was_visible
+        if _GUI_AVAILABLE and combined_obj.ViewObject:
+            # FCPROJECT-FIX (2026-11-10, Nutzerbeobachtung "Linienfarbe aendert sich vom
+            # Gelb, sonst kommt schwarze Linie dazu"): anders als die Teil-Sketches (siehe
+            # oben, LineColor explizit pro Teil gesetzt) bekam der Gesamtschnitt bisher NIE
+            # eine eigene LineColor/PointColor - er fiel auf den undefinierten Default
+            # zurueck, der je nach zuletzt beteiligten Kanten/Teilen wechselte (mal "gelb"
+            # wirkend, mal schwarz). Fixe, einheitliche Farbe statt pro-Teil-Hash, weil der
+            # Gesamtschnitt bewusst ALLE Teile zusammengefasst zeigt.
+            combined_obj.ViewObject.LineColor = (0.0, 0.0, 0.0)
+            combined_obj.ViewObject.PointColor = (0.0, 0.0, 0.0)
+
+        # FCPROJECT-FIX (2026-11-10, siehe Kommentar bei doc.addObject("Part::FeaturePython",
+        # "SectionSketch") oben): obj braucht selbst eine echte Shape, damit FreeCADs
+        # ViewProvider::isShow()/toggleVisibility() korrekt funktionieren - sonst bleibt
+        # Sichtbarkeit-Umschalten (Leertaste/Kontextmenue) permanent bei "sichtbar" haengen.
+        # Dieselbe Compound-Geometrie wie CombinedShape (keine separate Berechnung noetig).
+        obj_was_visible = obj.ViewObject.Visibility if _GUI_AVAILABLE and obj.ViewObject else None
+        obj.Placement = App.Placement()
+        obj.Shape = combined_obj.Shape.copy()
+        if obj_was_visible is not None and obj.ViewObject.Visibility != obj_was_visible:
+            # FCPROJECT-FIX (2026-11-10, Nutzerbeobachtung "bei sichtbarem Ordner kann man
+            # Gesamtschnitt nicht unsichtbar schalten"): eine bedingungslose Neuzuweisung hier
+            # (auch auf denselben Wert) feuert IMMER ViewProviderSectionSketch.onChanged() mit
+            # prop=="Visibility" (jede explizite Python-Zuweisung einer Property loest das aus,
+            # unabhaengig davon ob sich der Wert wirklich aendert) - das kaskadiert die
+            # Container-Sichtbarkeit auf alle Kinder (siehe onChanged() weiter unten) und hat
+            # damit bei JEDEM Recompute eine manuell am Gesamtschnitt/Teil-Sketch vorgenommene
+            # Sichtbarkeits-Aenderung wieder ueberschrieben, solange der Ordner selbst sichtbar
+            # blieb. Nur noch zuweisen, wenn sich der Wert tatsaechlich geaendert hat.
+            obj.ViewObject.Visibility = obj_was_visible
 
         if not solids_found:
             App.Console.PrintWarning(
@@ -1068,7 +1132,18 @@ def make_section_sketch(doc, assembly, ref_obj, subname):
     Teil, siehe _get_or_create_part_sketch())."""
     doc.openTransaction("FCProject Section Sketch")
     try:
-        obj = doc.addObject("App::FeaturePython", "SectionSketch")
+        # FCPROJECT-FIX (2026-11-10, Nutzer-Frage "warum legst du Schnitte in nicht
+        # Geometrie-Objekte": traf den eigentlichen Kern des Umschalt-Bugs): "App::FeaturePython"
+        # hat KEINE Shape-Eigenschaft - FreeCADs ViewProvider::isShow() (prueft den Coin3D-
+        # Darstellungsmodus-Switch) bleibt dadurch PERMANENT False, egal was die Visibility-
+        # Eigenschaft sagt. ViewProvider::toggleVisibility() (Leertaste/Kontextmenue/
+        # Std_ToggleVisibility-Befehl) prueft GENAU isShow() und landet dadurch IMMER im
+        # else-Zweig (show()) - Sichtbarkeit laesst sich darueber nie auf "versteckt" schalten,
+        # bleibt nach jedem Umschalt-Versuch wieder bei True haengen (live reproduziert,
+        # 2026-11-10). "Part::FeaturePython" hat eine echte Shape-Eigenschaft - obj bekommt
+        # jetzt dieselbe Compound-Geometrie wie CombinedShape (siehe weiter unten), damit ein
+        # echter Darstellungsmodus existiert und isShow()/toggleVisibility() korrekt arbeiten.
+        obj = doc.addObject("Part::FeaturePython", "SectionSketch")
         obj.Label = f"Schnitt-Sketch: {ref_obj.Label}"
         SectionSketchProxy(obj)
         obj.ReferencePlane = (ref_obj, [subname] if subname else [])
