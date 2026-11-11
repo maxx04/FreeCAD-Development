@@ -924,6 +924,8 @@ class SectionSketchProxy:
         if combined_obj is None:
             combined_obj = doc.addObject("Part::Feature", f"{obj.Name}_Combined")
             combined_obj.Label = f"Gesamtschnitt: {ref_obj.Label}"
+            if _GUI_AVAILABLE and combined_obj.ViewObject:
+                combined_obj.ViewObject.Visibility = False
             if not hasattr(combined_obj, "Driver"):
                 combined_obj.addProperty(
                     "App::PropertyLink", "Driver", "Section",
@@ -1040,6 +1042,7 @@ if _GUI_AVAILABLE:
 
         def attach(self, vobj):
             self.Object = vobj.Object
+            self._last_visible = vobj.Visibility
 
         def claimChildren(self):
             children = list(self.Object.PartSketches)
@@ -1060,18 +1063,36 @@ if _GUI_AVAILABLE:
             if prop != "Visibility":
                 return
             obj = getattr(vobj, "Object", None)
-            if obj is None:
+            if obj is None or getattr(obj.Document, "Restoring", False):
                 return
             visible = vobj.Visibility
+            if visible == getattr(self, "_last_visible", None):
+                return  # jede explizite Zuweisung feuert onChanged - nur echte Aenderungen zaehlen
+            self._last_visible = visible
             for sketch in getattr(obj, "PartSketches", []):
                 sketch_vis = getattr(sketch, "ViewObject", None)
                 if sketch_vis is not None:
                     sketch_vis.Visibility = visible
+            # Ausblenden blendet auch den Gesamtschnitt aus; Einblenden laesst ihn unveraendert
+            # (Initialzustand: ausgeblendet, der Nutzer schaltet ihn bei Bedarf einzeln zu).
             combined = getattr(obj, "CombinedShape", None)
-            if combined is not None:
+            if combined is not None and not visible:
                 combined_vis = getattr(combined, "ViewObject", None)
                 if combined_vis is not None:
-                    combined_vis.Visibility = visible
+                    combined_vis.Visibility = False
+
+            # Nutzerwunsch 2026-11-11: Schnitt sichtbar <-> Koerper unsichtbar, und umgekehrt.
+            # HideBodies mitfuehren, damit der naechste Recompute (execute()) denselben Zustand
+            # herstellt statt ihn zurueckzudrehen; Koerper sofort direkt schalten, damit der
+            # Effekt ohne Recompute sichtbar ist.
+            bodies = list(obj.Dependencies) if visible else list(obj.AutoHiddenBodies)
+            for body in bodies:
+                body_vis = getattr(body, "ViewObject", None)
+                if body_vis is not None:
+                    body_vis.Visibility = not visible
+            if obj.HideBodies != visible:
+                obj.HideBodies = visible
+            obj.AutoHiddenBodies = bodies if visible else []
 
         def doubleClicked(self, vobj):
             # Kein eigenes TaskPanel bisher - Doppelklick markiert zumindest die aktuell
@@ -1139,12 +1160,10 @@ def make_section_sketch(doc, assembly, ref_obj, subname):
         obj.Label = f"Schnitt-Sketch: {ref_obj.Label}"
         SectionSketchProxy(obj)
         obj.ReferencePlane = (ref_obj, [subname] if subname else [])
-        # Neu angelegte Schnitte blenden die geschnittenen Koerper standardmaessig gleich
-        # mit aus (Nutzerwunsch, siehe HideBodies) - bereits BESTEHENDE SectionSketch-
-        # Objekte in alten Dokumenten behalten beim Laden bewusst ihren bisherigen
-        # Default (False, siehe _add_properties), damit sich fuer die nicht unangekuendigt
-        # etwas aendert.
-        obj.HideBodies = True
+        # Initialzustand (Nutzerwunsch 2026-11-11): Koerper bleiben eingeblendet, Gesamtschnitt
+        # ist ausgeblendet (siehe execute()). Ab dem ersten Umschalten des Ordners wechseln sich
+        # Schnitt und Koerper ab (siehe ViewProviderSectionSketch.onChanged()).
+        obj.HideBodies = False
 
         # FCPROJECT-FIX (2026-11-08, zurueckgerollt - siehe ausfuehrlicher Kommentar in
         # _get_or_create_part_sketch()): obj (und seine Kinder) bleiben MIT assembly.addObject()
