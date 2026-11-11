@@ -977,25 +977,17 @@ class SectionSketchProxy:
             combined_obj.ViewObject.LineColor = (0.0, 0.0, 0.0)
             combined_obj.ViewObject.PointColor = (0.0, 0.0, 0.0)
 
-        # FCPROJECT-FIX (2026-11-10, siehe Kommentar bei doc.addObject("Part::FeaturePython",
-        # "SectionSketch") oben): obj braucht selbst eine echte Shape, damit FreeCADs
-        # ViewProvider::isShow()/toggleVisibility() korrekt funktionieren - sonst bleibt
-        # Sichtbarkeit-Umschalten (Leertaste/Kontextmenue) permanent bei "sichtbar" haengen.
-        # Dieselbe Compound-Geometrie wie CombinedShape (keine separate Berechnung noetig).
-        obj_was_visible = obj.ViewObject.Visibility if _GUI_AVAILABLE and obj.ViewObject else None
-        obj.Placement = App.Placement()
-        obj.Shape = combined_obj.Shape.copy()
-        if obj_was_visible is not None and obj.ViewObject.Visibility != obj_was_visible:
-            # FCPROJECT-FIX (2026-11-10, Nutzerbeobachtung "bei sichtbarem Ordner kann man
-            # Gesamtschnitt nicht unsichtbar schalten"): eine bedingungslose Neuzuweisung hier
-            # (auch auf denselben Wert) feuert IMMER ViewProviderSectionSketch.onChanged() mit
-            # prop=="Visibility" (jede explizite Python-Zuweisung einer Property loest das aus,
-            # unabhaengig davon ob sich der Wert wirklich aendert) - das kaskadiert die
-            # Container-Sichtbarkeit auf alle Kinder (siehe onChanged() weiter unten) und hat
-            # damit bei JEDEM Recompute eine manuell am Gesamtschnitt/Teil-Sketch vorgenommene
-            # Sichtbarkeits-Aenderung wieder ueberschrieben, solange der Ordner selbst sichtbar
-            # blieb. Nur noch zuweisen, wenn sich der Wert tatsaechlich geaendert hat.
-            obj.ViewObject.Visibility = obj_was_visible
+        # FCPROJECT-FIX (2026-11-11, Nutzer-Report "Gesamtschnitt scheint 2 mal zu sein"): obj ist
+        # "Part::FeaturePython", damit ein Darstellungsmodus existiert und Sichtbarkeit-Umschalten
+        # funktioniert (siehe make_section_sketch()) - dafuer reicht aber der TYP, die Shape darf
+        # leer bleiben (per Sonde verifiziert: Umschalten geht auch mit Null-Shape). Eine Kopie
+        # der Gesamtschnitt-Geometrie hier liess den Ordner den kompletten Schnitt selbst
+        # mitzeichnen - ein zweiter Gesamtschnitt ohne eigene Baum-Zeile, der sich nicht getrennt
+        # ausblenden liess und exakt ueber Gesamtschnitt und Teilschnitten lag. Bedingt, damit
+        # Schnitte aus der Zwischenversion ihre Kopie beim naechsten Recompute verlieren, ohne
+        # bei jedem Durchlauf eine Property anzufassen.
+        if not obj.Shape.isNull():
+            obj.Shape = Part.Shape()
 
         if not solids_found:
             App.Console.PrintWarning(
@@ -1140,9 +1132,9 @@ def make_section_sketch(doc, assembly, ref_obj, subname):
         # Std_ToggleVisibility-Befehl) prueft GENAU isShow() und landet dadurch IMMER im
         # else-Zweig (show()) - Sichtbarkeit laesst sich darueber nie auf "versteckt" schalten,
         # bleibt nach jedem Umschalt-Versuch wieder bei True haengen (live reproduziert,
-        # 2026-11-10). "Part::FeaturePython" hat eine echte Shape-Eigenschaft - obj bekommt
-        # jetzt dieselbe Compound-Geometrie wie CombinedShape (siehe weiter unten), damit ein
-        # echter Darstellungsmodus existiert und isShow()/toggleVisibility() korrekt arbeiten.
+        # 2026-11-10). "Part::FeaturePython" bringt einen echten Darstellungsmodus mit,
+        # damit isShow()/toggleVisibility() korrekt arbeiten - die Shape selbst bleibt leer
+        # (siehe execute()), der Ordner zeichnet nichts Eigenes.
         obj = doc.addObject("Part::FeaturePython", "SectionSketch")
         obj.Label = f"Schnitt-Sketch: {ref_obj.Label}"
         SectionSketchProxy(obj)
