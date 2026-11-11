@@ -643,6 +643,12 @@ class SectionSketchProxy:
         # auszublenden ist aufwendig"): wenn aktiv, blendet execute() die gerade
         # geschnittenen Koerper automatisch aus (und beim Abschalten/Entfernen wieder ein),
         # statt das dem Nutzer von Hand zu ueberlassen.
+        if not hasattr(obj, 'TotalSketch'):
+            obj.addProperty(
+                "App::PropertyLinkHidden", "TotalSketch", "Section",
+                "Gesamtschnitt als normaler Sketch, wird bei jedem Recompute aktualisiert",
+                locked=True
+            )
         if not hasattr(obj, 'HideBodies'):
             obj.addProperty(
                 "App::PropertyBool", "HideBodies", "Section",
@@ -920,76 +926,38 @@ class SectionSketchProxy:
         # 4. Zusaetzlich ALLE Kanten zusammen als EIN nicht editierbares Objekt (fuer
         # TechDraw/Weiterverwendung "der ganze Schnitt als ein Stueck", wie vorher der eine
         # gemeinsame Sketch - auf Nutzerwunsch bewusst zusaetzlich erhalten).
+        # FCPROJECT-FIX (2026-11-11, Nutzerwunsch): das Part::Feature "Gesamtschnitt" gibt es fuer
+        # NEUE Schnitte nicht mehr - der Gesamtschnitt-Sketch (TotalSketch, siehe unten) ersetzt
+        # es. Bereits bestehende Schnitte behalten ihr altes Objekt und aktualisieren es weiter
+        # wie bisher (nichts in den Dokumenten des Nutzers wird geloescht).
         combined_obj = existing_combined
-        if combined_obj is None:
-            combined_obj = doc.addObject("Part::Feature", f"{obj.Name}_Combined")
-            combined_obj.Label = f"Gesamtschnitt: {ref_obj.Label}"
+        if combined_obj is not None:
+            if combined_obj.Label.startswith("Schnitt-Sketch: ") and combined_obj.Label.endswith(" (Gesamt)"):
+                combined_obj.Label = f"Gesamtschnitt: {ref_obj.Label}"
+            # Placement bewusst Identity (NICHT plane_placement): all_local_edges enthaelt
+            # bereits WELTKOORDINATEN (siehe oben).
+            combined_was_visible = (
+                combined_obj.ViewObject.Visibility if _GUI_AVAILABLE and combined_obj.ViewObject else None
+            )
+            combined_obj.Placement = App.Placement()
+            combined_obj.Shape = (
+                Part.makeCompound([e.copy() for e in all_local_edges]) if all_local_edges else Part.Shape()
+            )
+            if combined_was_visible is not None and combined_obj.ViewObject.Visibility != combined_was_visible:
+                combined_obj.ViewObject.Visibility = combined_was_visible
             if _GUI_AVAILABLE and combined_obj.ViewObject:
-                combined_obj.ViewObject.Visibility = False
-            if not hasattr(combined_obj, "Driver"):
-                combined_obj.addProperty(
-                    "App::PropertyLink", "Driver", "Section",
-                    "Erzeugendes SectionSketch-Feature (nur fuer die Berechnungsreihenfolge)"
-                )
-            combined_obj.Driver = obj
-            # FCPROJECT-FIX (2026-11-08, zurueckgerollt - siehe ausfuehrlicher Kommentar in
-            # _get_or_create_part_sketch()): ein Versuch, combined_obj NICHT in assembly.Group
-            # aufzunehmen (wegen Assemblys Klick-/Leertaste-Abfangen fuer die Sichtbarkeit),
-            # erzeugte live einen schlimmeren Folgefehler (GeoFeatureGroup-Scope-Warnung ueber
-            # das 'Driver'-PropertyLink zurueck auf obj) und vermutlich den gemeldeten
-            # Platzierungs-Versatz - deshalb wieder MIT assembly.addObject(). Sichtbarkeit laesst
-            # sich stattdessen zuverlaessig ueber die "Sichtbarkeit"-Zeile im Eigenschaften-
-            # Fenster (Daten/Ansicht-Tab) umschalten, nicht nur per Baum-Klick/Leertaste.
-            assembly = _find_assembly(doc)
-            if assembly is not None and hasattr(assembly, "addObject"):
-                assembly.addObject(combined_obj)
-        elif combined_obj.Label.startswith("Schnitt-Sketch: ") and combined_obj.Label.endswith(" (Gesamt)"):
-            # FCPROJECT-FIX (2026-11-10, Nutzerwunsch "Label vom Gesamtschnitt aendern,
-            # alt Schnitt-Sketch: auf Gesamtschnitt:"): die alte Label-Konvention wiederholte
-            # praktisch den Ordner-Namen ("Schnitt-Sketch: X" Ordner + "Schnitt-Sketch: X
-            # (Gesamt)" Kind) - sah im Baum wie ein verdoppelter Eintrag aus. Migriert nur das
-            # Label bestehender, noch nicht manuell umbenannter Objekte (Driver/assembly-
-            # Zugehoerigkeit bestehen bei diesen schon seit ihrer urspruenglichen Erstellung) -
-            # echte Nutzer-Umbenennungen matchen dieses Muster nicht und bleiben unangetastet.
-            combined_obj.Label = f"Gesamtschnitt: {ref_obj.Label}"
-        # Placement bewusst Identity (NICHT plane_placement): all_local_edges enthaelt
-        # bereits WELTKOORDINATEN (siehe oben) - bei mehreren Waenden (gestufter Schnitt)
-        # gibt es keine einzelne gemeinsame lokale Ebene mehr, in die man stattdessen
-        # transformieren koennte.
-        # FCPROJECT-FIX (2026-11-10, gleicher Grund wie in _rebuild_sketch_geometry() -
-        # Shape-Zuweisung laeuft unconditional bei jedem execute() und scheint die
-        # tatsaechliche 3D-Sichtbarkeit zurueckzusetzen, unabhaengig vom Visibility-Wert):
-        # Sichtbarkeit merken, danach per echter Property-Zuweisung erneut anwenden.
-        combined_was_visible = (
-            combined_obj.ViewObject.Visibility if _GUI_AVAILABLE and combined_obj.ViewObject else None
-        )
-        combined_obj.Placement = App.Placement()
-        combined_obj.Shape = Part.makeCompound([e.copy() for e in all_local_edges]) if all_local_edges else Part.Shape()
-        obj.CombinedShape = combined_obj
-        if combined_was_visible is not None and combined_obj.ViewObject.Visibility != combined_was_visible:
-            combined_obj.ViewObject.Visibility = combined_was_visible
-        if _GUI_AVAILABLE and combined_obj.ViewObject:
-            # FCPROJECT-FIX (2026-11-10, Nutzerbeobachtung "Linienfarbe aendert sich vom
-            # Gelb, sonst kommt schwarze Linie dazu"): anders als die Teil-Sketches (siehe
-            # oben, LineColor explizit pro Teil gesetzt) bekam der Gesamtschnitt bisher NIE
-            # eine eigene LineColor/PointColor - er fiel auf den undefinierten Default
-            # zurueck, der je nach zuletzt beteiligten Kanten/Teilen wechselte (mal "gelb"
-            # wirkend, mal schwarz). Fixe, einheitliche Farbe statt pro-Teil-Hash, weil der
-            # Gesamtschnitt bewusst ALLE Teile zusammengefasst zeigt.
-            combined_obj.ViewObject.LineColor = (0.0, 0.0, 0.0)
-            combined_obj.ViewObject.PointColor = (0.0, 0.0, 0.0)
+                combined_obj.ViewObject.LineColor = (0.0, 0.0, 0.0)
+                combined_obj.ViewObject.PointColor = (0.0, 0.0, 0.0)
 
-        # FCPROJECT-FIX (2026-11-11, Nutzer-Report "Gesamtschnitt scheint 2 mal zu sein"): obj ist
-        # "Part::FeaturePython", damit ein Darstellungsmodus existiert und Sichtbarkeit-Umschalten
-        # funktioniert (siehe make_section_sketch()) - dafuer reicht aber der TYP, die Shape darf
-        # leer bleiben (per Sonde verifiziert: Umschalten geht auch mit Null-Shape). Eine Kopie
-        # der Gesamtschnitt-Geometrie hier liess den Ordner den kompletten Schnitt selbst
-        # mitzeichnen - ein zweiter Gesamtschnitt ohne eigene Baum-Zeile, der sich nicht getrennt
-        # ausblenden liess und exakt ueber Gesamtschnitt und Teilschnitten lag. Bedingt, damit
-        # Schnitte aus der Zwischenversion ihre Kopie beim naechsten Recompute verlieren, ohne
-        # bei jedem Durchlauf eine Property anzufassen.
+        # FCPROJECT-FIX (2026-11-10, siehe Kommentar bei doc.addObject("Part::FeaturePython",
+        # "SectionSketch") in make_section_sketch()): obj bekommt keine eigene Shape - der Typ
+        # reicht, eine Kopie liess den Ordner den kompletten Schnitt selbst mitzeichnen.
         if not obj.Shape.isNull():
             obj.Shape = Part.Shape()
+
+        total_sketch = getattr(obj, "TotalSketch", None)
+        if total_sketch is not None and doc.getObject(total_sketch.Name) is not None:
+            _fill_total_sketch(total_sketch, obj, all_local_edges, ref_obj, subname)
 
         if not solids_found:
             App.Console.PrintWarning(
@@ -1048,6 +1016,8 @@ if _GUI_AVAILABLE:
             children = list(self.Object.PartSketches)
             if self.Object.CombinedShape is not None:
                 children.append(self.Object.CombinedShape)
+            if getattr(self.Object, "TotalSketch", None) is not None:
+                children.append(self.Object.TotalSketch)
             return children
 
         def getIcon(self):
@@ -1075,11 +1045,11 @@ if _GUI_AVAILABLE:
                     sketch_vis.Visibility = visible
             # Ausblenden blendet auch den Gesamtschnitt aus; Einblenden laesst ihn unveraendert
             # (Initialzustand: ausgeblendet, der Nutzer schaltet ihn bei Bedarf einzeln zu).
-            combined = getattr(obj, "CombinedShape", None)
-            if combined is not None and not visible:
-                combined_vis = getattr(combined, "ViewObject", None)
-                if combined_vis is not None:
-                    combined_vis.Visibility = False
+            if not visible:
+                for extra in (getattr(obj, "CombinedShape", None), getattr(obj, "TotalSketch", None)):
+                    extra_vis = getattr(extra, "ViewObject", None) if extra is not None else None
+                    if extra_vis is not None:
+                        extra_vis.Visibility = False
 
             # Nutzerwunsch 2026-11-11: Schnitt sichtbar <-> Koerper unsichtbar, und umgekehrt.
             # HideBodies mitfuehren, damit der naechste Recompute (execute()) denselben Zustand
@@ -1125,6 +1095,9 @@ if _GUI_AVAILABLE:
             combined = getattr(vobj.Object, "CombinedShape", None)
             if combined is not None:
                 children.append(combined)
+            total = getattr(vobj.Object, "TotalSketch", None)
+            if total is not None:
+                children.append(total)
             for child in children:
                 if child is not None and doc.getObject(child.Name) is not None:
                     doc.removeObject(child.Name)
@@ -1135,6 +1108,31 @@ if _GUI_AVAILABLE:
 
         def __setstate__(self, state):
             return None
+
+
+def _fill_total_sketch(sketch, section_obj, edges, ref_obj, subname):
+    """Fuellt den Gesamtschnitt-Sketch (Nutzerwunsch 2026-11-11) bei jedem Recompute neu aus
+    allen Schnittkanten (WELTKOORDINATEN, wie sie execute() sammelt). Wie die Teilschnitte
+    per echtem Attachment an der Referenz befestigt (sonst zeigt FreeCAD das rosa "nicht
+    befestigt"-Overlay), liegt in der Baugruppe, keine Block-Constraints. Manuelle
+    Aenderungen am Sketch werden beim Aktualisieren verworfen."""
+    sketch.deleteAllGeometry()
+    if not edges or not section_obj.PartSketches:
+        return
+    plane_placement = section_obj.PartSketches[0].Placement
+    _place_sketch_via_attachment(sketch, ref_obj, subname, plane_placement)
+    inv = plane_placement.inverse().toMatrix()
+    for wire_edges in Part.sortEdges(list(edges)):
+        wire_geoms = []
+        for edge in wire_edges:
+            local = edge.copy()
+            local.transformShape(inv, True)
+            wire_geoms.extend(_edge_to_sketch_geometry(local))
+        if len(wire_geoms) > 1:
+            _stitch_wire_geometry(wire_geoms)
+        if wire_geoms:
+            sketch.addGeometry(wire_geoms, False)
+    sketch.recompute()
 
 
 def make_section_sketch(doc, assembly, ref_obj, subname):
@@ -1175,6 +1173,22 @@ def make_section_sketch(doc, assembly, ref_obj, subname):
 
         if _GUI_AVAILABLE and obj.ViewObject:
             ViewProviderSectionSketch(obj.ViewObject)
+
+        # Gesamtschnitt zusaetzlich als normaler Sketch (wie die Teilschnitte in der Baugruppe,
+        # mit Driver-Link fuer die Berechnungsreihenfolge), am Anfang ausgeblendet; wird in
+        # execute() bei jedem Recompute neu gefuellt (siehe _fill_total_sketch()).
+        total = doc.addObject("Sketcher::SketchObject", f"{obj.Name}_GesamtSketch")
+        total.Label = f"Gesamtschnitt: {ref_obj.Label}"
+        total.addProperty(
+            "App::PropertyLink", "Driver", "Section",
+            "Erzeugendes SectionSketch-Feature (nur fuer die Berechnungsreihenfolge)"
+        )
+        total.Driver = obj
+        if assembly is not None and hasattr(assembly, 'addObject') and obj in assembly.Group:
+            assembly.addObject(total)
+        obj.TotalSketch = total
+        if _GUI_AVAILABLE and total.ViewObject:
+            total.ViewObject.Visibility = False
 
         doc.recompute()
         doc.commitTransaction()
