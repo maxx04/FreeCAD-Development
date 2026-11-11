@@ -78,3 +78,14 @@ unkritisch: `PurchasedPartCreator._collect_solids_from_refs()`/`_solids_from_sha
 sich die Volumenkörper unabhängig von der Struktur (live mit UseLinkGroup aktiv UND inaktiv
 getestet, Typ P 2026-11-06) - nur das Aussehen des (danach wieder verworfenen bzw. zu einem
 einzelnen Body reduzierten) Zwischenergebnisses variiert.
+1. **Schnitt-Sketch: hängt die Referenz des Schnitts selbst von der Baugruppe ab, entsteht der Schnitt
+(Ordner, Teilschnitte, Gesamtschnitt) auf DOKUMENTEBENE statt in der Baugruppen-Gruppe** (Nutzerwunsch
+2026-11-11). Typischer Fall: eine Datum-Ebene mit `AttachmentSupport = (Baugruppe, 'Origin.XZ_Plane.')`
+- dann ergibt Baugruppe → (Group) Schnitt → Datum-Ebene → Baugruppe einen Zyklus, FreeCAD meldet bei
+jedem Recompute "The graph must be a DAG" und lässt alle Beteiligten "still touched after recompute".
+Umgesetzt in `SectionSketchFeature._section_belongs_in_assembly()`; die Kinder (Teilschnitte, Gesamtschnitt)
+folgen immer dem Ordner. **Einschränkung:** Außerhalb der Gruppe fehlt die eigene Placement der Baugruppe
+(GeoFeatureGroups wenden sie kumulativ auf Mitglieder an), deshalb gilt das nur bei Identity-Placement der
+Baugruppe - sonst bleibt der Schnitt in der Gruppe, es gibt eine Warnung, und der Zyklus-Fehler tritt auf.
+Alternative ohne dieses Problem: Datum-Ebene direkt an das Ursprungs-Ebenen-Objekt anheften
+(`AttachmentSupport = [(Origin.XZ_Plane-Objekt, "")]`), nicht an die Baugruppe + Unterelement.

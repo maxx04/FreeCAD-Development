@@ -70,6 +70,30 @@ def _find_assembly(doc):
     return None
 
 
+def _section_belongs_in_assembly(assembly, ref_obj):
+    """False, wenn der Schnitt (samt Kindern) auf DOKUMENTEBENE entstehen muss statt in der
+    Baugruppen-Gruppe (Nutzerwunsch 2026-11-11, siehe docs/CONSTRAINTS.md): hängt die
+    Schnitt-Referenz selbst von der Baugruppe ab - typisch eine Datum-Ebene, die per
+    AttachmentSupport = (Baugruppe, 'Origin.XZ_Plane.') angeheftet ist -, ergibt
+    Baugruppe -> (Group) Schnitt -> Datum-Ebene -> Baugruppe einen Zyklus (FreeCAD meldet bei
+    jedem Recompute "The graph must be a DAG", alle Beteiligten bleiben "still touched").
+    Ausserhalb der Gruppe fehlt die eigene Placement der Baugruppe (siehe
+    _get_or_create_part_sketch()), deshalb nur bei Identity-Placement; sonst bleibt der Schnitt
+    in der Gruppe (und der Zyklus-Fehler wird in Kauf genommen)."""
+    if assembly is None:
+        return True
+    if ref_obj is not assembly and assembly not in ref_obj.OutListRecursive:
+        return True
+    if assembly.Placement.isIdentity(1e-9):
+        return False
+    App.Console.PrintWarning(
+        "FCProject: SectionSketch: Referenz haengt an der Baugruppe (Zyklus-Gefahr), die Baugruppe "
+        "ist aber verschoben/gedreht - Schnitt bleibt in der Baugruppe, 'The graph must be a DAG' "
+        "kann auftreten. Besser: Bezugsebene direkt an die Ursprungs-Ebene anheften.\n"
+    )
+    return True
+
+
 def _find_top_level_link_for(doc, target_obj):
     """FreeCADs 3D-Auswahl liefert bei per App::Link eingebundenen Teilen manchmal das
     ROHE Objekt aus dem verlinkten Quelldokument (z.B. ein PartDesign-Tip-Feature namens
@@ -393,8 +417,9 @@ def _get_or_create_part_sketch(doc, obj, existing_part_sketches, key, part_label
     # fuer das Sichtbarkeits-Problem gibt es einen einfacheren Umweg: die "Sichtbarkeit"-Zeile
     # im Eigenschaften-Fenster (Daten/Ansicht-Tab) umgehen Assemblys Baum-Klick-Abfangen, weil
     # sie ueber einen anderen UI-Pfad dieselbe ViewObject.Visibility-Eigenschaft setzt.
+    # Kinder folgen immer dem Container (siehe _section_belongs_in_assembly()).
     assembly = _find_assembly(doc)
-    if assembly is not None and hasattr(assembly, "addObject"):
+    if assembly is not None and hasattr(assembly, "addObject") and obj in assembly.Group:
         assembly.addObject(sketch)
 
     return sketch
@@ -1168,7 +1193,11 @@ def make_section_sketch(doc, assembly, ref_obj, subname):
         # - ein Versuch ohne fuehrte live zu einer GeoFeatureGroup-Scope-Warnung und vermutlich
         # zum gemeldeten Platzierungs-Versatz. Sichtbarkeit laesst sich stattdessen ueber die
         # "Sichtbarkeit"-Zeile im Eigenschaften-Fenster umschalten.
-        if assembly is not None and hasattr(assembly, 'addObject'):
+        if (
+            assembly is not None
+            and hasattr(assembly, 'addObject')
+            and _section_belongs_in_assembly(assembly, ref_obj)
+        ):
             assembly.addObject(obj)
 
         if _GUI_AVAILABLE and obj.ViewObject:
