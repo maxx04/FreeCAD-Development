@@ -71,25 +71,28 @@ def _find_assembly(doc):
 
 
 def _section_belongs_in_assembly(assembly, ref_obj):
-    """False, wenn der Schnitt (samt Kindern) auf DOKUMENTEBENE entstehen muss statt in der
-    Baugruppen-Gruppe (Nutzerwunsch 2026-11-11, siehe docs/CONSTRAINTS.md): hängt die
-    Schnitt-Referenz selbst von der Baugruppe ab - typisch eine Datum-Ebene, die per
-    AttachmentSupport = (Baugruppe, 'Origin.XZ_Plane.') angeheftet ist -, ergibt
-    Baugruppe -> (Group) Schnitt -> Datum-Ebene -> Baugruppe einen Zyklus (FreeCAD meldet bei
-    jedem Recompute "The graph must be a DAG", alle Beteiligten bleiben "still touched").
+    """False, wenn der Schnitt (samt Kindern) auf DOKUMENTEBENE entstehen soll statt in der
+    Baugruppen-Gruppe (Nutzerwunsch 2026-11-11 und 2026-11-24, siehe docs/CONSTRAINTS.md).
+    Zwei Gruende:
+    1. Zyklus: haengt die Schnitt-Referenz selbst von der Baugruppe ab (typisch eine Datum-Ebene
+       mit AttachmentSupport = (Baugruppe, 'Origin.XZ_Plane.')), ergibt Baugruppe -> (Group)
+       Schnitt -> Datum-Ebene -> Baugruppe einen Zyklus ("The graph must be a DAG").
+    2. Phantom-Erdungen: die angehefteten Sketches haben eine schreibgeschuetzte Placement
+       (AttachExtension setzt das bei jedem Recompute/Laden neu), und der Solver
+       (AssemblyObject::syncGroundedJoints) erdet jedes GeoFeature der Baugruppen-Gruppe mit
+       schreibgeschuetzter Placement ohne Erdung - pro Sketch ein eigener GroundedJoint. Ausserhalb
+       der Gruppe sieht der Solver sie nicht.
     Ausserhalb der Gruppe fehlt die eigene Placement der Baugruppe (siehe
-    _get_or_create_part_sketch()), deshalb nur bei Identity-Placement; sonst bleibt der Schnitt
-    in der Gruppe (und der Zyklus-Fehler wird in Kauf genommen)."""
+    _get_or_create_part_sketch()), deshalb nur bei Identity-Placement; sonst bleibt der Schnitt in
+    der Gruppe (Phantom-Erdungen und ggf. Zyklus-Fehler werden dann in Kauf genommen)."""
     if assembly is None:
-        return True
-    if ref_obj is not assembly and assembly not in ref_obj.OutListRecursive:
         return True
     if assembly.Placement.isIdentity(1e-9):
         return False
     App.Console.PrintWarning(
-        "FCProject: SectionSketch: Referenz haengt an der Baugruppe (Zyklus-Gefahr), die Baugruppe "
-        "ist aber verschoben/gedreht - Schnitt bleibt in der Baugruppe, 'The graph must be a DAG' "
-        "kann auftreten. Besser: Bezugsebene direkt an die Ursprungs-Ebene anheften.\n"
+        "FCProject: SectionSketch: die Baugruppe ist verschoben/gedreht - Schnitt bleibt in der "
+        "Baugruppe (sonst fehlt deren Placement). Dadurch koennen GroundedJoints fuer die Sketches "
+        "entstehen und bei einer an der Baugruppe haengenden Bezugsebene 'The graph must be a DAG'.\n"
     )
     return True
 

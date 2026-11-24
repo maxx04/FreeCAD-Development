@@ -78,14 +78,22 @@ unkritisch: `PurchasedPartCreator._collect_solids_from_refs()`/`_solids_from_sha
 sich die Volumenkörper unabhängig von der Struktur (live mit UseLinkGroup aktiv UND inaktiv
 getestet, Typ P 2026-11-06) - nur das Aussehen des (danach wieder verworfenen bzw. zu einem
 einzelnen Body reduzierten) Zwischenergebnisses variiert.
-1. **Schnitt-Sketch: hängt die Referenz des Schnitts selbst von der Baugruppe ab, entsteht der Schnitt
-(Ordner, Teilschnitte, Gesamtschnitt) auf DOKUMENTEBENE statt in der Baugruppen-Gruppe** (Nutzerwunsch
-2026-11-11). Typischer Fall: eine Datum-Ebene mit `AttachmentSupport = (Baugruppe, 'Origin.XZ_Plane.')`
-- dann ergibt Baugruppe → (Group) Schnitt → Datum-Ebene → Baugruppe einen Zyklus, FreeCAD meldet bei
-jedem Recompute "The graph must be a DAG" und lässt alle Beteiligten "still touched after recompute".
-Umgesetzt in `SectionSketchFeature._section_belongs_in_assembly()`; die Kinder (Teilschnitte, Gesamtschnitt)
-folgen immer dem Ordner. **Einschränkung:** Außerhalb der Gruppe fehlt die eigene Placement der Baugruppe
-(GeoFeatureGroups wenden sie kumulativ auf Mitglieder an), deshalb gilt das nur bei Identity-Placement der
-Baugruppe - sonst bleibt der Schnitt in der Gruppe, es gibt eine Warnung, und der Zyklus-Fehler tritt auf.
-Alternative ohne dieses Problem: Datum-Ebene direkt an das Ursprungs-Ebenen-Objekt anheften
+1. **Schnitt-Sketch: Ordner, Teilschnitte und Gesamtschnitt entstehen auf DOKUMENTEBENE, nicht in der
+Baugruppen-Gruppe** (Nutzerwunsch 2026-11-11, erweitert 2026-11-24). Gründe:
+(a) *Zyklus:* hängt die Referenz selbst von der Baugruppe ab (typisch eine Datum-Ebene mit
+`AttachmentSupport = (Baugruppe, 'Origin.XZ_Plane.')`), ergibt Baugruppe → (Group) Schnitt → Datum-Ebene →
+Baugruppe einen Zyklus: FreeCAD meldet bei jedem Recompute "The graph must be a DAG", alle Beteiligten
+bleiben "still touched after recompute".
+(b) *Phantom-Erdungen:* die an die Referenz angehefteten Sketches haben eine schreibgeschützte Placement
+(`AttachExtension` setzt das bei jedem Recompute/Laden neu), und `AssemblyObject::syncGroundedJoints()` erdet
+jedes GeoFeature der Baugruppen-Gruppe mit schreibgeschützter Placement ohne Erdung - pro Sketch ein eigener
+GroundedJoint (live beobachtet 2026-11-24 in `CNC_STK_003_A_Steuerbox`: GroundedJoint für jeden
+Teilschnitt und den Gesamtschnitt). Grundsatz des Nutzers: geerdet wird nur die Schnittebene, die Sketches
+sind daran gebunden (angeheftet) und brauchen keine eigene Erdung. Ausserhalb der Gruppe sieht der Solver
+die Sketches nicht.
+Umgesetzt in `SectionSketchFeature._section_belongs_in_assembly()`; die Kinder folgen immer dem Ordner.
+**Einschränkung:** Ausserhalb der Gruppe fehlt die eigene Placement der Baugruppe (GeoFeatureGroups wenden sie
+kumulativ auf Mitglieder an), deshalb gilt das nur bei Identity-Placement der Baugruppe - sonst bleibt der
+Schnitt in der Gruppe, es gibt eine Warnung, und (a)/(b) treten auf. Bestehende Schnitte werden nicht
+umgezogen. Alternative gegen (a): Datum-Ebene direkt an das Ursprungs-Ebenen-Objekt anheften
 (`AttachmentSupport = [(Origin.XZ_Plane-Objekt, "")]`), nicht an die Baugruppe + Unterelement.
