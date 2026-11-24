@@ -159,15 +159,34 @@ def _ancestor_placement(obj):
         return App.Placement()
 
 
+def _shape_without_element_map(obj, subname=""):
+    """Form von obj (bzw. ihres Unterelements) OHNE Element-Namen-Tabelle. Die Eigenschaft
+    obj.Shape baut bei einem App::Link aus Daten mehrerer Objekte mit unterschiedlichem Hasher
+    (Topologie-Benennung) eine Namenstabelle auf; FreeCAD meldet dabei bei jedem Zugriff
+    "TopoShapeExpansion.cpp: hasher mismatch" (harmlos, wir brauchen nur die Geometrie). Mit
+    noElementMap=True entsteht die Tabelle gar nicht - gleiche Geometrie, keine Warnung
+    (isoliert verifiziert, 2026-11-24). Faellt bei Fehlern auf obj.Shape zurueck."""
+    try:
+        shape = Part.getShape(obj, subname, needSubElement=bool(subname), noElementMap=True)
+        if shape is not None and not shape.isNull():
+            return shape
+    except Exception:
+        pass
+    shape = getattr(obj, "Shape", None)
+    if shape is None or shape.isNull():
+        return shape
+    return shape.getElement(subname) if subname else shape
+
+
 def _resolve_plane(ref_obj, subname):
     """Liefert (Basispunkt, Normalenvektor) der Schnittebene, frisch aus der AKTUELLEN
     Position von ref_obj berechnet - das ist der Grund, warum das bei jeder Baugruppen-
     Bewegung mitzieht, statt einmalig eingefroren zu sein."""
     ancestor = _ancestor_placement(ref_obj)
     if subname and subname.startswith("Face"):
-        if not hasattr(ref_obj, "Shape") or ref_obj.Shape is None or ref_obj.Shape.isNull():
+        face = _shape_without_element_map(ref_obj, subname)
+        if face is None or face.isNull():
             raise ValueError(f"'{ref_obj.Label}' hat keine gueltige Form mehr.")
-        face = ref_obj.Shape.getElement(subname)
         if not isinstance(face.Surface, Part.Plane):
             raise ValueError(f"Flaeche '{subname}' von '{ref_obj.Label}' ist nicht eben.")
         base = ancestor.multVec(face.CenterOfMass)
@@ -756,16 +775,19 @@ class SectionSketchProxy:
                 continue
             if not vis.Visibility and candidate not in auto_hidden_before:
                 continue
-            if not hasattr(candidate, "Shape") or candidate.Shape is None or candidate.Shape.isNull():
+            if not hasattr(candidate, "Shape"):
                 continue
-            if not candidate.Shape.Solids:
+            candidate_shape = _shape_without_element_map(candidate)
+            if candidate_shape is None or candidate_shape.isNull():
+                continue
+            if not candidate_shape.Solids:
                 continue
             # FCPROJECT-FIX (2026-11-08, siehe _ancestor_placement()): candidate.Shape ist nur
             # lokal zur umschliessenden Baugruppe - einmal pro Kandidat in ECHTE globale
             # Koordinaten umrechnen und das Ergebnis fuer den Rest von execute() (BoundBox UND
             # der eigentliche Schnitt weiter unten) wiederverwenden, statt mehrfach neu zu
             # transformieren.
-            global_shape = candidate.Shape.copy()
+            global_shape = candidate_shape.copy()
             global_shape.transformShape(_ancestor_placement(candidate).toMatrix(), True)
             candidate_global_shapes[candidate] = global_shape
             candidates.append(candidate)
