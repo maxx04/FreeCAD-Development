@@ -56,19 +56,31 @@ def is_locked(obj):
     return "ReadOnly" in obj.getPropertyStatus("Placement")
 
 
+def find_import_candidates(doc):
+    """Objekte in 'doc', auf die ein Import-Link zeigen kann (alle ohne Elternteil ueber
+    getParentGeoFeatureGroup()): zuerst die obersten Assembly::AssemblyObjects (damit die
+    komplette Baugruppe mitkommt), sonst die PDM-Objekte (eigene ArticleID), sonst alle
+    obersten Geometrie-Objekte (z.B. ein reines Einzelteil-Dokument ohne eigene Assembly).
+
+    FCPROJECT-FIX (2026-11-24): Liste statt nur des ersten Treffers - liegen mehrere Objekte in
+    einer Datei (gegen die Regel "in einer Datei nur ein Objekt", z.B. eine fremde Datei mit
+    mehreren Koerpern), soll nicht still das erste importiert werden."""
+    top = [o for o in doc.Objects if o.getParentGeoFeatureGroup() is None
+           and not o.TypeId.startswith("App::Origin")]
+    assemblies = [o for o in top if o.TypeId == "Assembly::AssemblyObject"]
+    if assemblies:
+        return assemblies
+    pdm = [o for o in top if o.TypeId != "App::Link" and "ArticleID" in o.PropertiesList
+           and getattr(o, "ArticleID", "")]
+    if pdm:
+        return pdm
+    return [o for o in top if o.isDerivedFrom("App::GeoFeature")]
+
+
 def find_top_assembly(doc):
-    """Findet das oberste Assembly::AssemblyObject in 'doc' (kein Elternteil ueber
-    getParentGeoFeatureGroup()) - das ist das Objekt, auf das das neue App::Link zeigen soll,
-    damit die komplette Baugruppe (nicht nur ein einzelnes Teil daraus) mitkommt. Faellt auf das
-    erste Top-Level-Objekt zurueck, falls kein Assembly-Objekt gefunden wird (z.B. ein reines
-    Einzelteil-Dokument ohne eigene Assembly)."""
-    for obj in doc.Objects:
-        if obj.TypeId == "Assembly::AssemblyObject" and obj.getParentGeoFeatureGroup() is None:
-            return obj
-    for obj in doc.Objects:
-        if obj.getParentGeoFeatureGroup() is None and not obj.TypeId.startswith("App::Origin"):
-            return obj
-    return None
+    """Erstes Objekt aus find_import_candidates() (bisherige Schnittstelle)."""
+    candidates = find_import_candidates(doc)
+    return candidates[0] if candidates else None
 
 
 def get_or_open_document(path):
@@ -93,11 +105,15 @@ def find_active_assembly():
         return None
 
 
-def make_import_component(active_doc, source_path):
+def make_import_component(active_doc, source_path, choose=None):
     """Erstellt ein neues App::Link, das auf die oberste Assembly von 'source_path' zeigt -
     Placement bleibt UNGESPERRT, der Nutzer positioniert danach selbst. Landet als Mitglied der
     gerade aktiven Assembly (siehe find_active_assembly()), falls eine im Bearbeiten-Modus ist -
-    sonst lose im Dokument-Root."""
+    sonst lose im Dokument-Root.
+
+    choose (2026-11-24): bietet die Datei mehrere Kandidaten (find_import_candidates()), waehlt
+    choose(kandidaten) einen aus (None = abgebrochen, dann None zurueck). Ohne choose ist das
+    ein Fehler mit der Kandidatenliste statt einer stillen Wahl des ersten."""
     # WICHTIG: die aktive Assembly VOR dem Oeffnen des Quelldokuments merken, nicht danach -
     # get_or_open_document()/App.openDocument() wechselt das aktive Dokument, und dieser
     # Dokumentwechsel beendet den Bearbeiten-Modus der gerade editierten Assembly (FreeCAD-
@@ -118,9 +134,17 @@ def make_import_component(active_doc, source_path):
     if _GUI_AVAILABLE:
         Gui.ActiveDocument = Gui.getDocument(active_doc)
 
-    target = find_top_assembly(source_doc)
-    if target is None:
+    candidates = find_import_candidates(source_doc)
+    if not candidates:
         raise RuntimeError(f"Kein geeignetes Objekt in '{source_doc.Name}' gefunden.")
+    target = candidates[0]
+    if len(candidates) > 1:
+        if choose is None:
+            names = ", ".join(c.Label for c in candidates)
+            raise RuntimeError(f"'{source_doc.Name}' enthaelt mehrere Objekte ({names}) - bitte eines waehlen.")
+        target = choose(candidates)
+        if target is None:
+            return None
 
     if active_assembly is not None and active_assembly.Document is active_doc:
         link = active_assembly.newObject("App::Link", "Import")
@@ -186,11 +210,22 @@ if _GUI_AVAILABLE:
             if not path:
                 return
 
+            def choose(candidates):
+                labels = [f"{c.Label} ({c.TypeId})" for c in candidates]
+                item, ok = QtWidgets.QInputDialog.getItem(
+                    main_win, "FCProject: Import-Komponente",
+                    "Die Datei enthaelt mehrere Objekte. Welches soll eingebunden werden?",
+                    labels, 0, False,
+                )
+                return candidates[labels.index(item)] if ok and item in labels else None
+
             try:
-                link = make_import_component(active_doc, path)
+                link = make_import_component(active_doc, path, choose)
             except Exception as exc:
                 QtWidgets.QMessageBox.warning(main_win, "FCProject", f"Import fehlgeschlagen: {exc}")
                 return
+            if link is None:
+                return  # Auswahl abgebrochen
 
             App.Console.PrintMessage(
                 f"FCProject: '{link.Label}' importiert (App::Link, noch UNGESPERRT) - "

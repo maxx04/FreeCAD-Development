@@ -34,13 +34,17 @@ if _user_mod_dir not in sys.path:
 import Utils  # noqa: E402  (erst nach dem sys.path-Bootstrap importierbar)
 
 
-def _find_pdm_root(doc):
-    """Findet das EINE PDM-Root-Objekt der Datei (siehe CONSTRAINTS.md: 'In einem Datei nur ein
-    Objekt') - erkannt an der ArticleID-Property, die alle fünf Creator (P/A/R/G/B) setzen."""
-    for obj in doc.Objects:
-        if hasattr(obj, "ArticleID") and getattr(obj, "ArticleID", None):
-            return obj
-    return None
+def _find_pdm_roots(doc):
+    """Findet die PDM-Root-Objekte der Datei - erkannt an der EIGENEN ArticleID-Property, die alle
+    fünf Creator (P/A/R/G/B) setzen. Laut CONSTRAINTS.md ('In einem Datei nur ein Objekt') ist es
+    genau eines; FCPROJECT-FIX (2026-11-24): liegen trotzdem mehrere in einer Datei, werden alle
+    nachgerüstet statt nur das erste. Links zählen nicht (sie tragen keine eigene ArticleID)."""
+    return [
+        obj for obj in doc.Objects
+        if obj.TypeId != "App::Link"
+        and "ArticleID" in getattr(obj, "PropertiesList", [])
+        and getattr(obj, "ArticleID", None)
+    ]
 
 
 def _has_real_lcs(root):
@@ -97,25 +101,31 @@ def retrofit_folder(project_dir, dry_run=True):
                 doc = App.openDocument(file_path)
                 opened_by_us = True
 
-            root = _find_pdm_root(doc)
+            roots = _find_pdm_roots(doc)
+            missing = [r for r in roots if not _has_real_lcs(r)]
 
-            if root is None:
+            if not roots:
                 skipped.append(file_path)
                 App.Console.PrintWarning(
                     f"FCProject Retrofit: Kein PDM-Objekt (ArticleID) in '{file_path}' gefunden - übersprungen.\n"
                 )
-            elif _has_real_lcs(root):
+            elif not missing:
                 already_ok.append(file_path)
             elif dry_run:
                 fixed.append(file_path)
-                App.Console.PrintMessage(f"FCProject Retrofit: [Probelauf] würde LCS ergänzen: '{file_path}'\n")
+                App.Console.PrintMessage(
+                    f"FCProject Retrofit: [Probelauf] würde LCS ergänzen ({len(missing)} Objekt(e)): '{file_path}'\n"
+                )
             else:
-                Utils.add_local_coordinate_system(root)
+                for root in missing:
+                    Utils.add_local_coordinate_system(root)
                 doc.recompute()
                 _backup(file_path)
                 doc.save()
                 fixed.append(file_path)
-                App.Console.PrintMessage(f"FCProject Retrofit: LCS ergänzt + gespeichert: '{file_path}'\n")
+                App.Console.PrintMessage(
+                    f"FCProject Retrofit: LCS ergänzt ({len(missing)} Objekt(e)) + gespeichert: '{file_path}'\n"
+                )
 
         except Exception as e:
             failed.append((file_path, str(e)))

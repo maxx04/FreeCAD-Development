@@ -1,4 +1,10 @@
 1. In einem Datei nur ein Objekt (Part, Assambly, Halbzeug)
+   Gilt für die eigenen PDM-Artikel (Dateiname = ArticleID = Label; Umbenennen, Nummern,
+   Teiletausch hängen an der Datei). Seit 2026-11-24 kommen die Werkzeuge aber auch mit Dateien
+   zurecht, die mehrere Objekte enthalten (fremde/importierte Dateien): Schnitt-Sketch ordnet den
+   Link nach Objekt zu (`_find_top_level_link_for`), DocObserver fragt dann nicht nach dem
+   Umbenennen, RetrofitLCS rüstet alle PDM-Objekte nach, die Import-Komponente lässt wählen.
+   Test: `tests/fc_multi_object_file_check.py`.
 1. Pattern Objekte: Part, Body, Assembly, Link, oder Elemente mit Shape.
 1. Beim suchen links fü Joints sind nur erste LCS zulässig, es wird weiter nicht gesucht.
 Es wird der erste direkte Outlink genommen, der ein ECHTES `App::LocalCoordinateSystem` ist (siehe

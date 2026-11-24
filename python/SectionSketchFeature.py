@@ -105,7 +105,16 @@ def _find_top_level_link_for(doc, target_obj):
     Placement/Shape - das rohe Quellobjekt bleibt in seinem eigenen Dokument fest.
 
     Sucht deshalb unter den DIREKTEN Kindern von 'doc' nach einem App::Link, dessen
-    aufgeloestes Ziel im selben Dokument wie target_obj liegt, und gibt DIESES zurueck.
+    aufgeloestes Ziel target_obj selbst oder ein Container von target_obj ist (Body des
+    Features, App::Part des Bodys) - und gibt DIESES zurueck.
+
+    FCPROJECT-FIX (2026-11-24, Fund beim Schnitt-Test): vorher genuegte ein Link, dessen Ziel
+    nur im selben DOKUMENT wie target_obj liegt. Liegen mehrere Koerper in einer Datei (gegen
+    die Regel "in einer Datei nur ein Objekt", aber z.B. bei fremden oder importierten Dateien),
+    war das der erste Link in diese Datei - womoeglich auf den falschen Koerper. Jetzt zaehlt
+    das Objekt; die Dokument-Zuordnung bleibt nur als Rueckfall, wenn sie eindeutig ist (genau
+    ein Link in dieses Dokument). Wird dasselbe Teil mehrfach eingebaut, ist es der erste Link.
+
     Deckt bewusst nur eine Verschachtelungsebene ab (reicht fuer direkt in der Baugruppe
     eingebundene Teile wie hier getestet) - fuer mehrfach verschachtelte Unterbaugruppen
     (Teil zwei oder mehr Ebenen tief) muesste das rekursiv durch alle AssemblyLinks
@@ -114,6 +123,16 @@ def _find_top_level_link_for(doc, target_obj):
     if target_doc is doc:
         return target_obj  # schon direkt im aktiven Dokument, kein Mirror noetig
 
+    containers = []
+    current = target_obj
+    while current is not None and current not in containers:
+        containers.append(current)
+        try:
+            current = current.getParentGeoFeatureGroup()
+        except Exception:
+            current = None
+
+    same_document = []
     for candidate in doc.Objects:
         if not candidate.isDerivedFrom("App::Link"):
             continue
@@ -121,8 +140,21 @@ def _find_top_level_link_for(doc, target_obj):
             linked = candidate.getLinkedObject(True)
         except Exception:
             continue
-        if linked is not None and linked.Document is target_doc:
+        if linked is None:
+            continue
+        if any(linked is c for c in containers):
             return candidate
+        if linked.Document is target_doc:
+            same_document.append(candidate)
+    if len(same_document) == 1:
+        return same_document[0]
+    if len(same_document) > 1:
+        App.Console.PrintWarning(
+            f"FCProject: SectionSketch: '{target_obj.Label}' liegt in einer Datei mit mehreren "
+            f"eingebauten Objekten ({', '.join(c.Label for c in same_document)}), keiner der Links "
+            "zeigt auf das Objekt selbst - Zuordnung nicht eindeutig, Auswahl wird unveraendert "
+            "verwendet.\n"
+        )
     return None
 
 

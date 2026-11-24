@@ -73,6 +73,11 @@ def _check_doc(doc):
         if not _is_project_folder(doc_dir):
             return
 
+        # FCPROJECT-FIX (2026-11-24): mehrere PDM-Objekte in einer Datei (gegen die Regel "in einer
+        # Datei nur ein Objekt", z.B. fremde Datei) - der Dateiname kann nur zu einem passen, also
+        # nicht nachfragen statt willkuerlich das erste zu nehmen.
+        if len(_find_pdm_objects(doc)) > 1:
+            return
         pdm_obj = _find_pdm_object(doc)
         if not pdm_obj:
             return
@@ -94,6 +99,16 @@ def _is_project_folder(folder):
     folder_name = os.path.basename(folder)
     json_path = os.path.join(folder, f"{folder_name}.json")
     return folder_name.startswith("PROJ_") and os.path.exists(json_path)
+
+
+def _has_own_article_id(obj):
+    """ArticleID als EIGENE Eigenschaft (nicht ueber einen Link durchgereicht) und gesetzt."""
+    return "ArticleID" in getattr(obj, "PropertiesList", []) and bool(getattr(obj, "ArticleID", ""))
+
+
+def _find_pdm_objects(doc):
+    """Alle PDM-Objekte (eigene ArticleID) des Dokuments, ausser Links (2026-11-24)."""
+    return [o for o in doc.Objects if o.TypeId != "App::Link" and _has_own_article_id(o)]
 
 
 def _find_pdm_object(doc):
