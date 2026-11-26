@@ -93,6 +93,22 @@ def attach_view_provider(binder):
         SyncBinderViewProvider(vobj)
 
 
+def style_binder(binder):
+    """Importierte Geometrie gelb und durchsichtig darstellen (Nutzerwunsch 2026-11-26)."""
+    vobj = getattr(binder, "ViewObject", None)
+    if not _GUI or vobj is None:
+        return
+    try:
+        if "UseBinderStyle" in vobj.PropertiesList:
+            vobj.UseBinderStyle = False
+        vobj.ShapeColor = (1.0, 0.85, 0.0)
+        vobj.LineColor = (0.85, 0.65, 0.0)
+        vobj.PointColor = (0.85, 0.65, 0.0)
+        vobj.Transparency = 60
+    except Exception as exc:  # noqa: BLE001
+        App.Console.PrintWarning(f"FCProject Sync-Binder: Farbe nicht gesetzt: {exc}\n")
+
+
 def holders_of(binder):
     """Halte-Objekte des Binders in Reihenfolge (Namen kommagetrennt in SyncHalter)."""
     names = [n for n in getattr(binder, "SyncHalter", "").split(",") if n]
@@ -146,7 +162,9 @@ def _ensure_holders(binder, count=1, labels=None):
         binder.Support = [(h, "") for h in holders]
     if binder.BindMode != "Synchronized":
         binder.BindMode = "Synchronized"
-    if count > 1 and "ClaimChildren" in binder.PropertiesList and not binder.ClaimChildren:
+    # Halte-Objekte als Kinder unter dem Binder zeigen (auch bei nur einem Halter und bei aelteren
+    # Bindern): sonst stehen Geometrie und Binder im Baum getrennt (Halter auf Dokumentebene)
+    if "ClaimChildren" in binder.PropertiesList and not binder.ClaimChildren:
         binder.ClaimChildren = True
     return holders
 
@@ -288,13 +306,16 @@ def create_sync_binder(top, target_element, source_elements, label=None):
     body = _fully_loaded(body)
     binder = body.newObject("PartDesign::SubShapeBinderPython", "SyncBinder")
     attach_view_provider(binder)
+    style_binder(binder)
     _add_sync_properties(binder)
     binder.SyncDatei = os.path.basename(top.Document.FileName)
     binder.SyncObjekt = top.Name
     binder.SyncPfad = prefix + binder.Name + "."
     binder.SyncQuellen = list(source_elements)
     binder.Synchronisiert = True
-    binder.Label = (label or "Sync-Binder") + ("" if (label or "").endswith(LABEL_SUFFIX) else LABEL_SUFFIX)
+    base = label or "Binder"
+    # "(Sync)" nur anhaengen, wenn der Name nicht schon "Sync" enthaelt ("Sync-Binder (Sync)" waere doppelt)
+    binder.Label = base if "sync" in base.lower() else base + LABEL_SUFFIX
     if len(source_elements) > 1:
         # Mappe: ein Halte-Objekt pro Quell-Element, als Kinder unter dem Binder (ClaimChildren)
         _ensure_holders(binder, len(source_elements), [_source_label(top, x) for x in source_elements])
@@ -462,6 +483,17 @@ def _find_document(file_name, near_doc=None):
     return matches[0] if matches else None
 
 
+def _without_element_map(shape):
+    """Reine Geometrie ohne Element-Namen-Tabelle. Part.getShape(..., noElementMap=True) wird bei Links
+    ignoriert: die Form kommt trotzdem mit einer Tabelle, deren Hasher zum Dokument der Baugruppe gehoert.
+    In der Teil-Datei gespeichert fuehrt das beim Laden zu "Missing element name prefix id" und beim
+    Neuberechnen der Binder und der darauf aufbauenden Features zu "hasher mismatch" (2026-11-26,
+    Steuerbox). Der Umweg ueber BREP verwirft die Tabelle; der Binder baut seine Namen selbst."""
+    clean = Part.Shape()
+    clean.importBrepFromString(shape.exportBrepToString())
+    return clean
+
+
 def _vertex_key(shape):
     return sorted((round(v.Point.x, 7), round(v.Point.y, 7), round(v.Point.z, 7)) for v in shape.Vertexes)
 
@@ -508,7 +540,10 @@ def sync(binder, force=False):
     shapes, missing = [], []
     for path in binder.SyncQuellen:
         try:
-            shape = Part.getShape(top, path, needSubElement=True)
+            # noElementMap: nur die Geometrie. Die Element-Namen (TNP) gehoeren zum Dokument der Baugruppe;
+            # in die Teil-Datei geschrieben verweisen sie auf deren String-Tabelle ("Missing element name
+            # prefix id" beim Laden) und loesen beim Lesen "hasher mismatch" aus (2026-11-26, Steuerbox).
+            shape = Part.getShape(top, path, needSubElement=True, noElementMap=True)
         except Exception:
             shape = Part.Shape()
         if shape.isNull():
@@ -531,7 +566,7 @@ def sync(binder, force=False):
         matrix = top.Placement.toMatrix()
 
     def to_body(world):
-        local = world.copy()
+        local = _without_element_map(world.copy())
         local.Placement = App.Placement(matrix.inverse()).multiply(world.Placement)
         # Der Binder (Relative = False) uebernimmt vom Halte-Objekt genau dessen GEOMETRIE: ohne
         # Umrechnung in seinen Body und ohne die Placement des Halte-Objekts (2026-11-26 gemessen).
@@ -549,7 +584,9 @@ def sync(binder, force=False):
         writes = [(holders[0], to_body(world))]
     changed = False
     for holder, local in writes:
-        if force or not _same_shape(local, holder.Shape):
+        # Halter aus aelteren Staenden tragen noch Element-Namen aus der Baugruppe: einmal bereinigen
+        has_old_names = holder.Shape.ElementMapSize > 0 and local.ElementMapSize == 0
+        if force or has_old_names or not _same_shape(local, holder.Shape):
             holder.Shape = local
             changed = True
     if not changed:
@@ -633,6 +670,66 @@ def _remove_orphan_holder(doc_name, holder_names):
         if holder is not None and not any(
                 is_sync_binder(o) and holder_name in o.SyncHalter.split(",") for o in doc.Objects):
             doc.removeObject(holder_name)
+
+
+def _assembly_document(file_name, near_doc, messages):
+    """Offenes Dokument der Baugruppe 'file_name' - ist sie nicht offen, wird sie unsichtbar im
+    Hintergrund geladen (mit Meldung im Log). None, wenn die Datei fehlt."""
+    assembly_doc = _find_document(file_name, near_doc)
+    if assembly_doc is not None:
+        return assembly_doc
+    path = os.path.join(os.path.dirname(near_doc.FileName), file_name)
+    if not os.path.exists(path):
+        messages.append(f"Baugruppe {file_name} nicht gefunden ({path})")
+        return None
+    App.Console.PrintMessage(
+        f"FCProject Sync-Binder: lade Baugruppe {file_name} im Hintergrund fuer die Sync-Binder in '{near_doc.Label}'.\n")
+    assembly_doc = App.openDocument(path, hidden=True)
+    App.Console.PrintMessage(f"FCProject Sync-Binder: Baugruppe {file_name} geladen.\n")
+    return assembly_doc
+
+
+def sync_document_binders(doc, force=True):
+    """Synchronisiert ALLE Sync-Binder in doc (Teil oder Baugruppe), auch die nicht automatisch
+    synchronisierten. Die dafuer noetigen Baugruppen werden bei Bedarf im Hintergrund geladen,
+    jeder Schritt steht im Log (Nutzerauftrag 2026-11-26). Gibt (doc, Meldungen) zurueck - doc kann ein
+    neu geladenes Dokument sein (war es nur teilweise geladen, wird es vollstaendig nachgeladen)."""
+    global _busy
+    binders = [o for o in doc.Objects if is_sync_binder(o)]
+    messages = []
+    if not binders:
+        return doc, messages
+    if getattr(doc, "Partial", False) and doc.FileName:
+        binders = [_fully_loaded(binders[0])]
+        doc = binders[0].Document
+        binders = [o for o in doc.Objects if is_sync_binder(o)]
+    active = App.ActiveDocument
+    changed = False
+    _busy = True
+    try:
+        for file_name in sorted({b.SyncDatei for b in binders}):
+            assembly_doc = _assembly_document(file_name, doc, messages)
+            group = [b for b in binders if b.SyncDatei == file_name]
+            if assembly_doc is None:
+                for b in group:
+                    _set_status(b, f"Baugruppe {file_name} nicht gefunden - letzte Form bleibt")
+                    messages.append(f"{b.Label}: Baugruppe {file_name} nicht gefunden - letzte Form bleibt")
+                continue
+            for b in group:
+                status, did = sync(b, force=force)
+                changed |= did
+                messages.append(f"{b.Label}: {status}")
+    except Exception as e:  # noqa: BLE001
+        messages.append(f"Fehler: {e}")
+        App.Console.PrintWarning(f"FCProject Sync-Binder: {e}\n")
+    finally:
+        _busy = False
+    if changed:
+        doc.recompute()
+    if _GUI and active is not None and active.Name in App.listDocuments() and App.ActiveDocument is not active:
+        App.setActiveDocument(active.Name)
+        Gui.ActiveDocument = Gui.getDocument(active.Name)
+    return doc, messages
 
 
 def _on_document_opened(doc_name):
@@ -746,7 +843,7 @@ if _GUI:
             self.Object = vobj.Object
 
         def getIcon(self):
-            return IconUtils.icon_path(ICON_DIR, "sync_binder.svg")
+            return IconUtils.icon_path(ICON_DIR, "sync_binder_tree.svg")
 
         def __getstate__(self):
             return None
@@ -817,9 +914,11 @@ if _GUI:
                 "Pixmap": IconUtils.icon_path(ICON_DIR, "sync_binder_update.svg"),
                 "MenuText": "FCProject: Sync-Binder aktualisieren",
                 "ToolTip": (
-                    "Aktualisiert alle Sync-Binder, die auf die aktive Baugruppe zeigen (auch die "
-                    "nicht automatisch synchronisierten). Normale Binder, die per Context auf diese "
-                    "Baugruppe zeigen (DAG-Kreis), werden auf Nachfrage in Sync-Binder umgewandelt."
+                    "Synchronisiert die Sync-Binder im aktuellen Teil bzw. in der aktuellen Baugruppe "
+                    "(auch die nicht automatisch synchronisierten); die dafuer noetigen Baugruppen werden "
+                    "im Hintergrund geladen (Meldungen im Log). Zeigen Sync-Binder anderer offener "
+                    "Dokumente auf diese Baugruppe, werden auch sie aktualisiert. Normale Binder, die per "
+                    "Context auf diese Baugruppe zeigen (DAG-Kreis), werden auf Nachfrage umgewandelt."
                 ),
             }
 
@@ -844,12 +943,18 @@ if _GUI:
                             messages.append(convert_native_binder(b))
                         except Exception as exc:
                             messages.append(f"'{b.Label}': {exc}")
+            # 1. Sync-Binder in DIESEM Teil bzw. dieser Baugruppe: die noetigen Baugruppen werden im
+            #    Hintergrund geladen (Meldungen im Log), die Binder fuer das Teil synchronisiert
+            doc, own = sync_document_binders(doc, force=True)
+            messages += [f"{doc.Label}: {m}" for m in own]
+            # 2. Sync-Binder anderer geoeffneter Dokumente, die auf diese Baugruppe zeigen
             results = sync_binders_of(doc, only_synchronized=False, force=True)
-            messages += [f"{b.Document.Label}: {b.Label} - {status}" for b, status, _ in results]
+            messages += [f"{b.Document.Label}: {b.Label} - {status}" for b, status, _ in results
+                         if b.Document is not doc]
             for m in messages:
                 App.Console.PrintMessage(f"FCProject Sync-Binder: {m}\n")
             if not messages:
-                messages = ["Keine Sync-Binder fuer diese Baugruppe gefunden."]
+                messages = ["Keine Sync-Binder in diesem Dokument oder fuer diese Baugruppe gefunden."]
             QtWidgets.QMessageBox.information(main_win, "FCProject", "\n".join(messages))
 
         def IsActive(self):

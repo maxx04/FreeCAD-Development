@@ -216,7 +216,7 @@ def main():
     proxy = getattr(nested.ViewObject, "Proxy", None)
     ok &= check("Baum-Icon des neuen Sync-Binders", nested.TypeId == "PartDesign::SubShapeBinderPython"
                 and SyncBinder.is_sync_binder(nested) and isinstance(proxy, SyncBinder.SyncBinderViewProvider)
-                and os.path.basename(proxy.getIcon()) in ("sync_binder.svg", "sync_binder_dark.svg"),
+                and os.path.basename(proxy.getIcon()) in ("sync_binder_tree.svg", "sync_binder_tree_dark.svg"),
                 f"{nested.TypeId}, Icon {proxy.getIcon() if hasattr(proxy, 'getIcon') else proxy}")
     outer.Placement1 = App.Placement(V(0, 0, 10), App.Rotation(V(1, 0, 0), 75))
     a.recompute()
@@ -239,6 +239,12 @@ def main():
     t.recompute()
     ok &= check("vier Kanten -> Flaeche (MakeFace)", len(framed.Shape.Faces) == 1 and len(framed.Shape.Edges) == 4,
                 f"{len(edge_paths)} Kanten, Binder hat {len(framed.Shape.Faces)} Flaeche(n)")
+
+    # 4b0. Standardname ohne doppeltes "(Sync)"
+    plain = SyncBinder.create_sync_binder(asm, f"{lt.Name}.Grundkoerper.Face6", ["Quelle.Face6"])
+    named = SyncBinder.create_sync_binder(asm, f"{lt.Name}.Grundkoerper.Face6", ["Quelle.Face6"], label="Sync-Binder_X")
+    ok &= check("Name ohne doppeltes (Sync)", plain.Label == "Binder (Sync)" and named.Label == "Sync-Binder_X",
+                f"'{plain.Label}' / '{named.Label}'")
 
     # 4c. Pfad-Bereinigung und Zielerkennung (2026-11-26, Arduino-STEP ohne Body als erstes Element)
     mapped = "Quelle.;Face14;:H92b,F;:H93b:8,F;:Ha25:12,F.Face6"
@@ -384,6 +390,39 @@ def main():
     ok &= check("Baum-Icon nach Speichern und Neuladen", nested is not None
                 and isinstance(proxy2, SyncBinder.SyncBinderViewProvider),
                 f"{nested.TypeId if nested is not None else None}, Proxy {type(proxy2).__name__}")
+    if a is None:
+        a = App.openDocument(p("bg.FCStd"))
+        asm, lq, lt = a.getObject("Assembly"), a.getObject("Quelle"), a.getObject("Teil")
+
+    # 5d. Befehl "Sync-Binder synchronisieren" im Teil: die Baugruppe wird im Hintergrund geladen und
+    # die Binder des Teils werden synchronisiert (ohne automatische Aktualisierung beim Oeffnen)
+    SyncBinder.unregister()
+    lq.Placement = App.Placement(V(3, 12, 10), App.Rotation(V(0, 0, 1), 77))
+    a.recompute()
+    a.save()
+    for d in list(App.listDocuments()):
+        App.closeDocument(d)
+    pump()
+    t = App.openDocument(p("teil.FCStd"))
+    pump()
+    assembly_open_before = SyncBinder._find_document("bg.FCStd", t) is not None
+    native = t.getObject("Binder")
+    stale = SyncBinder.holder_of(native).Shape.copy()
+    t, msgs = SyncBinder.sync_document_binders(t)
+    pump()
+    a = SyncBinder._find_document("bg.FCStd", t)
+    native, nested = t.getObject("Binder"), t.getObject("SyncBinder")
+    if a is not None:
+        asm, lq, lt = a.getObject("Assembly"), a.getObject("Quelle"), a.getObject("Teil")
+        truth = Part.getShape(asm, "Quelle.Face6", needSubElement=True)
+        seen = Part.getShape(asm, f"{lt.Name}.{native.Name}.")
+        moved = dist(stale, SyncBinder.holder_of(native).Shape)
+    ok &= check("Befehl: Baugruppe im Hintergrund geladen, Binder des Teils synchronisiert",
+                not assembly_open_before and a is not None and dist(seen, truth) < 1e-9 and moved > 1
+                and any("Binder" in m for m in msgs),
+                f"Baugruppe vorher offen: {assembly_open_before}, jetzt: {a is not None}, Lage "
+                f"{dist(seen, truth):.2e}, Kopie bewegt {moved:.1f}, {len(msgs)} Meldung(en)")
+    SyncBinder.register()
     if a is None:
         a = App.openDocument(p("bg.FCStd"))
         asm, lq, lt = a.getObject("Assembly"), a.getObject("Quelle"), a.getObject("Teil")

@@ -1,6 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
-  <!-- Sync-Binder: gruene Flaeche wie das Binder-Icon (Dreieck auf der breiten Seite), rote Eckpunkte
-       wie beim Binder, blaues Synchronisier-Zeichen (zwei Pfeile im Kreis) -->
+  <!-- Sync-Binder anlegen: gruenes Dreieck auf der breiten Seite, rote Eckpunkte wie beim Binder -->
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#73d216"/>
@@ -12,14 +11,6 @@
     </radialGradient>
   </defs>
   <path d="M7 53 L57 53 L32 9 Z" fill="url(#g)" stroke="#b8f070" stroke-width="3" stroke-linejoin="round"/>
-  <g fill="none" stroke-linecap="round">
-    <path d="M23.5 37 A9 9 0 0 1 40.5 37" stroke="#1e1e1e" stroke-width="6.5" opacity="0.7"/>
-    <path d="M40.5 41 A9 9 0 0 1 23.5 41" stroke="#1e1e1e" stroke-width="6.5" opacity="0.7"/>
-    <path d="M23.5 37 A9 9 0 0 1 40.5 37" stroke="#8fb8ea" stroke-width="3.2"/>
-    <path d="M40.5 41 A9 9 0 0 1 23.5 41" stroke="#8fb8ea" stroke-width="3.2"/>
-  </g>
-  <path d="M36.5 36.5 L44.5 36.5 L40.5 42.5 Z" fill="#8fb8ea" stroke="#1e1e1e" stroke-width="1.2" stroke-linejoin="round"/>
-  <path d="M27.5 41.5 L19.5 41.5 L23.5 35.5 Z" fill="#8fb8ea" stroke="#1e1e1e" stroke-width="1.2" stroke-linejoin="round"/>
   <g fill="url(#r)" stroke="#4a0000" stroke-width="2">
     <circle cx="9" cy="51" r="5.5"/>
     <circle cx="55" cy="51" r="5.5"/>
