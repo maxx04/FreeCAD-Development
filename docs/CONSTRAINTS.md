@@ -103,3 +103,20 @@ kumulativ auf Mitglieder an), deshalb gilt das nur bei Identity-Placement der Ba
 Schnitt in der Gruppe, es gibt eine Warnung, und (a)/(b) treten auf. Bestehende Schnitte werden nicht
 umgezogen. Alternative gegen (a): Datum-Ebene direkt an das Ursprungs-Ebenen-Objekt anheften
 (`AttachmentSupport = [(Origin.XZ_Plane-Objekt, "")]`), nicht an die Baugruppe + Unterelement.
+1. **Binder im Teil auf Geometrie aus der Baugruppe, die dieses Teil einbaut, nur als Sync-Binder**
+(Nutzerauftrag 2026-11-26). Ein normaler SubShapeBinder mit `Support`/`Context` auf die Baugruppe
+erzeugt einen Kreis über die Dateien (Teil → Baugruppe → Teil, "Document::getDependentDocuments: The
+graph must be a DAG"), keine Bindungsart vermeidet das. Der Sync-Binder (`SyncBinder.py`, Befehle
+"Sync-Binder anlegen" / "Sync-Binder aktualisieren") ist ein normaler, synchronisierter Binder auf ein
+verstecktes Halte-Objekt in DERSELBEN Teil-Datei (`<Binder>_SyncQuelle`), `Relative = False`, ohne
+Context; die Quelle steht nur als Text (`SyncDatei`, `SyncObjekt`, `SyncPfad`, `SyncQuellen`). Die
+Baugruppe rechnet von oben nach unten: nach jedem Neuberechnen schreibt sie die Quellgeometrie in der
+gelösten Lage (auch durch verschachtelte Unterbaugruppen/Spiegel) in Body-Koordinaten der Teil-Instanz
+in das Halte-Objekt (`Synchronisiert`, Standard an; sonst nur per Befehl). Teilweise geladene
+Teil-Dateien werden dafür vollständig nachgeladen (FreeCAD speichert Änderungen an ihnen sonst nicht).
+"Sync-Binder aktualisieren" wandelt normale Binder mit Context auf die aktive Baugruppe auf Nachfrage
+um; Verweise von Skizzen auf Binder-Elemente bleiben erhalten. Beim Ziehen mit der Maus folgt der
+Binder erst nach dem Loslassen. Wird das Teil allein geöffnet, lädt der Sync-Binder (wie die
+Verknüpfung eines normalen Binders) die Baugruppe unsichtbar mit und aktualisiert sich sofort; fehlt die
+Baugruppen-Datei, bleibt die zuletzt kopierte Form.
+Test: `tests/fc_sync_binder_check.py`.

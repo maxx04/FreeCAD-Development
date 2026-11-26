@@ -60,8 +60,10 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
         import PartPlayerCommand as PartPlayerCommand
         import ResetPlacementCommand as ResetPlacementCommand
         import RenamePartCommand as RenamePartCommand
+        import SyncBinder as SyncBinder
         import DocObserver
         DocObserver.register()
+        SyncBinder.register()
 
         self.appendToolbar("FCProject Tools", [
             "FCProject_ProjectManager",
@@ -74,7 +76,9 @@ class FCProjectWorkbench(FreeCADGui.Workbench):
             "FCProject_PositionByInterface",
             "FCProject_PartPlayer",
             "FCProject_ResetPlacement",
-            "FCProject_RenamePart"
+            "FCProject_RenamePart",
+            "FCProject_CreateSyncBinder",
+            "FCProject_UpdateSyncBinders"
         ])
 
 
@@ -195,5 +199,7 @@ import InterfacePlacementFeature as InterfacePlacementFeature
 import PartPlayerCommand as PartPlayerCommand
 import ResetPlacementCommand as ResetPlacementCommand
 import RenamePartCommand as RenamePartCommand
+import SyncBinder as SyncBinder
 import DocObserver
 DocObserver.register()
+SyncBinder.register()

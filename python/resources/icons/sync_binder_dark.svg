@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Sync-Binder: Nachbarteil (grau) wird als Kontur in das eigene Teil (blau) kopiert -->
+  <rect x="6" y="26" width="34" height="30" rx="2" fill="#4A90E2" stroke="#E0E0E0" stroke-width="1.5"/>
+  <rect x="30" y="8" width="26" height="20" rx="2" fill="#B0B0B0" stroke="#E0E0E0" stroke-width="1.5"/>
+  <rect x="30" y="30" width="10" height="10" fill="none" stroke="#F5A623" stroke-width="2.5" stroke-dasharray="3,2"/>
+  <path d="M43 30 L43 36 M40 33 L43 36 L46 33" fill="none" stroke="#F5A623" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
