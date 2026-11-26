@@ -12,7 +12,7 @@ Checked:
   - ImportComponentCommand: several candidates -> error without chooser, chosen one with chooser
 
 Run inside FreeCAD with GUI (e.g. under Xvfb):
-    <sandbox>/standalone-check/kinematic-tests/common/run-test.sh <freecad> tests/fc_multi_object_file_check.py
+    <sandbox>/sandbox-tests/common/run-test.sh <freecad> tests/fc_multi_object_file_check.py
 Prints "RESULT: PASS" or "RESULT: FAIL".
 """
 import os

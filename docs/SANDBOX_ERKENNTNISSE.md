@@ -34,7 +34,7 @@ ihre Tests direkt nutzbar ist.
 
 ## 2. Testen ohne GUI-Klicks (Xvfb)
 
-- Sandbox-Testrahmen: `assembly-solver-sandbox/standalone-check/kinematic-tests/common/run-test.sh
+- Sandbox-Testrahmen: `assembly-solver-sandbox/sandbox-tests/common/run-test.sh
   <install-Ordner|AppImage> <skript.py>` startet FreeCAD **mit GUI** unter Xvfb, eigenes
   Testprofil, `--log-file`. Funktioniert auch für Skripte außerhalb des Repos (so laufen die
   MotionProfiles-Addon-Tests).

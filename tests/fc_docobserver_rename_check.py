@@ -5,7 +5,7 @@ spreadsheet cell) link to it. Expected: all references point to the new file, th
 a .FCBak, nothing else in B changed, and B reopens with a working link.
 
 Run inside FreeCAD with GUI (e.g. under Xvfb):
-    <sandbox>/standalone-check/kinematic-tests/common/run-test.sh <freecad> tests/fc_docobserver_rename_check.py
+    <sandbox>/sandbox-tests/common/run-test.sh <freecad> tests/fc_docobserver_rename_check.py
 Prints "RESULT: PASS" or "RESULT: FAIL".
 """
 import glob

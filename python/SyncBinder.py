@@ -7,7 +7,8 @@ und Context auf die Baugruppe (CNC_STK_003_A_Steuerbox), die das Teil selbst ein
 001 -> 003 -> 001, FreeCAD meldet "Document::getDependentDocuments: The graph must be a DAG".
 Keine Bindungsart vermeidet das (Frozen behaelt Support, Detached behaelt Context).
 
-Loesung: der Sync-Binder ist ein ganz normaler, SYNCHRONISIERTER PartDesign::SubShapeBinder im Body
+Loesung: der Sync-Binder ist ein ganz normaler, SYNCHRONISIERTER PartDesign::SubShapeBinder (neu angelegt als
+SubShapeBinderPython, nur damit der Baum sein eigenes Icon zeigen kann) im Body
 des Teils (MakeFace, Refine, Offset und Flaechennamen wie gewohnt). Seine Quelle ist aber nicht die
 Baugruppe, sondern ein verstecktes Halte-Objekt (Part::Feature "<Binder>_SyncQuelle") in DERSELBEN
 Teil-Datei - kein Verweis nach aussen, also kein Kreis. In das Halte-Objekt schreibt die
@@ -18,7 +19,9 @@ Eigenschaften des Binders (Gruppe FCProject_Sync):
     SyncPfad       Pfad ab diesem Objekt zu DIESEM Binder in der Baugruppe ("Link.Binder."),
                    wie die Unterpfad-Angabe von Context - legt die Instanz des Teils fest
     SyncQuellen    Pfade ab dem obersten Objekt zu den Quell-Elementen ("Arduino.Edge12")
-    SyncHalter     interner Name des Halte-Objekts
+    SyncHalter     interner Name des Halte-Objekts (bei mehreren Quellen eine kommagetrennte Liste:
+                   ein Halte-Objekt PRO Quelle - der Binder ist dann eine "Mappe" mit den Elementen
+                   darunter, siehe ClaimChildren)
     Synchronisiert True: nach jedem Neuberechnen der Baugruppe automatisch aktualisieren
 Die Baugruppe rechnet von oben nach unten: nach ihrem Neuberechnen holt die Synchronisierung die
 Quellgeometrie in der geloesten Lage (auch durch verschachtelte Unterbaugruppen und Spiegel),
@@ -34,6 +37,7 @@ Dateikompatibel: Vanilla-FreeCAD oeffnet den Sync-Binder als normalen Binder auf
 (zeigt die zuletzt kopierte Form); die Zusatz-Eigenschaften bleiben erhalten.
 """
 import os
+import re
 import time
 
 import FreeCAD as App
@@ -46,6 +50,10 @@ except ImportError:
     _GUI = False
 
 GROUP = "FCProject_Sync"
+# Normaler Binder; die Python-Variante wird fuer neu angelegte Sync-Binder benutzt: nur sie erlaubt
+# einem Python-Proxy im View Provider, das Baum-Icon zu bestimmen (das Icon des normalen Binders ist
+# im FreeCAD-Kern festgelegt). Gleiche Eigenschaften und gleiches Verhalten.
+BINDER_TYPES = ("PartDesign::SubShapeBinder", "PartDesign::SubShapeBinderPython")
 LABEL_SUFFIX = " (Sync)"
 
 
@@ -54,7 +62,7 @@ LABEL_SUFFIX = " (Sync)"
 def is_sync_binder(obj):
     return (
         obj is not None
-        and obj.TypeId == "PartDesign::SubShapeBinder"
+        and obj.TypeId in BINDER_TYPES
         and "SyncQuellen" in obj.PropertiesList
     )
 
@@ -76,19 +84,51 @@ def _add_sync_properties(binder):
     binder.setEditorMode("SyncHalter", 1)
 
 
+def attach_view_provider(binder):
+    """Haengt den View Provider mit dem Sync-Icon an (nur Python-Variante, nur mit Oberflaeche)."""
+    if not _GUI or binder.TypeId != "PartDesign::SubShapeBinderPython":
+        return
+    vobj = getattr(binder, "ViewObject", None)
+    if vobj is not None and not isinstance(getattr(vobj, "Proxy", None), SyncBinderViewProvider):
+        SyncBinderViewProvider(vobj)
+
+
+def holders_of(binder):
+    """Halte-Objekte des Binders in Reihenfolge (Namen kommagetrennt in SyncHalter)."""
+    names = [n for n in getattr(binder, "SyncHalter", "").split(",") if n]
+    objs = [binder.Document.getObject(n) for n in names]
+    return [o for o in objs if o is not None]
+
+
 def holder_of(binder):
-    name = getattr(binder, "SyncHalter", "")
-    return binder.Document.getObject(name) if name else None
+    holders = holders_of(binder)
+    return holders[0] if holders else None
 
 
-def _ensure_holder(binder):
-    """Halte-Objekt anlegen (Dokument-Ebene, versteckt) und den Binder synchronisiert darauf binden."""
-    holder = holder_of(binder)
-    if holder is None:
-        holder = binder.Document.addObject("Part::Feature", binder.Name + "_SyncQuelle")
-        holder.Label = binder.Label.replace(LABEL_SUFFIX, "") + " Quelle (Sync)"
+def _ensure_holders(binder, count=1, labels=None):
+    """Halte-Objekte anlegen (Dokument-Ebene, versteckt) und den Binder synchronisiert darauf binden.
+    count = 1: ein Halte-Objekt fuer alle Quellen (zusammen als Kompound). count > 1: je ein
+    Halte-Objekt pro Quelle - der Binder ist dann eine Mappe, die Elemente stehen als Kinder darunter."""
+    doc = binder.Document
+    holders = holders_of(binder)
+    base_label = binder.Label.replace(LABEL_SUFFIX, "")
+    created = []
+    while len(holders) < count:
+        holder = doc.addObject("Part::Feature", binder.Name + "_SyncQuelle")
         holder.Visibility = False
-        binder.SyncHalter = holder.Name
+        holders.append(holder)
+        created.append(holder)
+    for extra in holders[count:]:
+        doc.removeObject(extra.Name)
+    holders = holders[:count]
+    for i, holder in enumerate(holders):
+        if labels is not None:
+            holder.Label = f"{labels[i]} (Sync)"
+        elif holder in created:
+            holder.Label = base_label + " Quelle (Sync)"
+    names = ",".join(h.Name for h in holders)
+    if binder.SyncHalter != names:
+        binder.SyncHalter = names
     # Relative = False: sonst setzt FreeCAD den Context selbst (SubShapeBinder::update(), ueber die
     # Eltern des Bodys - bei einem in die Baugruppe eingebauten Teil wieder die Baugruppe!) und
     # rechnet die Kopie ein zweites Mal relativ um (2026-11-26 an der Steuerbox: 44 mm daneben,
@@ -98,12 +138,21 @@ def _ensure_holder(binder):
         binder.Relative = False
     if binder.Context is not None:
         binder.Context = None
+    # Reihenfolge egal: der Binder gibt seine Support-Liste in anderer Reihenfolge zurueck, als sie
+    # gesetzt wurde (2026-11-26 gemessen) - ein Vergleich mit Reihenfolge schriebe bei jedem
+    # Synchronisieren neu.
     support = binder.Support
-    if not (len(support) == 1 and support[0][0] is holder):
-        binder.Support = [(holder, "")]
+    if {e[0].Name for e in support} != {h.Name for h in holders} or len(support) != len(holders):
+        binder.Support = [(h, "") for h in holders]
     if binder.BindMode != "Synchronized":
         binder.BindMode = "Synchronized"
-    return holder
+    if count > 1 and "ClaimChildren" in binder.PropertiesList and not binder.ClaimChildren:
+        binder.ClaimChildren = True
+    return holders
+
+
+def _ensure_holder(binder):
+    return _ensure_holders(binder, max(1, len(holders_of(binder))))[0]
 
 
 def _parent_of(obj):
@@ -168,19 +217,77 @@ def _fully_loaded(obj):
     return full.getObject(name)
 
 
+_INDEX_NAME = re.compile(r"(Face|Edge|Vertex|Solid)\d+$")
+
+
+def normalize_element_path(path):
+    """Entfernt aus einem Elementpfad den FreeCAD-internen Elementnamen (TNP), der bei Auswahl in
+    importierten STEP-Teilen mit im Pfad steht:
+        "Arduino.;Face14;:H92b,F;:H93b:8,F;:Ha25:12,F.Face5624"  ->  "Arduino.Face5624"
+    Der einfache Name (Face5624) bezeichnet dasselbe Element; die langen Namen enthalten Punkte und
+    brechen die Zerlegung des Pfads in Objekte (2026-11-26, Steuerbox/Arduino)."""
+    if ".;" in path or ".?" in path:
+        element = path.rsplit(".", 1)[-1]
+        if _INDEX_NAME.match(element):
+            cut = min(i for i in (path.find(".;"), path.find(".?")) if i >= 0)
+            return path[:cut + 1] + element
+    return path
+
+
+def split_target_and_sources(top, paths):
+    """Ziel und Quellen aus den gewaehlten Elementpfaden bestimmen (Pfade ab top).
+    Das Ziel liegt in einem Teil mit PartDesign-Body (dort entsteht der Binder), die Quellen koennen
+    beliebige Elemente sein - auch aus importierten STEP-Teilen ohne Body. Reihenfolge: das ERSTE
+    Element ist das Ziel, wenn es einen Body hat (wie bisher). Hat es keinen (z.B. zuerst ein
+    STEP-Teil als Quelle gewaehlt) und genau ein anderes Element liegt in einem Body-Teil, ist
+    dieses das Ziel. Gibt (Ziel, [Quellen]) zurueck; wirft RuntimeError, wenn das nicht eindeutig ist."""
+    paths = [normalize_element_path(x) for x in paths]
+    if len(paths) < 2:
+        raise RuntimeError("Mindestens zwei Elemente waehlen: ein Element des Ziel-Teils (mit PartDesign-Body) "
+                           "und die Quell-Elemente.")
+    has_body = [_deepest_body_prefix(top, x)[1] is not None for x in paths]
+    if has_body[0]:
+        index = 0
+    else:
+        candidates = [i for i, flag in enumerate(has_body) if flag]
+        if not candidates:
+            raise RuntimeError("Keines der gewaehlten Elemente gehoert zu einem Teil mit PartDesign-Body - der "
+                               "Sync-Binder braucht ein Ziel-Teil mit Body (Quellen duerfen auch aus einem "
+                               "importierten STEP ohne Body kommen).")
+        if len(candidates) > 1:
+            raise RuntimeError("Mehrere Elemente liegen in Teilen mit PartDesign-Body - bitte das Element des "
+                               "Ziel-Teils zuerst waehlen.")
+        index = candidates[0]
+    return paths[index], [x for i, x in enumerate(paths) if i != index]
+
+
+def _source_label(top, path):
+    """Beschriftung fuer ein Halte-Objekt: "<Objekt> <Element>", z.B. "Arduino_UNO_R3_SMD Face5624"."""
+    obj_path, _, element = path.rpartition(".")
+    try:
+        obj = top.getSubObject(obj_path + ".", retType=1) if obj_path else top
+    except Exception:
+        obj = None
+    return f"{obj.Label if obj is not None else obj_path} {element}"
+
+
 def create_sync_binder(top, target_element, source_elements, label=None):
     """Legt im Body des Teils, zu dem target_element gehoert (Pfad ab top, z.B.
     "Steuerbox.Face3"), einen Sync-Binder auf source_elements (Pfade ab top) an und
     synchronisiert ihn sofort. Gibt den Binder zurueck."""
+    target_element = normalize_element_path(target_element)
+    source_elements = [normalize_element_path(x) for x in source_elements]
     prefix, body = _deepest_body_prefix(top, target_element)
     if body is None:
-        raise RuntimeError(f"'{target_element}' gehoert zu keinem PartDesign-Body - der Sync-Binder braucht einen Body.")
+        raise RuntimeError(f"'{target_element}' gehoert zu keinem PartDesign-Body - der Sync-Binder braucht ein "
+                           "Ziel-Teil mit Body.")
     if not top.Document.FileName:
         raise RuntimeError("Die Baugruppe muss zuerst gespeichert sein.")
     if not source_elements:
         raise RuntimeError("Keine Quell-Elemente ausgewaehlt.")
     body = _fully_loaded(body)
-    binder = body.newObject("PartDesign::SubShapeBinder", "SyncBinder")
+    binder = body.newObject("PartDesign::SubShapeBinderPython", "SyncBinder")
+    attach_view_provider(binder)
     _add_sync_properties(binder)
     binder.SyncDatei = os.path.basename(top.Document.FileName)
     binder.SyncObjekt = top.Name
@@ -188,7 +295,11 @@ def create_sync_binder(top, target_element, source_elements, label=None):
     binder.SyncQuellen = list(source_elements)
     binder.Synchronisiert = True
     binder.Label = (label or "Sync-Binder") + ("" if (label or "").endswith(LABEL_SUFFIX) else LABEL_SUFFIX)
-    _ensure_holder(binder)
+    if len(source_elements) > 1:
+        # Mappe: ein Halte-Objekt pro Quell-Element, als Kinder unter dem Binder (ClaimChildren)
+        _ensure_holders(binder, len(source_elements), [_source_label(top, x) for x in source_elements])
+    else:
+        _ensure_holders(binder, 1)
     sync(binder, force=True)
     binder.Document.recompute()
     return binder
@@ -409,7 +520,6 @@ def sync(binder, force=False):
         _set_status(binder, status)
         App.Console.PrintWarning(f"FCProject Sync-Binder '{binder.Label}': {status}\n")
         return status, False
-    world = shapes[0] if len(shapes) == 1 else Part.makeCompound(shapes)
     # Koordinaten, in denen die Form des Binders liegt: die des Eltern-Objekts (Body, ueber den
     # Link gesehen). NICHT getSubObject(SyncPfad, transform=False): das enthaelt trotzdem die
     # bisherige Placement des Binders selbst - nach dem ersten Schreiben lag jede weitere
@@ -419,18 +529,31 @@ def sync(binder, force=False):
         matrix = top.getSubObject(parent_path, retType=4, transform=True)
     else:
         matrix = top.Placement.toMatrix()
-    local = world.copy()
-    local.Placement = App.Placement(matrix.inverse()).multiply(world.Placement)
-    # Der Binder (Relative = False) uebernimmt vom Halte-Objekt genau dessen GEOMETRIE: ohne
-    # Umrechnung in seinen Body und ohne die Placement des Halte-Objekts (2026-11-26 gemessen).
-    # Also die Body-Koordinaten fest in die Geometrie einrechnen, Placement = Identitaet.
-    target = App.Placement(local.Placement)
-    local.Placement = App.Placement()
-    local.transformShape(target.toMatrix(), True)
-    holder = _ensure_holder(binder)
-    if not force and _same_shape(local, holder.Shape):
+
+    def to_body(world):
+        local = world.copy()
+        local.Placement = App.Placement(matrix.inverse()).multiply(world.Placement)
+        # Der Binder (Relative = False) uebernimmt vom Halte-Objekt genau dessen GEOMETRIE: ohne
+        # Umrechnung in seinen Body und ohne die Placement des Halte-Objekts (2026-11-26 gemessen).
+        # Also die Body-Koordinaten fest in die Geometrie einrechnen, Placement = Identitaet.
+        target = App.Placement(local.Placement)
+        local.Placement = App.Placement()
+        local.transformShape(target.toMatrix(), True)
+        return local
+
+    holders = _ensure_holders(binder, max(1, len(holders_of(binder))))
+    if len(holders) > 1 and len(holders) == len(shapes):
+        writes = [(h, to_body(sh)) for h, sh in zip(holders, shapes)]  # Mappe: ein Halter je Quelle
+    else:
+        world = shapes[0] if len(shapes) == 1 else Part.makeCompound(shapes)
+        writes = [(holders[0], to_body(world))]
+    changed = False
+    for holder, local in writes:
+        if force or not _same_shape(local, holder.Shape):
+            holder.Shape = local
+            changed = True
+    if not changed:
         return "aktuell", False
-    holder.Shape = local
     status = "aktualisiert " + time.strftime("%Y-%m-%d %H:%M:%S")
     _set_status(binder, status)
     return status, True
@@ -500,12 +623,16 @@ def _run_pending():
         _busy = False
 
 
-def _remove_orphan_holder(doc_name, holder_name):
+def _remove_orphan_holder(doc_name, holder_names):
+    """Halte-Objekte (kommagetrennte Namen) loeschen, die kein Sync-Binder mehr benutzt."""
     doc = App.listDocuments().get(doc_name)
-    holder = doc.getObject(holder_name) if doc else None
-    if holder is not None and not any(
-            is_sync_binder(o) and o.SyncHalter == holder_name for o in doc.Objects):
-        doc.removeObject(holder_name)
+    if doc is None:
+        return
+    for holder_name in [n for n in holder_names.split(",") if n]:
+        holder = doc.getObject(holder_name)
+        if holder is not None and not any(
+                is_sync_binder(o) and holder_name in o.SyncHalter.split(",") for o in doc.Objects):
+            doc.removeObject(holder_name)
 
 
 def _on_document_opened(doc_name):
@@ -514,6 +641,10 @@ def _on_document_opened(doc_name):
     sofort aktualisieren (Nutzerauftrag 2026-11-26)."""
     global _busy
     doc = App.listDocuments().get(doc_name)
+    if doc is not None and _GUI:
+        for o in doc.Objects:
+            if is_sync_binder(o):
+                attach_view_provider(o)
     if doc is None or not doc.FileName or getattr(doc, "Partial", False):
         return  # teilweise geladen = Unterdokument einer gerade geoeffneten Baugruppe
     binders = [o for o in doc.Objects if is_sync_binder(o) and o.Synchronisiert]
@@ -604,6 +735,25 @@ if _GUI:
 
     ICON_DIR = os.path.join(os.path.dirname(__file__), "resources", "icons")
 
+    class SyncBinderViewProvider:
+        """Python-Proxy fuer den View Provider eines Sync-Binders: nur das Baum-Icon (Dreieck mit roten
+        Eckpunkten und blauem Sync-Zeichen); alles andere macht weiter der View Provider des Binders."""
+
+        def __init__(self, vobj):
+            vobj.Proxy = self
+
+        def attach(self, vobj):
+            self.Object = vobj.Object
+
+        def getIcon(self):
+            return IconUtils.icon_path(ICON_DIR, "sync_binder.svg")
+
+        def __getstate__(self):
+            return None
+
+        def __setstate__(self, state):
+            return None
+
     def _native_binders_into(assembly_doc):
         found = []
         for d in App.listDocuments().values():
@@ -622,8 +772,11 @@ if _GUI:
                 "Pixmap": IconUtils.icon_path(ICON_DIR, "sync_binder.svg"),
                 "MenuText": "FCProject: Sync-Binder anlegen",
                 "ToolTip": (
-                    "In der Baugruppe zuerst ein Element des Teils waehlen, das den Binder bekommt, "
-                    "dann die Quell-Elemente (Kanten/Flaechen anderer Teile). Der Sync-Binder kopiert "
+                    "In der Baugruppe ein Element des Teils waehlen, das den Binder bekommt (Teil mit "
+                    "PartDesign-Body), und die Quell-Elemente (Kanten/Flaechen anderer Teile, auch aus "
+                    "einem importierten STEP; Reihenfolge egal, solange nur ein Element in einem Body-Teil "
+                    "liegt). Bei mehreren Quellen entsteht der Binder als Mappe mit den Elementen darunter. "
+                    "Der Sync-Binder kopiert "
                     "die Quelle so, wie sie in der Baugruppe liegt - ohne Verknuepfung, also ohne "
                     "DAG-Kreis - und wird nach jedem Neuberechnen der Baugruppe aktualisiert."
                 ),
@@ -640,13 +793,13 @@ if _GUI:
             if len(entries) < 2 or len({id(o) for o, _ in entries}) != 1:
                 QtWidgets.QMessageBox.warning(
                     main_win, "FCProject",
-                    "Bitte in EINER Baugruppe zuerst ein Element des Ziel-Teils, dann die Quell-"
-                    "Elemente waehlen (mindestens zwei Elemente).")
+                    "Bitte in EINER Baugruppe die Elemente waehlen: ein Element des Ziel-Teils (mit "
+                    "PartDesign-Body) und mindestens ein Quell-Element (auch aus einem importierten "
+                    "STEP). Bei mehreren Quellen entsteht der Binder als Mappe mit den Elementen darunter.")
                 return
             top = entries[0][0]
-            target = entries[0][1]
-            sources = [sub for _, sub in entries[1:]]
             try:
+                target, sources = split_target_and_sources(top, [sub for _, sub in entries])
                 binder = create_sync_binder(top, target, sources)
             except Exception as exc:
                 QtWidgets.QMessageBox.warning(main_win, "FCProject", f"Sync-Binder nicht angelegt: {exc}")

@@ -16,7 +16,7 @@ with a status message; binder deleted -> assembly recomputes cleanly; save + rel
 Sync properties; no write loop.
 
 Run inside FreeCAD with GUI (e.g. under Xvfb):
-    <sandbox>/standalone-check/kinematic-tests/common/run-test.sh <freecad> tests/fc_sync_binder_check.py
+    <sandbox>/sandbox-tests/common/run-test.sh <freecad> tests/fc_sync_binder_check.py
 Prints "RESULT: PASS" or "RESULT: FAIL".
 """
 import os
@@ -29,7 +29,7 @@ import Part
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "python"))
-sys.path.insert(0, "/home/maxx/Dokumente/FreeCAD-Development/assembly-solver-sandbox/standalone-check/kinematic-tests/common")
+sys.path.insert(0, "/home/maxx/Dokumente/FreeCAD-Development/assembly-solver-sandbox/sandbox-tests/common")
 import joint_test_utils as jtu  # noqa: E402
 import SyncBinder  # noqa: E402
 
@@ -213,6 +213,11 @@ def main():
     truth_n = Part.getShape(asm, f"{sublink.Name}.{mb.Name}.Face5", needSubElement=True)
     ok &= check("neuer Sync-Binder (verschachtelt)", dist(Part.getShape(asm, path_n), truth_n) < 1e-9
                 and nested.Synchronisiert, f"Lage {dist(Part.getShape(asm, path_n), truth_n):.2e}, Pfad '{nested.SyncPfad}'")
+    proxy = getattr(nested.ViewObject, "Proxy", None)
+    ok &= check("Baum-Icon des neuen Sync-Binders", nested.TypeId == "PartDesign::SubShapeBinderPython"
+                and SyncBinder.is_sync_binder(nested) and isinstance(proxy, SyncBinder.SyncBinderViewProvider)
+                and os.path.basename(proxy.getIcon()) in ("sync_binder.svg", "sync_binder_dark.svg"),
+                f"{nested.TypeId}, Icon {proxy.getIcon() if hasattr(proxy, 'getIcon') else proxy}")
     outer.Placement1 = App.Placement(V(0, 0, 10), App.Rotation(V(1, 0, 0), 75))
     a.recompute()
     asm.solve()
@@ -234,6 +239,71 @@ def main():
     t.recompute()
     ok &= check("vier Kanten -> Flaeche (MakeFace)", len(framed.Shape.Faces) == 1 and len(framed.Shape.Edges) == 4,
                 f"{len(edge_paths)} Kanten, Binder hat {len(framed.Shape.Faces)} Flaeche(n)")
+
+    # 4c. Pfad-Bereinigung und Zielerkennung (2026-11-26, Arduino-STEP ohne Body als erstes Element)
+    mapped = "Quelle.;Face14;:H92b,F;:H93b:8,F;:Ha25:12,F.Face6"
+    ok &= check("Elementname aus dem Pfad entfernt",
+                SyncBinder.normalize_element_path(mapped) == "Quelle.Face6"
+                and SyncBinder.normalize_element_path("Quelle.Face6") == "Quelle.Face6",
+                SyncBinder.normalize_element_path(mapped))
+    target_path = f"{lt.Name}.Grundkoerper.Face6"
+    t1 = SyncBinder.split_target_and_sources(asm, [target_path, mapped])
+    t2 = SyncBinder.split_target_and_sources(asm, [mapped, target_path])
+    ok &= check("Ziel erkannt, Quelle zuerst oder Ziel zuerst",
+                t1 == (target_path, ["Quelle.Face6"]) and t2 == (target_path, ["Quelle.Face6"]), f"{t1} / {t2}")
+    errors = []
+    for case in ([mapped, "Quelle.Face5"], [target_path, f"{lt.Name}.Grundkoerper.Face5"][:1]):
+        try:
+            SyncBinder.split_target_and_sources(asm, case)
+            errors.append("keine Meldung")
+        except RuntimeError as exc:
+            errors.append(str(exc)[:40])
+    ok &= check("ohne Body-Ziel / zu wenig Elemente -> Meldung", all(e != "keine Meldung" for e in errors), "; ".join(errors))
+
+    # 4d. Mappe: mehrere Quellen -> ein Halte-Objekt pro Quelle, Elemente als Kinder unter dem Binder
+    mappe_sources = ["Quelle.Face6", f"{sublink.Name}.{mb.Name}.Face5"]
+    mappe = SyncBinder.create_sync_binder(asm, target_path, [mapped, mappe_sources[1]], label="Binder_Mappe")
+    t.recompute()
+    pump()
+    holders = SyncBinder.holders_of(mappe)
+    path_f = f"{lt.Name}.{mappe.Name}."
+
+    def covered(truths, seen_shape):
+        return all(min(dist(tr, f) for f in seen_shape.Faces) < 1e-9 for tr in truths)
+
+    truths_f = [Part.getShape(asm, x, needSubElement=True) for x in mappe_sources]
+    seen_f = Part.getShape(asm, path_f)
+    ok &= check("Mappe: ein Halte-Objekt pro Quelle", len(holders) == 2 and list(mappe.SyncQuellen) == mappe_sources
+                and mappe.ClaimChildren and {o.Name for o, _ in mappe.Support} == {h.Name for h in holders}
+                and all(h.Document is t for h in holders) and len(mappe.SyncHalter.split(",")) == 2,
+                f"Halter {[h.Label for h in holders]}, Quellen {list(mappe.SyncQuellen)} (erwartet {mappe_sources}), "
+                f"ClaimChildren {mappe.ClaimChildren}, Support {[o.Name for o, _ in mappe.Support]}, SyncHalter '{mappe.SyncHalter}'")
+    ok &= check("Mappe: beide Elemente liegen auf den Quellen", len(seen_f.Faces) == 2 and covered(truths_f, seen_f),
+                f"{len(seen_f.Faces)} Flaechen")
+    support_before = [o.Name for o, _ in mappe.Support]
+    writes = []
+    original_status = SyncBinder._set_status
+    SyncBinder._set_status = lambda b, text: (writes.append(b.Name), original_status(b, text))[1]
+    a.recompute()
+    pump()
+    SyncBinder._set_status = original_status
+    ok &= check("Mappe: keine Schleife (unveraendert -> nichts geschrieben)",
+                [o.Name for o, _ in mappe.Support] == support_before and writes.count(mappe.Name) == 0,
+                f"Schreibvorgaenge {writes.count(mappe.Name)}")
+    lq.Placement = App.Placement(V(60, -5, 10), App.Rotation(V(0, 0, 1), 33))
+    a.recompute()
+    pump()
+    truths_f2 = [Part.getShape(asm, x, needSubElement=True) for x in mappe_sources]
+    seen_f2 = Part.getShape(asm, path_f)
+    ok &= check("Mappe: folgt der verschobenen Quelle", dist(truths_f[0], truths_f2[0]) > 1 and covered(truths_f2, seen_f2),
+                f"Quelle bewegt {dist(truths_f[0], truths_f2[0]):.1f}, {len(seen_f2.Faces)} Flaechen")
+    holder_names = [h.Name for h in holders]
+    t.removeObject(mappe.Name)
+    t.recompute()
+    pump()
+    pump()
+    ok &= check("Mappe geloescht (alle Halte-Objekte mit)", all(t.getObject(n) is None for n in holder_names),
+                f"noch da: {[n for n in holder_names if t.getObject(n) is not None]}")
 
     # 4b. Unterbaugruppe starr und wieder flexibel: Pfad zum Spiegel muss weiter aufloesen
     for rigid in (True, False):
@@ -310,6 +380,10 @@ def main():
     ok &= check("Teil allein geoeffnet -> Baugruppe mitgeladen", ok_open,
                 f"Baugruppe offen: {a is not None}, Status '{native.SyncStatus}'"
                 + (f", Lage {dist(seen, truth):.2e}, Kopie bewegt {moved:.1f}" if a is not None else ""))
+    proxy2 = getattr(nested.ViewObject, "Proxy", None) if nested is not None else None
+    ok &= check("Baum-Icon nach Speichern und Neuladen", nested is not None
+                and isinstance(proxy2, SyncBinder.SyncBinderViewProvider),
+                f"{nested.TypeId if nested is not None else None}, Proxy {type(proxy2).__name__}")
     if a is None:
         a = App.openDocument(p("bg.FCStd"))
         asm, lq, lt = a.getObject("Assembly"), a.getObject("Quelle"), a.getObject("Teil")
