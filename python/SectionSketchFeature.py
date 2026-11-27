@@ -577,6 +577,16 @@ def _stitch_wire_geometry(wire_geoms, tol=1e-4):
                 pass
 
 
+def _no_internals(sketch):
+    """Schaltet die "inneren Flaechen" des Sketches ab (SketchObject.MakeInternals). Unsere Schnitt-
+    Sketches sind reine Kontur-Sketches und brauchen keine Flaechen; mit der Einstellung versucht FreeCAD bei
+    jedem Neuberechnen, aus allen Kanten Flaechen zu bilden, und meldet bei manchen Konturen
+    "WireJoiner.cpp: Condition failed: edgeInfo->wireInfo != nullptr" / "Failed to make face for sketch"
+    (2026-11-27, im Log bei jedem Schnitt-Recompute). Aus: keine Flaechenbildung, keine Meldung, schneller."""
+    if "MakeInternals" in sketch.PropertiesList and sketch.MakeInternals:
+        sketch.MakeInternals = False
+
+
 def _rebuild_sketch_geometry(sketch, local_wires):
     # FCPROJECT-FIX (2026-11-10, Nutzer-Report "Icon schaltet um, Geometrie bleibt sichtbar":
     # live per echter Maus/Kontextmenue reproduziert, siehe
@@ -592,6 +602,7 @@ def _rebuild_sketch_geometry(sketch, local_wires):
     # wieder respektiert (siehe ViewProviderDocumentObject::onChanged() in freecad-source,
     # ruft bei Visibility-Aenderung zuverlaessig show()/hide() auf).
     was_visible = sketch.ViewObject.Visibility if _GUI_AVAILABLE and sketch.ViewObject else None
+    _no_internals(sketch)
     sketch.deleteAllGeometry()
     geoms = []
     for wire_edges in local_wires:
@@ -1198,6 +1209,7 @@ def _fill_total_sketch(sketch, section_obj, edges, ref_obj, subname):
     per echtem Attachment an der Referenz befestigt (sonst zeigt FreeCAD das rosa "nicht
     befestigt"-Overlay), liegt in der Baugruppe, keine Block-Constraints. Manuelle
     Aenderungen am Sketch werden beim Aktualisieren verworfen."""
+    _no_internals(sketch)
     sketch.deleteAllGeometry()
     if not edges or not section_obj.PartSketches:
         return
